@@ -12,11 +12,11 @@ public class StockServiceClient {
 
     private final WebClient webClient;
 
-    public Mono<StockResponse> getStockPrice() {
+    public Mono<StockResponse> getStockPrice(String symbol) {
 
         return webClient
                 .get()
-                .uri("http://localhost:8081/stocks/TCS")
+                .uri("http://localhost:8081/stocks/"+symbol)
                 .retrieve()
                 .bodyToMono(StockResponse.class);
     }

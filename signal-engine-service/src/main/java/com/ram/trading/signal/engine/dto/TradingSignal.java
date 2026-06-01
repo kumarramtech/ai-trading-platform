@@ -14,4 +14,6 @@ public class TradingSignal {
     private Double entryPrice;
     private Double targetPrice;
     private Double stopLoss;
+    private String reason;
+    private Integer confidence;
 }
