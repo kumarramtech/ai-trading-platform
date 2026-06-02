@@ -14,5 +14,6 @@
         <module>api-gateway</module>
         <module>stock-service</module>
         <module>signal-engine-service</module>
+        <module>portfolio-service</module>
     </modules>
 </project>
