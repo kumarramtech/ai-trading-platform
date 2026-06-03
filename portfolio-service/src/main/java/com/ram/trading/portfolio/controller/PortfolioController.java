@@ -1,6 +1,8 @@
 package com.ram.trading.portfolio.controller;
 
+import com.ram.trading.portfolio.dto.PortfolioAllocation;
 import com.ram.trading.portfolio.dto.PortfolioPnL;
+import com.ram.trading.portfolio.dto.PortfolioSummary;
 import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.service.PortfolioService;
 import com.ram.trading.portfolio.service.StockServiceClient;
@@ -60,5 +62,18 @@ public class PortfolioController {
                             pnl
                     );
                 });
+    }
+
+    @GetMapping("/summary")
+    public PortfolioSummary getSummary() {
+
+        return service.getSummary();
+    }
+
+    @GetMapping("/allocation")
+    public List<PortfolioAllocation>
+    getAllocation() {
+        return service
+                .getAllocation();
     }
 }
