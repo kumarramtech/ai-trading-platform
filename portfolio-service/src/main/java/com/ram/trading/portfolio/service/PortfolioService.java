@@ -1,14 +1,11 @@
 package com.ram.trading.portfolio.service;
 
-import com.ram.trading.portfolio.dto.PortfolioAllocation;
-import com.ram.trading.portfolio.dto.PortfolioSummary;
-import com.ram.trading.portfolio.dto.StockResponse;
+import com.ram.trading.portfolio.contant.RISKLEVELENUM;
+import com.ram.trading.portfolio.dto.*;
 import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.repo.PortfolioRepository;
 import lombok.AllArgsConstructor;
-import lombok.NoArgsConstructor;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -118,5 +115,53 @@ public class PortfolioService {
         }
 
         return result;
+    }
+
+    public PortfolioRisk getRiskAnalysis() {
+
+        List<PortfolioAllocation> allocations =
+                getAllocation();
+
+        for (PortfolioAllocation allocation : allocations) {
+
+            if (allocation.getAllocationPercentage() > 50) {
+
+                return new PortfolioRisk(
+                        RISKLEVELENUM.HIGH,
+                        allocation.getSymbol()
+                                + " allocation exceeds 50%"
+                );
+            }
+
+            if (allocation.getAllocationPercentage() > 30) {
+
+                return new PortfolioRisk(
+                        RISKLEVELENUM.MEDIUM,
+                        allocation.getSymbol()
+                                + " allocation exceeds 30%"
+                );
+            }
+        }
+
+        return new PortfolioRisk(
+                RISKLEVELENUM.LOW,
+                "Portfolio is well diversified"
+        );
+    }
+
+    public PortfolioDashboard getDashboard() {
+
+        PortfolioSummary summary = getSummary();
+
+        PortfolioRisk risk = getRiskAnalysis();
+
+        List<PortfolioAllocation> allocations =
+                getAllocation();
+
+        return new PortfolioDashboard(
+                summary,
+                risk,
+                allocations
+        );
     }
 }

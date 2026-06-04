@@ -1,8 +1,6 @@
 package com.ram.trading.portfolio.controller;
 
-import com.ram.trading.portfolio.dto.PortfolioAllocation;
-import com.ram.trading.portfolio.dto.PortfolioPnL;
-import com.ram.trading.portfolio.dto.PortfolioSummary;
+import com.ram.trading.portfolio.dto.*;
 import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.service.PortfolioService;
 import com.ram.trading.portfolio.service.StockServiceClient;
@@ -17,25 +15,25 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PortfolioController {
 
-    private final PortfolioService service;
+    private final PortfolioService portfolioService;
 
     private final StockServiceClient stockServiceClient;
 
     @PostMapping
     public Portfolio save(@RequestBody Portfolio portfolio) {
-        return service.save(portfolio);
+        return portfolioService.save(portfolio);
     }
 
     @GetMapping
     public List<Portfolio> getAll() {
-        return service.findAll();
+        return portfolioService.findAll();
     }
 
     @GetMapping("/{symbol}")
     public Portfolio getBySymbol(
             @PathVariable String symbol) {
 
-        return service.findBySymbol(symbol);
+        return portfolioService.findBySymbol(symbol);
     }
 
     @GetMapping("/pnl/{symbol}")
@@ -43,7 +41,7 @@ public class PortfolioController {
             @PathVariable String symbol) {
 
         Portfolio portfolio =
-                service.findBySymbol(symbol);
+                portfolioService.findBySymbol(symbol);
 
         return stockServiceClient
                 .getStockPrice(symbol)
@@ -67,13 +65,25 @@ public class PortfolioController {
     @GetMapping("/summary")
     public PortfolioSummary getSummary() {
 
-        return service.getSummary();
+        return portfolioService.getSummary();
     }
 
     @GetMapping("/allocation")
     public List<PortfolioAllocation>
     getAllocation() {
-        return service
+        return portfolioService
                 .getAllocation();
+    }
+
+    @GetMapping("/risk")
+    public PortfolioRisk getRiskAnalysis() {
+
+        return portfolioService.getRiskAnalysis();
+    }
+
+    @GetMapping("/dashboard")
+    public PortfolioDashboard getDashboard() {
+
+        return portfolioService.getDashboard();
     }
 }
