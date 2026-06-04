@@ -1,6 +1,6 @@
 package com.ram.trading.portfolio.dto;
 
-import com.ram.trading.portfolio.contant.RiskLevel;
+import com.ram.trading.portfolio.contant.PortfolioHealthStatus;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -8,9 +8,9 @@ import lombok.NoArgsConstructor;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class PortfolioRisk {
+public class PortfolioHealth {
 
-    private RiskLevel riskLevel;
+    private Integer score;
 
-    private String message;
+    private PortfolioHealthStatus status;
 }

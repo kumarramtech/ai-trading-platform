@@ -86,4 +86,18 @@ public class PortfolioController {
 
         return portfolioService.getDashboard();
     }
+
+    @GetMapping("/recommendation")
+    public List<PortfolioRecommendation>
+    getRecommendation() {
+
+        return portfolioService
+                .getRecommendation();
+    }
+
+    @GetMapping("/health")
+    public PortfolioHealth getHealthScore() {
+
+        return portfolioService.getHealthScore();
+    }
 }

@@ -1,6 +1,6 @@
 package com.ram.trading.portfolio.contant;
 
-public enum RISKLEVELENUM {
+public enum RiskLevel {
     LOW,
     MEDIUM,
     HIGH

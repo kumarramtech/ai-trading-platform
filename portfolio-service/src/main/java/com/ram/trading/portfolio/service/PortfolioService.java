@@ -1,6 +1,8 @@
 package com.ram.trading.portfolio.service;
 
-import com.ram.trading.portfolio.contant.RISKLEVELENUM;
+import com.ram.trading.portfolio.contant.PortfolioHealthStatus;
+import com.ram.trading.portfolio.contant.RecommendationActionEnum;
+import com.ram.trading.portfolio.contant.RiskLevel;
 import com.ram.trading.portfolio.dto.*;
 import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.repo.PortfolioRepository;
@@ -127,7 +129,7 @@ public class PortfolioService {
             if (allocation.getAllocationPercentage() > 50) {
 
                 return new PortfolioRisk(
-                        RISKLEVELENUM.HIGH,
+                        RiskLevel.HIGH,
                         allocation.getSymbol()
                                 + " allocation exceeds 50%"
                 );
@@ -136,7 +138,7 @@ public class PortfolioService {
             if (allocation.getAllocationPercentage() > 30) {
 
                 return new PortfolioRisk(
-                        RISKLEVELENUM.MEDIUM,
+                        RiskLevel.MEDIUM,
                         allocation.getSymbol()
                                 + " allocation exceeds 30%"
                 );
@@ -144,7 +146,7 @@ public class PortfolioService {
         }
 
         return new PortfolioRisk(
-                RISKLEVELENUM.LOW,
+                RiskLevel.LOW,
                 "Portfolio is well diversified"
         );
     }
@@ -163,5 +165,84 @@ public class PortfolioService {
                 risk,
                 allocations
         );
+    }
+
+    public List<PortfolioRecommendation> getRecommendation() {
+        List<PortfolioAllocation> allocations =
+                getAllocation();
+
+        List<PortfolioRecommendation> recommendations = new ArrayList<>();
+        for(PortfolioAllocation allocation: allocations){
+            if(allocation.getAllocationPercentage()>50.0){
+                recommendations.add(
+                        new PortfolioRecommendation(
+                                allocation.getSymbol(),
+                                RecommendationActionEnum.REDUCE,
+                                "Allocation exceeds 50%"
+                        )
+                );
+            } else if (allocation.getAllocationPercentage()<10.0) {
+                recommendations.add(
+                        new PortfolioRecommendation(
+                                allocation.getSymbol(),
+                                RecommendationActionEnum.INCREASE,
+                                "Allocation below 10%"
+                        )
+                );
+            }else{
+                recommendations.add(
+                        new PortfolioRecommendation(
+                                allocation.getSymbol(),
+                                RecommendationActionEnum.HOLD,
+                                "Allocation is balanced"
+                        )
+                );
+            }
+        }
+        return recommendations;
+    }
+
+    public PortfolioHealth getHealthScore() {
+
+        int score = 100;
+
+        PortfolioRisk risk = getRiskAnalysis();
+
+        PortfolioSummary summary = getSummary();
+
+        if (risk.getRiskLevel() == RiskLevel.HIGH) {
+            score -= 30;
+        } else if (risk.getRiskLevel() == RiskLevel.MEDIUM) {
+            score -= 15;
+        }
+
+        if (summary.getTotalProfitLoss() < 0) {
+            score -= 20;
+        }
+
+        boolean diversified =
+                getAllocation().stream()
+                        .noneMatch(a ->
+                                a.getAllocationPercentage() > 50);
+
+        if (diversified) {
+            score += 10;
+        }
+
+        score = Math.max(0, Math.min(score, 100));
+
+        PortfolioHealthStatus status;
+
+        if (score >= 80) {
+            status = PortfolioHealthStatus.EXCELLENT;
+        } else if (score >= 60) {
+            status = PortfolioHealthStatus.GOOD;
+        } else if (score >= 40) {
+            status = PortfolioHealthStatus.AVERAGE;
+        } else {
+            status = PortfolioHealthStatus.POOR;
+        }
+
+        return new PortfolioHealth(score, status);
     }
 }
