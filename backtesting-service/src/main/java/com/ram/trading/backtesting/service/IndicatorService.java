@@ -19,114 +19,52 @@ public class IndicatorService {
 
     public void generateRsi(String symbol) {
 
-        List<TechnicalIndicator> indicators =
-                new ArrayList<>();
+        List<TechnicalIndicator> indicators = new ArrayList<>();
 
         List<HistoricalPrice> prices =
                 repository.findBySymbolOrderByTradeDateAsc(symbol);
 
-        List<Double> ema12List =
-                calculateEma(prices, 12);
-
-        List<Double> ema20List =
-                calculateEma(prices, 20);
-
-        List<Double> ema26List =
-                calculateEma(prices, 26);
-
-        List<Double> ema50List =
-                calculateEma(prices, 50);
-
-
-        if (prices.size() < 15) {
+        if (prices.isEmpty()) {
             return;
         }
 
+        List<Double> ema12List = calculateEma(prices, 12);
+        List<Double> ema20List = calculateEma(prices, 20);
+        List<Double> ema26List = calculateEma(prices, 26);
+        List<Double> ema50List = calculateEma(prices, 50);
+
         for (int i = 0; i < prices.size(); i++) {
 
-            Double sma20 =
-                    calculateSma(prices, i, 20);
+            Double rsi = calculateRsi(prices, i);
 
-            Double sma50 =
-                    calculateSma(prices, i, 50);
+            Double sma20 = calculateSma(prices, i, 20);
+            Double sma50 = calculateSma(prices, i, 50);
 
-            double rsi =
-                    calculateRsi(prices, i);
+            Double ema20 = ema20List.get(i);
+            Double ema50 = ema50List.get(i);
 
-            double gains = 0;
-            double losses = 0;
+            Double macd = calculateMacd(
+                    ema12List.get(i),
+                    ema26List.get(i));
 
-            for (int j = i - 13; j <= i; j++) {
-
-                double current =
-                        prices.get(j).getPrice();
-
-                double previous =
-                        prices.get(j - 1).getPrice();
-
-                double change =
-                        current - previous;
-
-                if (change > 0) {
-                    gains += change;
-                } else {
-                    losses += Math.abs(change);
-                }
-            }
-
-            double avgGain = gains / 14;
-            double avgLoss = losses / 14;
-
-            //double rsi;
-
-            if (avgLoss == 0) {
-                rsi = 100;
-            } else {
-
-                double rs =
-                        avgGain / avgLoss;
-
-                rsi =
-                        100 -
-                        (100 / (1 + rs));
-            }
-
-
-
-            Double ema20 =
-                    ema20List.get(i);
-
-            Double ema50 =
-                    ema50List.get(i);
-
-            Double macd =
-                    calculateMacd(
-                            ema12List.get(i),
-                            ema26List.get(i));
-
-
-            HistoricalPrice price =
-                    prices.get(i);
+            HistoricalPrice price = prices.get(i);
 
             TechnicalIndicator indicator =
                     TechnicalIndicator.builder()
                             .symbol(symbol)
                             .tradeDate(price.getTradeDate())
                             .closePrice(price.getPrice())
-
                             .rsi14(rsi)
-
                             .sma20(sma20)
                             .sma50(sma50)
-
                             .ema20(ema20)
                             .ema50(ema50)
-
                             .macd(macd)
-
                             .build();
+
             indicators.add(indicator);
         }
+
         indicatorRepository.saveAll(indicators);
     }
 
@@ -145,10 +83,7 @@ public class IndicatorService {
 
         double sum = 0;
 
-        for (int i = currentIndex - period + 1;
-             i <= currentIndex;
-             i++) {
-
+        for (int i = currentIndex - period + 1; i <= currentIndex; i++) {
             sum += prices.get(i).getPrice();
         }
 
@@ -161,8 +96,14 @@ public class IndicatorService {
 
         List<Double> emaValues = new ArrayList<>();
 
-        double multiplier =
-                2.0 / (period + 1);
+        if (prices.size() < period) {
+            for (int i = 0; i < prices.size(); i++) {
+                emaValues.add(null);
+            }
+            return emaValues;
+        }
+
+        double multiplier = 2.0 / (period + 1);
 
         double sma = 0.0;
 
@@ -182,8 +123,7 @@ public class IndicatorService {
 
         for (int i = period; i < prices.size(); i++) {
 
-            double closePrice =
-                    prices.get(i).getPrice();
+            double closePrice = prices.get(i).getPrice();
 
             double ema =
                     (closePrice * multiplier)
@@ -219,18 +159,12 @@ public class IndicatorService {
         double gains = 0;
         double losses = 0;
 
-        for (int j = currentIndex - 13;
-             j <= currentIndex;
-             j++) {
+        for (int j = currentIndex - 13; j <= currentIndex; j++) {
 
-            double current =
-                    prices.get(j).getPrice();
+            double current = prices.get(j).getPrice();
+            double previous = prices.get(j - 1).getPrice();
 
-            double previous =
-                    prices.get(j - 1).getPrice();
-
-            double change =
-                    current - previous;
+            double change = current - previous;
 
             if (change > 0) {
                 gains += change;
