@@ -1,15 +1,20 @@
 package com.ram.trading.signal.engine.entity;
 
+import com.ram.trading.signal.engine.contant.SignalStatus;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "trading_signal")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class TradingSignalEntity {
 
     @Id
@@ -29,4 +34,21 @@ public class TradingSignalEntity {
 
     @Column(name = "stop_loss")
     private Double stopLoss;
+
+    private Integer confidence;
+
+    private String reason;
+
+    private LocalDateTime signalTime;
+
+    @Enumerated(EnumType.STRING)
+    private SignalStatus status;
+
+    private Double profitLoss;
+
+    private Double exitPrice;
+
+    private LocalDateTime exitTime;
+
+    private LocalDateTime createdAt;
 }

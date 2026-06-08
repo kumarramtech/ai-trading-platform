@@ -4,10 +4,13 @@ import com.ram.trading.backtesting.dto.BacktestResult;
 import com.ram.trading.backtesting.dto.BacktestSummary;
 import com.ram.trading.backtesting.dto.OptimizationRequest;
 import com.ram.trading.backtesting.dto.OptimizationResponse;
+import com.ram.trading.backtesting.entity.TechnicalIndicator;
 import com.ram.trading.backtesting.service.BacktestingService;
 import com.ram.trading.backtesting.service.StrategyOptimizerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/backtest")
@@ -52,5 +55,13 @@ public class BacktestingController {
             @RequestBody OptimizationRequest request) {
 
         return optimizerService.optimize(request);
+    }
+
+    @GetMapping("/latest/{symbol}")
+    public TechnicalIndicator getLatest(
+            @PathVariable String symbol) {
+
+        return service.findTopBySymbolOrderByTradeDateDesc(
+                        symbol);
     }
 }

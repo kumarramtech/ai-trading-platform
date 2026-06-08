@@ -1,11 +1,13 @@
 package com.ram.trading.signal.engine.service;
 
-import com.ram.trading.signal.engine.db.TradingSignalRepository;
+import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.repo.TradingSignalRepository;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -14,13 +16,20 @@ public class TradingSignalService {
     
         private final TradingSignalRepository repository;
     
-        public void save(TradingSignal tradeSignal){
-            TradingSignalEntity entity = new TradingSignalEntity();
-            entity.setSymbol(tradeSignal.getSymbol());
-            entity.setSignal(tradeSignal.getSignal());
-            entity.setEntryPrice(tradeSignal.getEntryPrice());
-            entity.setTargetPrice(tradeSignal.getTargetPrice());
-            entity.setStopLoss(tradeSignal.getStopLoss());
+        public void save(TradingSignal signal){
+            TradingSignalEntity entity = TradingSignalEntity.builder()
+                    .symbol(signal.getSymbol())
+                    .signal(signal.getSignal())
+                    .entryPrice(signal.getEntryPrice())
+                    .targetPrice(signal.getTargetPrice())
+                    .stopLoss(signal.getStopLoss())
+                    .confidence(signal.getConfidence())
+                    .reason(signal.getReason())
+                    .signalTime(LocalDateTime.now())
+                    .status(SignalStatus.OPEN)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
             repository.save(entity);
         }
     
@@ -29,4 +38,9 @@ public class TradingSignalService {
     
             return repository.findBySymbol(symbol);
         }
+
+    public List<TradingSignalEntity> findByStatus(String open) {
+
+        return repository.findByStatus(SignalStatus.OPEN);
     }
+}

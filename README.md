@@ -129,6 +129,16 @@ Generate Trading Signal via Gateway:
 GET http://localhost:8080/signals/TCS
 ```
 
+✔ Added latest technical indicator API
+✔ Integrated Signal Engine with indicator service
+✔ Replaced price-threshold strategy
+✔ Implemented RSI, EMA20, EMA50 and MACD based scoring
+✔ Added confidence score calculation
+✔ Added BUY / SELL / HOLD decision engine
+✔ Fixed SELL target and stop-loss calculation
+✔ Implemented reactive WebFlux integration
+✔ Completed signal monitoring and statistics APIs
+
 ## Learning Objectives
 
 * Reactive Programming with Spring WebFlux

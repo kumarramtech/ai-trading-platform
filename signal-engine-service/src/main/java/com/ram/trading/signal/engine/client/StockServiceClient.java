@@ -1,15 +1,10 @@
-package com.ram.trading.signal.engine.service;
+package com.ram.trading.signal.engine.client;
 
-import com.ram.trading.signal.engine.db.TradingSignalRepository;
 import com.ram.trading.signal.engine.dto.StockResponse;
-import com.ram.trading.signal.engine.dto.TradingSignal;
-import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor

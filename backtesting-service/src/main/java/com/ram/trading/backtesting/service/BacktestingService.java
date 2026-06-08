@@ -3,8 +3,9 @@ package com.ram.trading.backtesting.service;
 import com.ram.trading.backtesting.dto.BacktestResult;
 import com.ram.trading.backtesting.dto.BacktestSummary;
 import com.ram.trading.backtesting.entity.HistoricalPrice;
-import com.ram.trading.backtesting.loader.HistoricalDataLoaderService;
+import com.ram.trading.backtesting.entity.TechnicalIndicator;
 import com.ram.trading.backtesting.repo.HistoricalPriceRepository;
+import com.ram.trading.backtesting.repo.TechnicalIndicatorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,7 +17,9 @@ import java.util.List;
 @Slf4j
 public class BacktestingService {
 
-    private final HistoricalPriceRepository repository;
+    private final HistoricalPriceRepository historicalPriceRepository;
+
+    private final TechnicalIndicatorRepository technicalIndicatorRepository;
 
     private static final double BUY_DROP_PERCENT = 3.0;
     private static final double SELL_PROFIT_PERCENT = 5.0;
@@ -26,7 +29,7 @@ public class BacktestingService {
     public BacktestResult runBacktest(String symbol) throws Exception {
 
         List<HistoricalPrice> prices =
-                repository.findBySymbolOrderByTradeDateAsc(symbol);
+                historicalPriceRepository.findBySymbolOrderByTradeDateAsc(symbol);
 
         Double buyPrice = null;
         Double sellPrice = null;
@@ -64,7 +67,7 @@ public class BacktestingService {
     public BacktestSummary runBacktestSummary(String symbol) {
 
         List<HistoricalPrice> prices =
-                repository.findBySymbolOrderByTradeDateAsc(symbol);
+                historicalPriceRepository.findBySymbolOrderByTradeDateAsc(symbol);
 
         Double buyPrice = null;
         Double previousPrice = null;
@@ -184,7 +187,7 @@ public class BacktestingService {
         stop = stop == null ? 2.0 : stop;
 
         List<HistoricalPrice> prices =
-                repository.findBySymbolOrderByTradeDateAsc(symbol);
+                historicalPriceRepository.findBySymbolOrderByTradeDateAsc(symbol);
 
         Double buyPrice = null;
         Double previousPrice = null;
@@ -272,5 +275,15 @@ public class BacktestingService {
                 winRate,
                 netProfit
         );
+    }
+
+    public TechnicalIndicator findTopBySymbolOrderByTradeDateDesc(String symbol) {
+        return technicalIndicatorRepository
+                .findTopBySymbolOrderByTradeDateDesc(
+                        symbol)
+                .orElseThrow(
+                        () -> new RuntimeException(
+                                "Indicator not found"));
+
     }
 }

@@ -4,12 +4,14 @@ import com.ram.trading.backtesting.dto.BacktestSummary;
 import com.ram.trading.backtesting.dto.OptimizationRequest;
 import com.ram.trading.backtesting.dto.OptimizationResponse;
 import com.ram.trading.backtesting.dto.StrategyResult;
+import com.ram.trading.backtesting.entity.TechnicalIndicator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
@@ -94,4 +96,5 @@ public class StrategyOptimizerService {
             throw new RuntimeException(ex);
         }
     }
+
 }

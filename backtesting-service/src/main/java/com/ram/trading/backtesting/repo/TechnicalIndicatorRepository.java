@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface TechnicalIndicatorRepository
@@ -12,4 +13,8 @@ public interface TechnicalIndicatorRepository
 
     List<TechnicalIndicator>
     findBySymbolOrderByTradeDateAsc(String symbol);
+
+    Optional<TechnicalIndicator>
+    findTopBySymbolOrderByTradeDateDesc(
+            String symbol);
 }
