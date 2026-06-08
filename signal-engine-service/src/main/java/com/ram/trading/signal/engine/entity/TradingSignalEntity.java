@@ -51,4 +51,6 @@ public class TradingSignalEntity {
     private LocalDateTime exitTime;
 
     private LocalDateTime createdAt;
+
+
 }

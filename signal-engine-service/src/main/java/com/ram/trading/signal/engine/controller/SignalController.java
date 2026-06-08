@@ -3,6 +3,7 @@ package com.ram.trading.signal.engine.controller;
 import com.ram.trading.signal.engine.dto.SignalStats;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
+import com.ram.trading.signal.engine.service.PaperTradingService;
 import com.ram.trading.signal.engine.service.SignalStatService;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.service.TradingSignalService;
@@ -29,6 +30,8 @@ public class SignalController {
 
     private final SignalStatService signalStatService;
 
+    private final PaperTradingService paperTradingService;
+
     @GetMapping("/{symbol}")
     public Mono<TradingSignal> generateSignal(
             @PathVariable String symbol) {
@@ -43,6 +46,9 @@ public class SignalController {
 
                                     tradingSignalHistoryService
                                             .save(signal);
+
+                                    paperTradingService
+                                            .createTrade(signal);
 
                                     return signal;
                                 })

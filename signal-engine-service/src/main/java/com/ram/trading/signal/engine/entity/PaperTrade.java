@@ -1,11 +1,18 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.signal.engine.entity;
 
+import com.ram.trading.signal.engine.contant.SignalStatus;
 import jakarta.persistence.*;
+import lombok.*;
 
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "paper_trade")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class PaperTrade {
 
     @Id
@@ -14,6 +21,7 @@ public class PaperTrade {
 
     private String symbol;
 
+    @Column(name = "paper_signal")
     private String signal;
 
     private Double entryPrice;
@@ -26,7 +34,8 @@ public class PaperTrade {
 
     private Double profitLoss;
 
-    private String status;
+    @Enumerated(EnumType.STRING)
+    private SignalStatus status;
 
     private LocalDateTime entryTime;
 
