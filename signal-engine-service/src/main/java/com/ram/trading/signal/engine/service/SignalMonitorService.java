@@ -21,6 +21,8 @@ public class SignalMonitorService {
 
     private final StockServiceClient stockClient;
 
+    private final PaperTradingService paperTradingService;
+
 
     public void checkOpenSignals() {
 
@@ -109,6 +111,11 @@ public class SignalMonitorService {
                                 + " Status="
                                 + signal.getStatus());
                 repository.save(signal);
+
+                paperTradingService.closeTrade(
+                        signal.getSymbol(),
+                        currentPrice,
+                        signal.getStatus());
             }
         }
 

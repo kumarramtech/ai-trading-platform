@@ -16,7 +16,7 @@ public class TradingSignalService {
     
         private final TradingSignalRepository repository;
     
-        public void save(TradingSignal signal){
+        public TradingSignalEntity save(TradingSignal signal){
             TradingSignalEntity entity = TradingSignalEntity.builder()
                     .symbol(signal.getSymbol())
                     .signal(signal.getSignal())
@@ -30,7 +30,7 @@ public class TradingSignalService {
                     .createdAt(LocalDateTime.now())
                     .build();
 
-            repository.save(entity);
+            return repository.save(entity);
         }
     
         public List<TradingSignalEntity> getHistory(

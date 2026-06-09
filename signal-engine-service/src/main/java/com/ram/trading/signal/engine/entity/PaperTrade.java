@@ -19,6 +19,8 @@ public class PaperTrade {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    private Long signalId;
+
     private String symbol;
 
     @Column(name = "paper_signal")

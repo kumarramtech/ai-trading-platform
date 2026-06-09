@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.controller;
 
+import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.SignalStats;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
@@ -44,11 +45,18 @@ public class SignalController {
                                 .generateSignal(stock)
                                 .map(signal -> {
 
-                                    tradingSignalHistoryService
-                                            .save(signal);
+                                    if (SignalType.HOLD.name()
+                                            .equals(signal.getSignal())) {
+
+                                        return signal;
+                                    }
+
+                                    TradingSignalEntity savedSignal =
+                                            tradingSignalHistoryService
+                                                    .save(signal);
 
                                     paperTradingService
-                                            .createTrade(signal);
+                                            .createTrade(savedSignal);
 
                                     return signal;
                                 })

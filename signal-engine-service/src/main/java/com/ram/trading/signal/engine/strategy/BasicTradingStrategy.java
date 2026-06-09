@@ -36,7 +36,8 @@ public class BasicTradingStrategy
                         score += 25;
 
                         reason.append(
-                                "RSI Oversold, ");
+                                "RSI Oversold ");
+                        System.out.println("RSI Rule Matched");
                     }
 
                     if (indicator.getEma20()
@@ -45,7 +46,8 @@ public class BasicTradingStrategy
                         score += 25;
 
                         reason.append(
-                                "EMA Bullish, ");
+                                "EMA Bullish ");
+                        System.out.println("EMA Rule Matched");
                     }
 
                     if (indicator.getMacd() > 0) {
@@ -53,7 +55,8 @@ public class BasicTradingStrategy
                         score += 25;
 
                         reason.append(
-                                "MACD Positive, ");
+                                "MACD Positive ");
+                        System.out.println("MACD Rule Matched");
                     }
 
                     if (price >
@@ -62,7 +65,8 @@ public class BasicTradingStrategy
                         score += 25;
 
                         reason.append(
-                                "Price Above EMA20, ");
+                                "Price Above EMA20 ");
+                        System.out.println("Price Above EMA20 Rule Matched");
                     }
 
                     String signal;
@@ -71,7 +75,7 @@ public class BasicTradingStrategy
 
                         signal = "BUY";
 
-                    } else if (score <= 0) {
+                    } else if (score <= 25) {
 
                         signal = "SELL";
 
@@ -110,6 +114,14 @@ public class BasicTradingStrategy
                     if (finalReason.endsWith(", ")) {
                         finalReason = finalReason.substring( 0,finalReason.length() - 2);
                     }
+
+                    System.out.println("RSI = " + indicator.getRsi14());
+                    System.out.println("EMA20 = " + indicator.getEma20());
+                    System.out.println("EMA50 = " + indicator.getEma50());
+                    System.out.println("MACD = " + indicator.getMacd());
+
+                    System.out.println("Final Score = " + score);
+
                     return new TradingSignal(
                             stock.getSymbol(),
                             signal,

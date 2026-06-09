@@ -6,11 +6,17 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface PaperTradeRepository
         extends JpaRepository<PaperTrade, Long> {
 
     List<PaperTrade> findByStatus(
+            SignalStatus status);
+
+    Optional<PaperTrade>
+    findTopBySymbolAndStatusOrderByEntryTimeDesc(
+            String symbol,
             SignalStatus status);
 }
