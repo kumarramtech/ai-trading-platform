@@ -19,4 +19,13 @@ public interface PaperTradeRepository
     findTopBySymbolAndStatusOrderByEntryTimeDesc(
             String symbol,
             SignalStatus status);
+
+    Optional<PaperTrade> findBySignalId(
+            Long signalId);
+
+    Optional<PaperTrade> findBySignalIdAndStatus(
+            Long signalId,
+            SignalStatus status);
+
+    List<PaperTrade> findAllByOrderByEntryTimeDesc();
 }

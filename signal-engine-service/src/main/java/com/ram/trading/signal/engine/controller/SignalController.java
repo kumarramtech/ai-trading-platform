@@ -1,7 +1,9 @@
 package com.ram.trading.signal.engine.controller;
 
+import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.SignalStats;
+import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.service.PaperTradingService;
@@ -25,7 +27,7 @@ public class SignalController {
 
     private final StockServiceClient stockServiceClient;
 
-    private final TradingSignalService tradingSignalHistoryService;
+    private final TradingSignalService tradingSignalService;
 
     private final TradingStrategy tradingStrategy;
 
@@ -33,46 +35,39 @@ public class SignalController {
 
     private final PaperTradingService paperTradingService;
 
+    private final IndicatorClient indicatorClient;
+
     @GetMapping("/{symbol}")
     public Mono<TradingSignal> generateSignal(
             @PathVariable String symbol) {
 
-        return stockServiceClient
-                .getStockPrice(symbol)
-                .flatMap(stock ->
-
-                        tradingStrategy
-                                .generateSignal(stock)
-                                .map(signal -> {
-
-                                    if (SignalType.HOLD.name()
-                                            .equals(signal.getSignal())) {
-
-                                        return signal;
-                                    }
-
-                                    TradingSignalEntity savedSignal =
-                                            tradingSignalHistoryService
-                                                    .save(signal);
-
-                                    paperTradingService
-                                            .createTrade(savedSignal);
-
-                                    return signal;
-                                })
-                );
+        return stockServiceClient.getStockPrice(symbol).
+                flatMap(stock->
+                        tradingStrategy.generateSignal(stock)
+                                    .flatMap(signal->{
+                                                    if(SignalType.HOLD.name()
+                                                            .equals(signal.getSignal())){
+                                                        return Mono.just(signal);
+                                                    }
+                                                TradingSignalEntity savedEntity = tradingSignalService.save(signal);
+                                                return indicatorClient.getLatest(signal.getSymbol())
+                                                        .map(indicator-> {
+                                                            paperTradingService.createTrade(savedEntity,indicator);
+                                                            return signal;
+                                                        });
+                                                }));
     }
 
     @GetMapping("/history/{symbol}")
     public List<TradingSignalEntity> getHistory(
             @PathVariable String symbol) {
-        return tradingSignalHistoryService.getHistory(symbol);
+        return tradingSignalService.getHistory(symbol);
     }
 
     @GetMapping("/history/open")
     public List<TradingSignalEntity> getOpenSignals() {
 
-        return tradingSignalHistoryService.findByStatus("OPEN");
+        return tradingSignalService.findByStatus("OPEN");
     }
 
     @GetMapping("/stats")

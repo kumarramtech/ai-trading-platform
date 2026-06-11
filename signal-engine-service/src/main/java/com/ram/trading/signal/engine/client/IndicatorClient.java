@@ -24,4 +24,5 @@ public class IndicatorClient {
                 .bodyToMono(
                         TechnicalIndicatorResponse.class);
     }
+
 }

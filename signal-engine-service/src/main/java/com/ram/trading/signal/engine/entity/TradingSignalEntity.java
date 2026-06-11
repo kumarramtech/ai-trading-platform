@@ -52,5 +52,12 @@ public class TradingSignalEntity {
 
     private LocalDateTime createdAt;
 
+    private Double rsi;
+
+    private Double ema20;
+
+    private Double ema50;
+
+    private Double macd;
 
 }

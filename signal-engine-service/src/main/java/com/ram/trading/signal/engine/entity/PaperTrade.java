@@ -42,4 +42,14 @@ public class PaperTrade {
     private LocalDateTime entryTime;
 
     private LocalDateTime exitTime;
+
+    private Double rsi;
+
+    private Double ema20;
+
+    private Double ema50;
+
+    private Double macd;
+
+    private Integer confidence;
 }

@@ -37,13 +37,14 @@ public class SignalMonitorService {
                 continue;
             }
             Double currentPrice = stockResponse.getPrice();
-            if (SignalType.BUY.name().equals(signal.getSignal())) {
 
-                System.out.println(
-                        "Entry=" + signal.getEntryPrice()
-                                + ", Target=" + signal.getTargetPrice()
-                                + ", StopLoss=" + signal.getStopLoss()
-                                + ", Current=" + currentPrice);
+            System.out.println(
+                    "Entry=" + signal.getEntryPrice()
+                            + ", Target=" + signal.getTargetPrice()
+                            + ", StopLoss=" + signal.getStopLoss()
+                            + ", Current=" + currentPrice);
+
+            if (SignalType.BUY.name().equals(signal.getSignal())) {
 
                 if (currentPrice >= signal.getTargetPrice()) {
 
@@ -113,7 +114,7 @@ public class SignalMonitorService {
                 repository.save(signal);
 
                 paperTradingService.closeTrade(
-                        signal.getSymbol(),
+                        signal.getId(),
                         currentPrice,
                         signal.getStatus());
             }

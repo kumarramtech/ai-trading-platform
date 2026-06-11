@@ -2,6 +2,7 @@ package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.dto.PaperTradeSummary;
+import com.ram.trading.signal.engine.dto.TradePerformance;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import lombok.RequiredArgsConstructor;
@@ -19,20 +20,27 @@ public class PaperTradingController {
     @GetMapping("/status/{status}")
     public List<PaperTrade> getByStatus(
             @PathVariable SignalStatus status) {
-
         return service.getByStatus(status);
     }
 
     @GetMapping
     public List<PaperTrade> getAll() {
-
         return service.getAll();
     }
 
     @GetMapping("/summary")
     public PaperTradeSummary getSummary() {
-
         return service.getSummary();
+    }
+
+    @GetMapping("/performance")
+    public TradePerformance getPerformance() {
+        return service.getPerformance();
+    }
+
+    @GetMapping("/history")
+    public List<PaperTrade> history() {
+        return service.getHistory();
     }
 
 }
