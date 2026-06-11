@@ -3,13 +3,12 @@ package com.ram.trading.signal.engine.service;
 import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
-import com.ram.trading.signal.engine.dto.PaperTradeSummary;
-import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
-import com.ram.trading.signal.engine.dto.TradePerformance;
+import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -17,6 +16,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PaperTradingService {
 
     private final PaperTradeRepository repository;
@@ -32,11 +32,11 @@ public class PaperTradingService {
                             + signal.getSymbol());
         }
 
-        System.out.println(
+        log.info(
                 "Signal Generated = "
                         + signal.getSignal());
 
-        System.out.println(
+        log.info(
                 "Inside createTrade");
 
         if (SignalType.HOLD.name()
@@ -50,12 +50,11 @@ public class PaperTradingService {
                 (int) (capitalPerTrade
                         / signal.getEntryPrice());
 
-        System.out.println(
-                quantity);
+        log.info("quantity ="+quantity);
         if (quantity <= 0) {
             return;
         }
-        System.out.println("Confidence = " + signal.getConfidence());
+        log.info("Confidence = " + signal.getConfidence());
         PaperTrade trade =
                 PaperTrade.builder()
                         .symbol(signal.getSymbol())
@@ -193,15 +192,15 @@ public class PaperTradingService {
         trade.setExitTime(
                 LocalDateTime.now());
 
-        System.out.println(
+        log.info(
                 "Closing Trade for signalId="
                         + signalId);
 
-        System.out.println(
+        log.info(
                 "Trade Found="
                         + trade.getId());
 
-        System.out.println(
+        log.info(
                 "Profit/Loss="
                         + profitLoss);
 
@@ -292,4 +291,175 @@ public class PaperTradingService {
         return repository
                 .findAllByOrderByEntryTimeDesc();
     }
+
+    public TradeInsights getInsights() {
+
+        List<PaperTrade> closedTrades =
+                repository.findAll()
+                        .stream()
+                        .filter(trade ->
+                                trade.getStatus() != SignalStatus.OPEN)
+                        .toList();
+
+        double averageWinningRsi =
+                closedTrades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null
+                                        && trade.getProfitLoss() > 0)
+                        .mapToDouble(PaperTrade::getRsi)
+                        .average()
+                        .orElse(0);
+
+        double averageLosingRsi =
+                closedTrades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null
+                                        && trade.getProfitLoss() < 0)
+                        .mapToDouble(PaperTrade::getRsi)
+                        .average()
+                        .orElse(0);
+
+        double averageWinningMacd =
+                closedTrades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null
+                                        && trade.getProfitLoss() > 0)
+                        .mapToDouble(PaperTrade::getMacd)
+                        .average()
+                        .orElse(0);
+
+        double averageLosingMacd =
+                closedTrades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null
+                                        && trade.getProfitLoss() < 0)
+                        .mapToDouble(PaperTrade::getMacd)
+                        .average()
+                        .orElse(0);
+
+        Integer bestConfidence =
+                closedTrades.stream()
+                        .filter(trade ->
+                                trade.getConfidence() != null)
+                        .map(PaperTrade::getConfidence)
+                        .max(Integer::compareTo)
+                        .orElse(0);
+
+        Integer worstConfidence =
+                closedTrades.stream()
+                        .filter(trade ->
+                                trade.getConfidence() != null)
+                        .map(PaperTrade::getConfidence)
+                        .min(Integer::compareTo)
+                        .orElse(0);
+
+        return TradeInsights.builder()
+                .averageWinningRsi(
+                        averageWinningRsi)
+                .averageLosingRsi(
+                        averageLosingRsi)
+                .averageWinningMacd(
+                        averageWinningMacd)
+                .averageLosingMacd(
+                        averageLosingMacd)
+                .bestConfidence(
+                        bestConfidence)
+                .worstConfidence(
+                        worstConfidence)
+                .build();
+    }
+
+    public PaperTradeDashboard getDashboard() {
+
+        List<PaperTrade> trades =
+                repository.findAll();
+
+        long totalTrades =
+                trades.size();
+
+        long openTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getStatus() ==
+                                        SignalStatus.OPEN)
+                        .count();
+
+        List<PaperTrade> closedTradesList =
+                trades.stream()
+                        .filter(t ->
+                                t.getStatus() !=
+                                        SignalStatus.OPEN)
+                        .toList();
+
+        long closedTrades =
+                closedTradesList.size();
+
+        long winningTrades =
+                closedTradesList.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() > 0)
+                        .count();
+
+        long losingTrades =
+                closedTradesList.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() < 0)
+                        .count();
+
+        long breakevenTrades =
+                closedTradesList.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() == 0)
+                        .count();
+
+        double totalProfit =
+                closedTradesList.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .sum();
+
+        double bestTrade =
+                closedTradesList.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .max()
+                        .orElse(0);
+
+        double worstTrade =
+                closedTradesList.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .min()
+                        .orElse(0);
+
+        double winRate =
+                closedTrades == 0
+                        ? 0
+                        : ((double) winningTrades
+                        / closedTrades) * 100;
+
+        return PaperTradeDashboard.builder()
+                .totalTrades(totalTrades)
+                .openTrades(openTrades)
+                .closedTrades(closedTrades)
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .breakevenTrades(breakevenTrades)
+                .winRate(winRate)
+                .totalProfit(totalProfit)
+                .bestTrade(bestTrade)
+                .worstTrade(worstTrade)
+                .build();
+    }
+
+
 }

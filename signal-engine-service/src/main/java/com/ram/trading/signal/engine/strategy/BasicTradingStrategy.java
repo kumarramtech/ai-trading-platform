@@ -1,15 +1,19 @@
 package com.ram.trading.signal.engine.strategy;
 
 import com.ram.trading.signal.engine.client.IndicatorClient;
+import com.ram.trading.signal.engine.contant.SignalType;
+import com.ram.trading.signal.engine.contant.SignalWeights;
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class BasicTradingStrategy
         implements TradingStrategy {
 
@@ -26,68 +30,89 @@ public class BasicTradingStrategy
                     Double price =
                             stock.getPrice();
 
-                    int score = 0;
+                    int bullishScore = 0;
+
+                    int bearishScore = 0;
 
                     StringBuilder reason =
                             new StringBuilder();
 
                     if (indicator.getRsi14() < 35) {
 
-                        score += 25;
+                        bullishScore += SignalWeights.RSI;
 
-                        reason.append(
-                                "RSI Oversold ");
-                        System.out.println("RSI Rule Matched");
+                        reason.append("RSI Oversold, ");
+
+                    } else if (indicator.getRsi14() > 70) {
+
+                        bearishScore += SignalWeights.RSI;
+
+                        reason.append("RSI Overbought, ");
                     }
 
-                    if (indicator.getEma20()
-                            > indicator.getEma50()) {
+                    if (indicator.getEma20() > indicator.getEma50()) {
 
-                        score += 25;
+                        bullishScore += SignalWeights.EMA;
 
-                        reason.append(
-                                "EMA Bullish ");
-                        System.out.println("EMA Rule Matched");
+                        reason.append("EMA Bullish, ");
+
+                    } else {
+
+                        bearishScore += SignalWeights.EMA;
+
+                        reason.append("EMA Bearish, ");
                     }
 
                     if (indicator.getMacd() > 0) {
 
-                        score += 25;
+                        bullishScore += SignalWeights.MACD;
 
-                        reason.append(
-                                "MACD Positive ");
-                        System.out.println("MACD Rule Matched");
+                        reason.append("MACD Positive, ");
+
+                    } else {
+
+                        bearishScore += SignalWeights.MACD;
+
+                        reason.append("MACD Negative, ");
                     }
 
-                    if (price >
-                            indicator.getEma20()) {
+                    if (price > indicator.getEma20()) {
 
-                        score += 25;
+                        bullishScore += SignalWeights.PRICE_ACTION;
 
-                        reason.append(
-                                "Price Above EMA20 ");
-                        System.out.println("Price Above EMA20 Rule Matched");
+                        reason.append("Price Above EMA20, ");
+
+                    } else {
+
+                        bearishScore += SignalWeights.PRICE_ACTION;
+
+                        reason.append("Price Below EMA20, ");
                     }
 
                     String signal;
 
-                    if (score >= 75) {
+                    int confidence =
+                            Math.max(
+                                    bullishScore,
+                                    bearishScore);
 
-                        signal = "BUY";
+                    if (bullishScore >= 70) {
 
-                    } else if (score <= 25) {
+                        signal = SignalType.BUY.name();
 
-                        signal = "SELL";
+                    } else if (bearishScore >= 70) {
+
+                        signal = SignalType.SELL.name();
 
                     } else {
 
-                        signal = "HOLD";
+                        signal = SignalType.HOLD.name();
                     }
 
                     Double targetPrice;
                     Double stopLoss;
 
-                    if ("BUY".equals(signal)) {
+                    if (SignalType.BUY.name().equals(signal)) {
 
                         targetPrice =
                                 price * 1.02;
@@ -95,7 +120,7 @@ public class BasicTradingStrategy
                         stopLoss =
                                 price * 0.99;
 
-                    } else if ("SELL".equals(signal)) {
+                    } else if (SignalType.SELL.name().equals(signal)) {
 
                         targetPrice =
                                 price * 0.98;
@@ -109,18 +134,22 @@ public class BasicTradingStrategy
                         stopLoss = price;
                     }
 
+                    log.info("RSI = " + indicator.getRsi14());
+                    log.info("EMA20 = " + indicator.getEma20());
+                    log.info("EMA50 = " + indicator.getEma50());
+                    log.info("MACD = " + indicator.getMacd());
+
+                    log.info("Final Score={}", bullishScore);
                     String finalReason =
                             reason.toString();
+
                     if (finalReason.endsWith(", ")) {
-                        finalReason = finalReason.substring( 0,finalReason.length() - 2);
+
+                        finalReason =
+                                finalReason.substring(
+                                        0,
+                                        finalReason.length() - 2);
                     }
-
-                    System.out.println("RSI = " + indicator.getRsi14());
-                    System.out.println("EMA20 = " + indicator.getEma20());
-                    System.out.println("EMA50 = " + indicator.getEma50());
-                    System.out.println("MACD = " + indicator.getMacd());
-
-                    System.out.println("Final Score = " + score);
 
                     return new TradingSignal(
                             stock.getSymbol(),
@@ -129,7 +158,7 @@ public class BasicTradingStrategy
                             targetPrice,
                             stopLoss,
                             finalReason,
-                            score
+                            confidence
                     );
                 });
     }

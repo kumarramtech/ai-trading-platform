@@ -1,7 +1,9 @@
 package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.dto.PaperTradeDashboard;
 import com.ram.trading.signal.engine.dto.PaperTradeSummary;
+import com.ram.trading.signal.engine.dto.TradeInsights;
 import com.ram.trading.signal.engine.dto.TradePerformance;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.service.PaperTradingService;
@@ -41,6 +43,17 @@ public class PaperTradingController {
     @GetMapping("/history")
     public List<PaperTrade> history() {
         return service.getHistory();
+    }
+
+    @GetMapping("/insights")
+    public TradeInsights getInsights() {
+        return service.getInsights();
+    }
+
+    @GetMapping("/dashboard")
+    public PaperTradeDashboard getDashboard() {
+
+        return service.getDashboard();
     }
 
 }
