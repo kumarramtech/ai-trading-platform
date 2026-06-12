@@ -16,5 +16,6 @@
         <module>signal-engine-service</module>
         <module>portfolio-service</module>
         <module>backtesting-service</module>
+        <module>ai-service</module>
     </modules>
 </project>

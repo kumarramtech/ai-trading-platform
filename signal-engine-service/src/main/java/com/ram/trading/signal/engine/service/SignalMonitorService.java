@@ -1,7 +1,6 @@
 package com.ram.trading.signal.engine.service;
 
-import com.ram.trading.signal.engine.client.IndicatorClient;
-import com.ram.trading.signal.engine.client.StockServiceClient;
+import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.StockResponse;
@@ -19,7 +18,7 @@ public class SignalMonitorService {
 
     private final TradingSignalRepository repository;
 
-    private final StockServiceClient stockClient;
+    private final MarketDataProvider marketDataProvider;
 
     private final PaperTradingService paperTradingService;
 
@@ -32,7 +31,7 @@ public class SignalMonitorService {
         for (TradingSignalEntity signal : signals) {
 
             boolean updated = false;
-            StockResponse stockResponse = stockClient.getStockPrice(signal.getSymbol()).block();
+            StockResponse stockResponse = marketDataProvider.getStockPrice(signal.getSymbol()).block();
             if (stockResponse == null) {
                 continue;
             }

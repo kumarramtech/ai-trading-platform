@@ -287,13 +287,11 @@ public class PaperTradingService {
     }
 
     public List<PaperTrade> getHistory() {
-
         return repository
                 .findAllByOrderByEntryTimeDesc();
     }
 
     public TradeInsights getInsights() {
-
         List<PaperTrade> closedTrades =
                 repository.findAll()
                         .stream()
@@ -458,6 +456,106 @@ public class PaperTradingService {
                 .totalProfit(totalProfit)
                 .bestTrade(bestTrade)
                 .worstTrade(worstTrade)
+                .build();
+    }
+
+    public StrategyReport getStrategyReport() {
+        List<PaperTrade> trades =
+                repository.findAll()
+                        .stream()
+                        .filter(t ->
+                                t.getStatus() != SignalStatus.OPEN)
+                        .toList();
+
+        long totalTrades =
+                trades.size();
+
+        long winningTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() > 0)
+                        .count();
+
+        long losingTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() < 0)
+                        .count();
+
+        double winRate =
+                totalTrades == 0
+                        ? 0
+                        : ((double) winningTrades
+                        / totalTrades) * 100;
+
+        double averageConfidence =
+                trades.stream()
+                        .filter(t ->
+                                t.getConfidence() != null)
+                        .mapToInt(
+                                PaperTrade::getConfidence)
+                        .average()
+                        .orElse(0);
+
+        double averageWinningConfidence =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() > 0
+                                        && t.getConfidence() != null)
+                        .mapToInt(
+                                PaperTrade::getConfidence)
+                        .average()
+                        .orElse(0);
+
+        double averageLosingConfidence =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() < 0
+                                        && t.getConfidence() != null)
+                        .mapToInt(
+                                PaperTrade::getConfidence)
+                        .average()
+                        .orElse(0);
+
+        double averageWinningRsi =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() > 0
+                                        && t.getRsi() != null)
+                        .mapToDouble(
+                                PaperTrade::getRsi)
+                        .average()
+                        .orElse(0);
+
+        double averageLosingRsi =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() < 0
+                                        && t.getRsi() != null)
+                        .mapToDouble(
+                                PaperTrade::getRsi)
+                        .average()
+                        .orElse(0);
+
+        long breakevenTrades =  trades.stream().filter(t ->t.getProfitLoss() != null
+                                        && t.getProfitLoss() == 0).count();
+        return StrategyReport.builder()
+                .totalTrades(totalTrades)
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .winRate(winRate)
+                .averageConfidence(averageConfidence)
+                .averageWinningConfidence(averageWinningConfidence)
+                .averageLosingConfidence(averageLosingConfidence)
+                .averageWinningRsi(averageWinningRsi)
+                .averageLosingRsi(averageLosingRsi)
+                .breakevenTrades(breakevenTrades)
                 .build();
     }
 

@@ -1,14 +1,12 @@
 package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
-import com.ram.trading.signal.engine.dto.PaperTradeDashboard;
-import com.ram.trading.signal.engine.dto.PaperTradeSummary;
-import com.ram.trading.signal.engine.dto.TradeInsights;
-import com.ram.trading.signal.engine.dto.TradePerformance;
+import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -52,8 +50,12 @@ public class PaperTradingController {
 
     @GetMapping("/dashboard")
     public PaperTradeDashboard getDashboard() {
-
         return service.getDashboard();
+    }
+
+    @GetMapping("/strategy-report")
+    public StrategyReport getStrategyReport() {
+        return service.getStrategyReport();
     }
 
 }
