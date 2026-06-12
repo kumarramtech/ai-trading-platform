@@ -1,7 +1,10 @@
 package com.ram.trading.ai.engine.serviceimpl;
 
+import com.ram.trading.ai.engine.constant.PromptConstant;
 import com.ram.trading.ai.engine.dto.SignalExplanationRequest;
 import com.ram.trading.ai.engine.dto.SignalExplanationResponse;
+import com.ram.trading.ai.engine.dto.TradeReviewRequest;
+import com.ram.trading.ai.engine.dto.TradeReviewResponse;
 import com.ram.trading.ai.engine.service.AIAnalysisService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,20 +15,9 @@ import reactor.core.publisher.SignalType;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class AIAnalysisServiceImpl
-        implements AIAnalysisService {
+public class AIAnalysisServiceImpl implements AIAnalysisService {
 
-    public static final String STOCK_ANALYSIS =  """
-            You are a professional stock market analyst.
-            Analyze the trading signal and indicators.
-             Provide:
-                     1. Reason for the signal
-                     2. Indicator interpretation
-                     3. Risk assessment
-                     Keep the response under 75 words.
-                     Return plain text only.
-                     Do not use bullet points or numbering.
-                      """;
+
 
     private final ChatClient chatClient;
     @Override
@@ -33,7 +25,7 @@ public class AIAnalysisServiceImpl
             SignalExplanationRequest request) {
 
         String prompt =
-                STOCK_ANALYSIS
+                PromptConstant.STOCK_ANALYSIS
                         .formatted(
                                 request.getSymbol(),
                                 request.getSignal(),
@@ -50,32 +42,42 @@ public class AIAnalysisServiceImpl
                         .call()
                         .content();
 
-        if ("BUY".equalsIgnoreCase(
-                request.getSignal())) {
-
-          /*  explanation =
-                    "Bullish conditions detected. "
-                            + "Trend and momentum indicators support a BUY signal.";*/
-
-        } else if ("SELL".equalsIgnoreCase(
-                request.getSignal())) {
-
-          /*  explanation =
-                    "Bearish conditions detected. "
-                            + "EMA trend and MACD momentum support a SELL signal.";*/
-
-        } else {
-
-           /* explanation =
-                    "Market conditions are neutral. "
-                            + "No strong directional signal detected.";*/
-        }
-
         return SignalExplanationResponse.builder()
                 .symbol(request.getSymbol())
                 .signal(request.getSignal())
                 .confidence(request.getConfidence())
                 .explanation(explanation)
+                .build();
+    }
+
+    @Override
+    public TradeReviewResponse reviewTrade(
+            TradeReviewRequest request) {
+
+        String prompt =
+                PromptConstant.INTRA_DAY_TRADE_PROMPT
+                        .formatted(
+                                request.getTradeId(),
+                                request.getSymbol(),
+                                request.getSignal(),
+                                request.getEntryPrice(),
+                                request.getExitPrice(),
+                                request.getProfitLoss(),
+                                request.getConfidence(),
+                                request.getRsi(),
+                                request.getEma20(),
+                                request.getEma50(),
+                                request.getMacd());
+
+        String review =
+                chatClient.prompt()
+                        .user(prompt)
+                        .call()
+                        .content();
+
+        return TradeReviewResponse.builder()
+                .tradeId(request.getTradeId())
+                .review(review)
                 .build();
     }
 }

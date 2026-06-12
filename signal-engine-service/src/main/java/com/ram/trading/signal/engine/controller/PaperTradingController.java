@@ -58,4 +58,10 @@ public class PaperTradingController {
         return service.getStrategyReport();
     }
 
+    @GetMapping("/{id}/review")
+    public Mono<TradeReviewResponse> reviewTrade(
+            @PathVariable Long id) {
+        return service.reviewTrade(id);
+    }
+
 }

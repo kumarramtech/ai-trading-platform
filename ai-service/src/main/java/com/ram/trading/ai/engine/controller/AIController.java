@@ -2,6 +2,8 @@ package com.ram.trading.ai.engine.controller;
 
 import com.ram.trading.ai.engine.dto.SignalExplanationRequest;
 import com.ram.trading.ai.engine.dto.SignalExplanationResponse;
+import com.ram.trading.ai.engine.dto.TradeReviewRequest;
+import com.ram.trading.ai.engine.dto.TradeReviewResponse;
 import com.ram.trading.ai.engine.service.AIAnalysisService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,7 +23,11 @@ public class AIController {
             @RequestBody
             SignalExplanationRequest request) {
 
-        return service.explainSignal(
-                request);
+        return service.explainSignal(request);
+    }
+
+    @PostMapping("/review-trade")
+    public TradeReviewResponse reviewTrade(@RequestBody TradeReviewRequest request) {
+        return service.reviewTrade(request);
     }
 }

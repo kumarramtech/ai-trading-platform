@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.service;
 
+import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
@@ -10,6 +11,7 @@ import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -21,7 +23,7 @@ public class PaperTradingService {
 
     private final PaperTradeRepository repository;
 
-    private final IndicatorClient indicatorClient;
+    private final AIServiceClient aiServiceClient;
 
     public void createTrade(
             TradingSignalEntity signal,TechnicalIndicatorResponse indicatorResponse) {
@@ -559,5 +561,41 @@ public class PaperTradingService {
                 .build();
     }
 
+    public Mono<TradeReviewResponse> reviewTrade(
+            Long tradeId) {
+
+        PaperTrade trade =
+                repository.findById(tradeId)
+                        .orElseThrow();
+
+        if (trade.getExitPrice() == null ||
+                trade.getProfitLoss() == null) {
+
+            return Mono.just(
+                    TradeReviewResponse.builder()
+                            .tradeId(trade.getId())
+                            .review(
+                                    "Trade is still OPEN. AI review will be available once the trade is completed.")
+                            .build());
+        }
+
+        TradeReviewRequest request =
+                TradeReviewRequest.builder()
+                        .tradeId(trade.getId())
+                        .symbol(trade.getSymbol())
+                        .signal(trade.getSignal())
+                        .entryPrice(trade.getEntryPrice())
+                        .exitPrice(trade.getExitPrice())
+                        .profitLoss(trade.getProfitLoss())
+                        .confidence(trade.getConfidence())
+                        .rsi(trade.getRsi())
+                        .ema20(trade.getEma20())
+                        .ema50(trade.getEma50())
+                        .macd(trade.getMacd())
+                        .build();
+
+        return aiServiceClient.reviewTrade(
+                request);
+    }
 
 }
