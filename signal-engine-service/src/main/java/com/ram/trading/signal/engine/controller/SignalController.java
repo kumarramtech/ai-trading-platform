@@ -3,6 +3,7 @@ package com.ram.trading.signal.engine.controller;
 import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.service.SignalService;
 import com.ram.trading.signal.engine.service.interfac.AIAnalysisService;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.contant.SignalType;
@@ -40,6 +41,8 @@ public class SignalController {
     private final AIAnalysisService aiAnalysisService;
 
     private final AIServiceClient aiServiceClient;
+
+    private final SignalService signalService;
 
     @GetMapping("/{symbol}")
     public Mono<TradingSignal> generateSignal(
@@ -121,4 +124,10 @@ public class SignalController {
                                                 })));
     }
 
+    @GetMapping("/{symbol}/risk-analysis")
+    public Mono<RiskAnalysisResponse> riskAnalysis(
+            @PathVariable String symbol) {
+
+        return signalService.analyzeRisk(symbol);
+    }
 }

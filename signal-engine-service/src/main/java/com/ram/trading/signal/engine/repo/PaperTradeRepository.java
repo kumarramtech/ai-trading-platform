@@ -28,4 +28,6 @@ public interface PaperTradeRepository
             SignalStatus status);
 
     List<PaperTrade> findAllByOrderByEntryTimeDesc();
+
+    List<PaperTrade> findTop20ByStatusNotOrderByIdDesc(SignalStatus status);
 }

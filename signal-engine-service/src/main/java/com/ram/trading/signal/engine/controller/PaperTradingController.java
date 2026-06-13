@@ -64,4 +64,9 @@ public class PaperTradingController {
         return service.reviewTrade(id);
     }
 
+    @GetMapping("/strategy-review")
+    public Mono<StrategyReviewResponse> strategyReview() {
+        return service.strategyReview();
+    }
+
 }

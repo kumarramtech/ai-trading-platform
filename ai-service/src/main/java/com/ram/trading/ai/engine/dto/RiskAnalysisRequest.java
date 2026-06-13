@@ -1,23 +1,27 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.ai.engine.dto;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
-@AllArgsConstructor
+@Builder
 @NoArgsConstructor
-public class TradingSignal {
+@AllArgsConstructor
+public class RiskAnalysisRequest {
 
     private String symbol;
+
     private String signal;
-    private Double entryPrice;
-    private Double targetPrice;
-    private Double stopLoss;
-    private String reason;
+
     private Integer confidence;
+
     private Double rsi;
+
     private Double ema20;
+
     private Double ema50;
+
     private Double macd;
 }

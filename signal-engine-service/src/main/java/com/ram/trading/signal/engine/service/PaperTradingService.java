@@ -598,4 +598,41 @@ public class PaperTradingService {
                 request);
     }
 
+    public Mono<StrategyReviewResponse> strategyReview() {
+
+        List<PaperTrade> trades =
+                repository
+                        .findTop20ByStatusNotOrderByIdDesc(
+                                SignalStatus.OPEN);
+
+        List<TradeReviewRequest> requests =
+                trades.stream()
+                        .map(trade ->
+                                TradeReviewRequest.builder()
+                                        .tradeId(trade.getId())
+                                        .symbol(trade.getSymbol())
+                                        .signal(trade.getSignal())
+                                        .entryPrice(trade.getEntryPrice())
+                                        .exitPrice(trade.getExitPrice())
+                                        .profitLoss(trade.getProfitLoss())
+                                        .confidence(trade.getConfidence())
+                                        .rsi(trade.getRsi())
+                                        .ema20(trade.getEma20())
+                                        .ema50(trade.getEma50())
+                                        .macd(trade.getMacd())
+                                        .build())
+                        .toList();
+                if (requests.isEmpty()) {
+                    return Mono.just(
+                            StrategyReviewResponse.builder()
+                                    .totalTrades(0)
+                                    .winningTrades(0)
+                                    .losingTrades(0)
+                                    .review("No completed trades available for strategy review.")
+                                    .build());
+                }
+        return aiServiceClient
+                .reviewStrategy(requests);
+    }
+
 }

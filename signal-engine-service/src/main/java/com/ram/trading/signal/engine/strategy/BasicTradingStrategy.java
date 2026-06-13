@@ -158,7 +158,11 @@ public class BasicTradingStrategy
                             targetPrice,
                             stopLoss,
                             finalReason,
-                            confidence
+                            confidence,
+                            indicator.getRsi14(),
+                            indicator.getEma20(),
+                            indicator.getEma50(),
+                            indicator.getMacd()
                     );
                 });
     }
