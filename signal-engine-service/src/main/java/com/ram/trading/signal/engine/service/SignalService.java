@@ -2,16 +2,19 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
+import com.ram.trading.signal.engine.dto.OpportunityResponse;
 import com.ram.trading.signal.engine.dto.RiskAnalysisRequest;
 import com.ram.trading.signal.engine.dto.RiskAnalysisResponse;
-import com.ram.trading.signal.engine.dto.StrategyReviewResponse;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SignalService {
 
     private final BasicTradingStrategy basicStrategy;
@@ -61,5 +64,31 @@ public class SignalService {
                 && request.getEma20() != null
                 && request.getEma50() != null
                 && request.getMacd() != null;
+    }
+
+    public Flux<OpportunityResponse> getTopOpportunities() {
+
+        return stockService
+                .getAllStocks()
+                .flatMap(basicStrategy::generateSignal)
+                .onErrorResume(ex -> {
+                    log.warn("Skipping stock due to error: {}", ex.getMessage());
+                    return Mono.empty();
+                })
+                .filter(signal ->
+                        !"HOLD".equals(signal.getSignal()))
+                .map(signal ->
+                        OpportunityResponse.builder()
+                                .symbol(signal.getSymbol())
+                                .signal(signal.getSignal())
+                                .confidence(signal.getConfidence())
+                                .targetPrice(signal.getTargetPrice())
+                                .stopLoss(signal.getStopLoss())
+                                .build())
+                .sort((a, b) ->
+                        Integer.compare(
+                                b.getConfidence(),
+                                a.getConfidence()))
+                .take(5);
     }
 }

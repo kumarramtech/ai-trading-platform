@@ -12,16 +12,11 @@ import java.util.Optional;
 public interface PaperTradeRepository
         extends JpaRepository<PaperTrade, Long> {
 
-    List<PaperTrade> findByStatus(
-            SignalStatus status);
+    List<PaperTrade> findByStatus(SignalStatus status);
 
-    Optional<PaperTrade>
-    findTopBySymbolAndStatusOrderByEntryTimeDesc(
-            String symbol,
-            SignalStatus status);
+    Optional<PaperTrade> findTopBySymbolAndStatusOrderByEntryTimeDesc(String symbol, SignalStatus status);
 
-    Optional<PaperTrade> findBySignalId(
-            Long signalId);
+    Optional<PaperTrade> findBySignalId(Long signalId);
 
     Optional<PaperTrade> findBySignalIdAndStatus(
             Long signalId,

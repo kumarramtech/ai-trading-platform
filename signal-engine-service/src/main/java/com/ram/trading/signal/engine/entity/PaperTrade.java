@@ -52,4 +52,8 @@ public class PaperTrade {
     private Double macd;
 
     private Integer confidence;
+
+    private Double targetPrice;
+
+    private Double stopLoss;
 }

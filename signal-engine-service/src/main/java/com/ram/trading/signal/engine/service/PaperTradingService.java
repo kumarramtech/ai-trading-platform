@@ -2,6 +2,7 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.IndicatorClient;
+import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.*;
@@ -11,6 +12,7 @@ import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
@@ -24,6 +26,8 @@ public class PaperTradingService {
     private final PaperTradeRepository repository;
 
     private final AIServiceClient aiServiceClient;
+
+    private final StockServiceClient stockServiceClient;
 
     public void createTrade(
             TradingSignalEntity signal,TechnicalIndicatorResponse indicatorResponse) {
@@ -635,4 +639,101 @@ public class PaperTradingService {
                 .reviewStrategy(requests);
     }
 
+    public Mono<Void> monitorOpenTrades() {
+
+        List<PaperTrade> openTrades = repository.findByStatus(SignalStatus.OPEN);
+        log.info("Found {} open trades",openTrades.size());
+
+        return Flux.fromIterable(openTrades)
+                .flatMap(this::evaluateTrade)
+                .then();
+    }
+
+    private Mono<Void> evaluateTrade(
+            PaperTrade trade) {
+
+        if (trade.getTargetPrice() == null
+                || trade.getStopLoss() == null) {
+
+            log.warn(
+                    "Trade {} missing target/stop loss. Skipping.",
+                    trade.getId());
+
+            return Mono.empty();
+        }
+
+        return stockServiceClient
+                .getStockPrice(trade.getSymbol())
+                .flatMap(stock -> {
+
+                    Double currentPrice =
+                            stock.getPrice();
+
+                    if ("SELL".equals(trade.getSignal())) {
+
+                        if (currentPrice <= trade.getTargetPrice()) {
+
+                            log.info(
+                                    "Trade {} TARGET HIT",
+                                    trade.getId());
+
+                            closeTrade(
+                                    trade,
+                                    currentPrice,
+                                    SignalStatus.TARGET_HIT);
+
+                        } else if (currentPrice >= trade.getStopLoss()) {
+
+                            log.info(
+                                    "Trade {} STOP LOSS HIT",
+                                    trade.getId());
+
+                            closeTrade(
+                                    trade,
+                                    currentPrice,
+                                    SignalStatus.STOP_LOSS_HIT);
+                        }
+                    }
+
+                    return Mono.empty();
+                });
+    }
+
+    private void closeTrade(
+            PaperTrade trade,
+            Double exitPrice,
+            SignalStatus status) {
+
+        trade.setExitPrice(exitPrice);
+
+        trade.setExitTime(
+                LocalDateTime.now());
+
+        trade.setStatus(status);
+
+        double profitLoss;
+
+        if ("SELL".equals(trade.getSignal())) {
+
+            profitLoss =
+                    (trade.getEntryPrice() - exitPrice)
+                            * trade.getQuantity();
+
+        } else {
+
+            profitLoss =
+                    (exitPrice - trade.getEntryPrice())
+                            * trade.getQuantity();
+        }
+
+        trade.setProfitLoss(profitLoss);
+
+        repository.save(trade);
+
+        log.info(
+                "Trade {} closed with status {} profit {}",
+                trade.getId(),
+                status,
+                profitLoss);
+    }
 }

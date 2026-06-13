@@ -47,4 +47,5 @@ public class TradingSignalService {
         return repository.findByStatus(SignalStatus.OPEN);
     }
 
+
 }
