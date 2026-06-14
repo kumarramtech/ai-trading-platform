@@ -69,4 +69,26 @@ public class PaperTradingController {
         return service.strategyReview();
     }
 
+    @GetMapping("/analytics")
+    public TradeAnalyticsResponse getAnalytics() {
+        return service.getAnalytics();
+    }
+
+    @GetMapping("/{symbol}/position-size")
+    public Mono<PositionSizingResponse> getPositionSize(@PathVariable String symbol,@RequestParam Double capital) {
+        return service.getPositionSize(symbol,capital);
+    }
+
+    @GetMapping("/daily-pnl")
+    public DailyPnLResponse getDailyPnL() {
+
+        return service.getDailyPnL();
+    }
+
+    @GetMapping("/pnldashboard")
+    public TradingDashboardResponse dashboard() {
+
+        return service.getPnLDashboard();
+    }
+
 }

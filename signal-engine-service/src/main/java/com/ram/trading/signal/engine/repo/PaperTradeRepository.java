@@ -25,4 +25,5 @@ public interface PaperTradeRepository
     List<PaperTrade> findAllByOrderByEntryTimeDesc();
 
     List<PaperTrade> findTop20ByStatusNotOrderByIdDesc(SignalStatus status);
+    long countByStatus(SignalStatus status);
 }

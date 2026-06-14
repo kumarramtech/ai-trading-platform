@@ -22,4 +22,10 @@ public class PaperTradeSummary {
     private double totalProfit;
 
     private double winRate;
+
+    private Long winningTrades;
+
+    private Long losingTrades;
+
+    private Long breakevenTrades;
 }

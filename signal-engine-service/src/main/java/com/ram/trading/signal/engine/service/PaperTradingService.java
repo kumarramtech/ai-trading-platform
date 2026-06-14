@@ -9,12 +9,14 @@ import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
+import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -28,6 +30,8 @@ public class PaperTradingService {
     private final AIServiceClient aiServiceClient;
 
     private final StockServiceClient stockServiceClient;
+
+    private final BasicTradingStrategy basicTradingStrategy;
 
     public void createTrade(
             TradingSignalEntity signal,TechnicalIndicatorResponse indicatorResponse) {
@@ -108,22 +112,7 @@ public class PaperTradingService {
                         .count();
 
         long closedPositions =
-                totalTrades -
-                        openPositions;
-
-        double totalInvestment =
-                trades.stream()
-                        .mapToDouble(
-                                PaperTrade::getInvestedAmount)
-                        .sum();
-
-        double totalProfit =
-                trades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null)
-                        .mapToDouble(
-                                PaperTrade::getProfitLoss)
-                        .sum();
+                totalTrades - openPositions;
 
         long winningTrades =
                 trades.stream()
@@ -139,6 +128,30 @@ public class PaperTradingService {
                                         && t.getProfitLoss() < 0)
                         .count();
 
+        long breakevenTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() == 0)
+                        .count();
+
+        double totalInvestment =
+                trades.stream()
+                        .filter(t ->
+                                SignalStatus.OPEN
+                                        .equals(t.getStatus()))
+                        .mapToDouble(
+                                PaperTrade::getInvestedAmount)
+                        .sum();
+
+        double totalProfit =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .sum();
+
         double winRate =
                 (winningTrades + losingTrades) == 0
                         ? 0
@@ -149,9 +162,12 @@ public class PaperTradingService {
                 .totalTrades(totalTrades)
                 .openPositions(openPositions)
                 .closedPositions(closedPositions)
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .breakevenTrades(breakevenTrades)
                 .totalInvestment(totalInvestment)
                 .totalProfit(totalProfit)
-                .winRate(winRate)
+                .winRate(Math.round(winRate * 100.0) / 100.0)
                 .build();
     }
 
@@ -735,5 +751,247 @@ public class PaperTradingService {
                 trade.getId(),
                 status,
                 profitLoss);
+    }
+
+    public TradeAnalyticsResponse getAnalytics() {
+
+        List<PaperTrade> completedTrades =
+                repository.findAll()
+                        .stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null)
+                        .toList();
+
+        long totalTrades = completedTrades.size();
+
+        long winningTrades =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() > 0)
+                        .count();
+
+        long losingTrades =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() < 0)
+                        .count();
+
+        double totalProfit =
+                completedTrades.stream()
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .sum();
+
+        double winRate =
+                totalTrades == 0
+                        ? 0
+                        : (winningTrades * 100.0) / totalTrades;
+
+        long breakevenTrades =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() == 0)
+                        .count();
+
+        double averageLoss =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() != null)
+                        .filter(t -> t.getProfitLoss() < 0)
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .average()
+                        .orElse(0.0);
+
+        double bestTrade =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() != null)
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .max()
+                        .orElse(0.0);
+
+        double worstTrade =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() != null)
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .min()
+                        .orElse(0.0);
+
+        double averageProfit =
+                completedTrades.stream()
+                        .filter(t -> t.getProfitLoss() != null)
+                        .filter(t -> t.getProfitLoss() > 0)
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .average()
+                        .orElse(0.0);
+
+        return TradeAnalyticsResponse.builder()
+                .totalTrades(totalTrades)
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .breakevenTrades(breakevenTrades)
+                .winRate(winRate)
+                .totalProfit(totalProfit)
+                .averageProfit(averageProfit)
+                .averageLoss(averageLoss)
+                .bestTrade(bestTrade)
+                .worstTrade(worstTrade)
+                .build();
+    }
+
+    public Mono<PositionSizingResponse> getPositionSize(String symbol, Double capital) {
+
+        return stockServiceClient
+                .getStockPrice(symbol)
+                .flatMap(basicTradingStrategy::generateSignal)
+                .map(signal -> {
+
+                    double allocationPercentage =
+                            getAllocationPercentage(
+                                    signal.getConfidence());
+
+                    double investment =
+                            capital * allocationPercentage;
+
+                    int quantity =
+                            (int) (investment
+                                    / signal.getEntryPrice());
+
+                    double riskPerShare;
+
+                    if ("BUY".equals(signal.getSignal())) {
+
+                        riskPerShare =
+                                signal.getEntryPrice()
+                                        - signal.getStopLoss();
+
+                    } else {
+
+                        riskPerShare =
+                                signal.getStopLoss()
+                                        - signal.getEntryPrice();
+                    }
+
+                    return PositionSizingResponse
+                            .builder()
+                            .symbol(signal.getSymbol())
+                            .capital(capital)
+                            .confidence(signal.getConfidence())
+                            .recommendedInvestment(round(investment))
+                            .recommendedQuantity(quantity)
+                            .riskPerShare(round(riskPerShare))
+                            .totalRisk(round(quantity * riskPerShare))
+                            .build();
+                });
+    }
+
+    public DailyPnLResponse getDailyPnL() {
+
+        LocalDate today =
+                LocalDate.now();
+
+        List<PaperTrade> trades =
+                repository.findAll()
+                        .stream()
+                        .filter(t ->
+                                t.getExitTime() != null)
+                        .filter(t ->
+                                t.getExitTime()
+                                        .toLocalDate()
+                                        .equals(today))
+                        .toList();
+
+        double todayProfit =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .sum();
+
+        long winningTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .filter(t ->
+                                t.getProfitLoss() > 0)
+                        .count();
+
+        long losingTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .filter(t ->
+                                t.getProfitLoss() < 0)
+                        .count();
+
+        long breakevenTrades =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null)
+                        .filter(t ->
+                                t.getProfitLoss() == 0)
+                        .count();
+
+        return DailyPnLResponse.builder()
+                .todayProfit(todayProfit)
+                .totalTrades(
+                        (long) trades.size())
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .breakevenTrades(
+                        breakevenTrades)
+                .build();
+    }
+
+    public TradingDashboardResponse getPnLDashboard() {
+
+        TradeAnalyticsResponse analytics =
+                getAnalytics();
+
+        DailyPnLResponse dailyPnL =
+                getDailyPnL();
+
+        long openTrades = repository.countByStatus(SignalStatus.OPEN);
+
+        return TradingDashboardResponse
+                .builder()
+                .totalTrades(
+                        analytics.getTotalTrades())
+                .winningTrades(
+                        analytics.getWinningTrades())
+                .losingTrades(
+                        analytics.getLosingTrades())
+                .breakevenTrades(
+                        analytics.getBreakevenTrades())
+                .winRate(
+                        analytics.getWinRate())
+                .totalProfit(
+                        analytics.getTotalProfit())
+                .todayProfit(
+                        dailyPnL.getTodayProfit())
+                .averageProfit(
+                        analytics.getAverageProfit())
+                .averageLoss(
+                        analytics.getAverageLoss())
+                .bestTrade(
+                        analytics.getBestTrade())
+                .worstTrade(
+                        analytics.getWorstTrade())
+                .openTrades(
+                        openTrades)
+                .build();
+    }
+
+
+
+    private double getAllocationPercentage(Integer confidence) {
+        if (confidence >= 80) {
+            return 0.20;
+        }
+        if (confidence >= 70) {
+            return 0.15;
+        }
+        if (confidence >= 50) {
+            return 0.10;
+        }
+        return 0.05;
+    }
+    private double round(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 }
