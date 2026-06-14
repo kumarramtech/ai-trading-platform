@@ -2,10 +2,13 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.IndicatorClient;
+import com.ram.trading.signal.engine.client.NotificationClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
+import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
@@ -32,6 +35,8 @@ public class PaperTradingService {
     private final StockServiceClient stockServiceClient;
 
     private final BasicTradingStrategy basicTradingStrategy;
+
+    private final NotificationClient notificationClient;
 
     public void createTrade(
             TradingSignalEntity signal,TechnicalIndicatorResponse indicatorResponse) {
@@ -85,6 +90,23 @@ public class PaperTradingService {
                         .build();
 
         repository.save(trade);
+
+        NotificationRequest request =
+                NotificationRequest.builder()
+                        .channel(NotificationChannel.WHATSAPP)
+                        .title("NEW SIGNAL")
+                        .message(signal.getSignal()
+                                        + " "
+                                        + signal.getSymbol()
+                                        + " @ "
+                                        + signal.getEntryPrice()
+                                        + " Confidence "
+                                        + signal.getConfidence())
+                        .build();
+
+        notificationClient
+                .sendNotification(request)
+                .subscribe();
     }
 
     public List<PaperTrade> getByStatus(SignalStatus status) {
@@ -214,19 +236,28 @@ public class PaperTradingService {
         trade.setExitTime(
                 LocalDateTime.now());
 
-        log.info(
-                "Closing Trade for signalId="
-                        + signalId);
+        log.info("Closing Trade for signalId="  + signalId);
 
-        log.info(
-                "Trade Found="
-                        + trade.getId());
+        log.info( "Trade Found="  + trade.getId());
 
-        log.info(
-                "Profit/Loss="
-                        + profitLoss);
+        log.info( "Profit/Loss=" + profitLoss);
 
         repository.save(trade);
+
+        NotificationRequest request =
+                NotificationRequest.builder()
+                        .channel(NotificationChannel.WHATSAPP)
+                        .title("TRADE CLOSED")
+                        .message(trade.getSymbol()
+                                        + " "
+                                        + status
+                                        + " Profit/Loss="
+                                        + profitLoss)
+                        .build();
+
+        notificationClient
+                .sendNotification(request)
+                .subscribe();
     }
 
     public TradePerformance getPerformance() {
