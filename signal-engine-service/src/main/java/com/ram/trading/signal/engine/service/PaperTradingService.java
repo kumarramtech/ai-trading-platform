@@ -1039,28 +1039,21 @@ public class PaperTradingService {
 
                                         OpportunityDashboard
                                                 .builder()
-                                                .symbol(
-                                                        opportunity.getSymbol())
-                                                .signal(
-                                                        opportunity.getSignal())
-                                                .confidence(
-                                                        opportunity.getConfidence())
-                                                .score(
-                                                        opportunity.getScore())
-                                                .targetPrice(
-                                                        opportunity.getTargetPrice())
-                                                .stopLoss(
-                                                        opportunity.getStopLoss())
-                                                .entryPrice(
-                                                        opportunity.getEntryPrice())
-                                                .recommendedInvestment(
-                                                        position.getRecommendedInvestment())
-                                                .recommendedQuantity(
-                                                        position.getRecommendedQuantity())
-                                                .riskPerShare(
-                                                        position.getRiskPerShare())
-                                                .totalRisk(
-                                                        position.getTotalRisk())
+                                                .symbol(opportunity.getSymbol())
+                                                .signal(opportunity.getSignal())
+                                                .confidence(opportunity.getConfidence())
+                                                .score(opportunity.getScore())
+                                                .targetPrice(opportunity.getTargetPrice())
+                                                .stopLoss(opportunity.getStopLoss())
+                                                .entryPrice(opportunity.getEntryPrice())
+                                                .sentiment(opportunity.getSentiment())
+                                                .sentimentScore(opportunity.getSentimentScore())
+                                                .technicalReason(opportunity.getTechnicalReason())
+                                                .sentimentReason(opportunity.getSentimentReason())
+                                                .recommendedInvestment(position.getRecommendedInvestment())
+                                                .recommendedQuantity(position.getRecommendedQuantity())
+                                                .riskPerShare(position.getRiskPerShare())
+                                                .totalRisk(position.getTotalRisk())
                                                 .build()));
     }
 

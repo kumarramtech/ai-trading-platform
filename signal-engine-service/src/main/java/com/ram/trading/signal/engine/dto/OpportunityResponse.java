@@ -16,4 +16,8 @@ public class OpportunityResponse {
     private Double stopLoss;
     private Integer score;
     private Double entryPrice;
+    private Integer sentimentScore;
+    private String sentiment;
+    private String technicalReason;
+    private String sentimentReason;
 }

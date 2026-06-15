@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
+import com.ram.trading.signal.engine.client.MarketSentimentClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.dto.OpportunityResponse;
 import com.ram.trading.signal.engine.dto.RiskAnalysisRequest;
@@ -21,6 +22,7 @@ public class SignalService {
     private final BasicTradingStrategy basicStrategy;
     private final StockServiceClient stockService;
     private final AIServiceClient aiServiceClient;
+    private final MarketSentimentClient marketSentimentClient;
 
     public Mono<RiskAnalysisResponse> analyzeRisk(
             String symbol) {
@@ -72,7 +74,27 @@ public class SignalService {
         return stockService
                 .getAllStocks()
                 .flatMap(basicStrategy::generateSignal)
+                .flatMap(signal ->
+                        marketSentimentClient
+                                .getSentiment(
+                                        signal.getSymbol())
 
+                                .map(sentiment ->
+
+                                        OpportunityResponse
+                                                .builder()
+                                                .symbol(signal.getSymbol())
+                                                .signal(signal.getSignal())
+                                                .confidence(signal.getConfidence())
+                                                .targetPrice(signal.getTargetPrice())
+                                                .stopLoss(signal.getStopLoss())
+                                                .entryPrice(signal.getEntryPrice())
+                                                .technicalReason(signal.getReason())
+                                                .sentimentReason(sentiment.getReason())
+                                                .sentiment(sentiment.getSentiment())
+                                                .sentimentScore(sentiment.getSentimentScore())
+                                                .score(signal.getConfidence()+ sentiment.getSentimentScore())
+                                                .build()))
                 .doOnNext(signal ->
                         log.info(
                                 "Signal={} Symbol={} EntryPrice={}",
@@ -81,32 +103,24 @@ public class SignalService {
                                 signal.getEntryPrice()))
 
                 .onErrorResume(ex -> {
-                    log.warn(
-                            "Skipping stock due to error: {}",
-                            ex.getMessage());
+                    log.warn("Skipping stock due to error: {}",ex.getMessage());
                     return Mono.empty();
                 })
-
                 .filter(signal ->
-                        !"HOLD".equals(
-                                signal.getSignal()))
+                        !"HOLD".equals(signal.getSignal()))
 
-                .map(signal ->
-                        OpportunityResponse.builder()
-                                .symbol(signal.getSymbol())
-                                .signal(signal.getSignal())
-                                .confidence(signal.getConfidence())
-                                .targetPrice(signal.getTargetPrice())
-                                .stopLoss(signal.getStopLoss())
-                                .score(calculateScore(signal))
-                                .entryPrice(
-                                        signal.getEntryPrice())
-                                .build())
-
-                .sort((a, b) ->
-                        Integer.compare(
-                                b.getConfidence(),
-                                a.getConfidence()))
+                .sort((a, b) -> {
+                    int scoreCompare =
+                            Integer.compare(
+                                    b.getScore(),
+                                    a.getScore());
+                    if(scoreCompare != 0) {
+                        return scoreCompare;
+                    }
+                    return Integer.compare(
+                            b.getConfidence(),
+                            a.getConfidence());
+                })
 
                 .collectList()
 
@@ -116,7 +130,6 @@ public class SignalService {
                     }
                     return Flux.fromIterable(list);
                 })
-
                 .take(5);
     }
 
