@@ -91,4 +91,10 @@ public class PaperTradingController {
         return service.getPnLDashboard();
     }
 
+    @GetMapping("/opportunity-dashboard")
+    public Mono<OpportunityDashboard>getOpportunityDashboard(@RequestParam Double capital) {
+
+        return service.getBestOpportunity(capital);
+    }
+
 }

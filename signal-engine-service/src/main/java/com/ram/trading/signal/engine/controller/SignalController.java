@@ -135,7 +135,7 @@ public class SignalController {
     @GetMapping("/opportunities")
     public Flux<OpportunityResponse> opportunities() {
 
-        return signalService
-                .getTopOpportunities();
+        return signalService.getTopOpportunities();
     }
+
 }

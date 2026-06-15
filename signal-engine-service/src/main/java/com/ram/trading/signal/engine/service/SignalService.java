@@ -5,6 +5,7 @@ import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.dto.OpportunityResponse;
 import com.ram.trading.signal.engine.dto.RiskAnalysisRequest;
 import com.ram.trading.signal.engine.dto.RiskAnalysisResponse;
+import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,12 +72,25 @@ public class SignalService {
         return stockService
                 .getAllStocks()
                 .flatMap(basicStrategy::generateSignal)
+
+                .doOnNext(signal ->
+                        log.info(
+                                "Signal={} Symbol={} EntryPrice={}",
+                                signal.getSignal(),
+                                signal.getSymbol(),
+                                signal.getEntryPrice()))
+
                 .onErrorResume(ex -> {
-                    log.warn("Skipping stock due to error: {}", ex.getMessage());
+                    log.warn(
+                            "Skipping stock due to error: {}",
+                            ex.getMessage());
                     return Mono.empty();
                 })
+
                 .filter(signal ->
-                        !"HOLD".equals(signal.getSignal()))
+                        !"HOLD".equals(
+                                signal.getSignal()))
+
                 .map(signal ->
                         OpportunityResponse.builder()
                                 .symbol(signal.getSymbol())
@@ -84,11 +98,33 @@ public class SignalService {
                                 .confidence(signal.getConfidence())
                                 .targetPrice(signal.getTargetPrice())
                                 .stopLoss(signal.getStopLoss())
+                                .score(calculateScore(signal))
+                                .entryPrice(
+                                        signal.getEntryPrice())
                                 .build())
+
                 .sort((a, b) ->
                         Integer.compare(
                                 b.getConfidence(),
                                 a.getConfidence()))
+
+                .collectList()
+
+                .flatMapMany(list -> {
+                    for (int i = 0; i < list.size(); i++) {
+                        list.get(i).setRank(i + 1);
+                    }
+                    return Flux.fromIterable(list);
+                })
+
                 .take(5);
+    }
+
+    private int calculateScore(TradingSignal signal) {
+        int score =signal.getConfidence();
+        if ("BUY".equals(signal.getSignal())) {
+            score += 10;
+        }
+        return score;
     }
 }

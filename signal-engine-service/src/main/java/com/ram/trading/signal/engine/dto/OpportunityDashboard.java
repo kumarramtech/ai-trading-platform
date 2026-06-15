@@ -1,19 +1,29 @@
 package com.ram.trading.signal.engine.dto;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Builder
-@Getter
-@Setter
+@Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class PositionSizingResponse {
+public class OpportunityDashboard {
 
     private String symbol;
 
-    private Double capital;
+    private String signal;
 
     private Integer confidence;
+
+    private Integer score;
+
+    private Double entryPrice;
+
+    private Double targetPrice;
+
+    private Double stopLoss;
 
     private Double recommendedInvestment;
 
@@ -22,6 +32,4 @@ public class PositionSizingResponse {
     private Double riskPerShare;
 
     private Double totalRisk;
-
-    private Double entryPrice;
 }

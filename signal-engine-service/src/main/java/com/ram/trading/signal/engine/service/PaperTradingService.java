@@ -38,6 +38,8 @@ public class PaperTradingService {
 
     private final NotificationClient notificationClient;
 
+    private final SignalService signalService;
+
     public void createTrade(
             TradingSignalEntity signal,TechnicalIndicatorResponse indicatorResponse) {
 
@@ -95,17 +97,22 @@ public class PaperTradingService {
                 NotificationRequest.builder()
                         .channel(NotificationChannel.WHATSAPP)
                         .title("NEW SIGNAL")
-                        .message(signal.getSignal()
-                                        + " "
-                                        + signal.getSymbol()
-                                        + " @ "
-                                        + signal.getEntryPrice()
-                                        + " Confidence "
+                        .message(
+                                "Symbol: " + signal.getSymbol()
+                                        + ", Signal: " + signal.getSignal()
+                                        + ", Entry: " + signal.getEntryPrice()
+                                        + ", Target: " + signal.getTargetPrice()
+                                        + ", StopLoss: " + signal.getStopLoss()
+                                        + ", Confidence: "
                                         + signal.getConfidence())
                         .build();
 
         notificationClient
                 .sendNotification(request)
+                .doOnError(error ->
+                        log.error(
+                                "Failed to send notification",
+                                error))
                 .subscribe();
     }
 
@@ -248,15 +255,23 @@ public class PaperTradingService {
                 NotificationRequest.builder()
                         .channel(NotificationChannel.WHATSAPP)
                         .title("TRADE CLOSED")
-                        .message(trade.getSymbol()
-                                        + " "
-                                        + status
-                                        + " Profit/Loss="
+                        .message(
+                                "Symbol: " + trade.getSymbol()
+                                        + ", Status: " + status
+                                        + ", Entry: "
+                                        + trade.getEntryPrice()
+                                        + ", Exit: "
+                                        + exitPrice
+                                        + ", PnL: "
                                         + profitLoss)
                         .build();
 
         notificationClient
                 .sendNotification(request)
+                .doOnError(error ->
+                        log.error(
+                                "Failed to send notification",
+                                error))
                 .subscribe();
     }
 
@@ -1008,7 +1023,46 @@ public class PaperTradingService {
                 .build();
     }
 
+    public Mono<OpportunityDashboard> getBestOpportunity(
+            Double capital) {
 
+        return signalService
+                .getTopOpportunities()
+                .next()
+                .flatMap(opportunity ->
+
+                        getPositionSize(
+                                opportunity.getSymbol(),
+                                capital)
+
+                                .map(position ->
+
+                                        OpportunityDashboard
+                                                .builder()
+                                                .symbol(
+                                                        opportunity.getSymbol())
+                                                .signal(
+                                                        opportunity.getSignal())
+                                                .confidence(
+                                                        opportunity.getConfidence())
+                                                .score(
+                                                        opportunity.getScore())
+                                                .targetPrice(
+                                                        opportunity.getTargetPrice())
+                                                .stopLoss(
+                                                        opportunity.getStopLoss())
+                                                .entryPrice(
+                                                        opportunity.getEntryPrice())
+                                                .recommendedInvestment(
+                                                        position.getRecommendedInvestment())
+                                                .recommendedQuantity(
+                                                        position.getRecommendedQuantity())
+                                                .riskPerShare(
+                                                        position.getRiskPerShare())
+                                                .totalRisk(
+                                                        position.getTotalRisk())
+                                                .build()));
+    }
 
     private double getAllocationPercentage(Integer confidence) {
         if (confidence >= 80) {
@@ -1025,4 +1079,5 @@ public class PaperTradingService {
     private double round(double value) {
         return Math.round(value * 100.0) / 100.0;
     }
+
 }
