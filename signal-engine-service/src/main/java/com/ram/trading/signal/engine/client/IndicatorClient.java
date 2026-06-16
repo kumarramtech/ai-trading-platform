@@ -17,8 +17,7 @@ public class IndicatorClient {
 
         return webClientBuilder.build()
                 .get()
-                .uri(
-                        "http://localhost:8085/backtest/latest/{symbol}",
+                .uri("http://localhost:8085/backtest/latest/{symbol}",
                         symbol)
                 .retrieve()
                 .bodyToMono(

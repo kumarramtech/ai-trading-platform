@@ -97,4 +97,10 @@ public class PaperTradingController {
         return service.getBestOpportunity(capital);
     }
 
+    @GetMapping("/advanced-metrics")
+    public AnalyticsMetricsResponse advancedMetrics() {
+
+        return service.getAdvancedMetrics();
+    }
+
 }

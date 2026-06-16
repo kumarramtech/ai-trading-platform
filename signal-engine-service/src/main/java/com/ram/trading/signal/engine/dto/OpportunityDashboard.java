@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.dto;
 
+import com.ram.trading.signal.engine.contant.Recommendation;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -26,4 +27,5 @@ public class OpportunityDashboard {
     private Integer sentimentScore;
     private String technicalReason;
     private String sentimentReason;
+    private Recommendation recommendation;
 }

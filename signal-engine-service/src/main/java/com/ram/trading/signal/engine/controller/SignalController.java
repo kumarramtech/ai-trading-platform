@@ -3,16 +3,14 @@ package com.ram.trading.signal.engine.controller;
 import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.dto.*;
-import com.ram.trading.signal.engine.service.SignalService;
+import com.ram.trading.signal.engine.service.*;
 import com.ram.trading.signal.engine.service.interfac.AIAnalysisService;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
-import com.ram.trading.signal.engine.service.PaperTradingService;
-import com.ram.trading.signal.engine.service.SignalStatService;
-import com.ram.trading.signal.engine.service.TradingSignalService;
 import com.ram.trading.signal.engine.strategy.TradingStrategy;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,6 +23,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/signals")
 @RequiredArgsConstructor
+@Slf4j
 public class SignalController {
 
     private final MarketDataProvider marketDataProvider;
@@ -45,6 +44,8 @@ public class SignalController {
 
     private final SignalService signalService;
 
+    private final RiskManagementService riskManagementService;
+
     @GetMapping("/{symbol}")
     public Mono<TradingSignal> generateSignal(
             @PathVariable String symbol) {
@@ -60,6 +61,14 @@ public class SignalController {
                                     TradingSignalEntity savedEntity = tradingSignalService.save(signal);
                                     return indicatorClient.getLatest(signal.getSymbol())
                                             .map(indicator -> {
+                                                RiskCheckResponse riskCheck =
+                                                        riskManagementService.validateTrade();
+                                                if (!riskCheck.isAllowed()) {
+                                                    log.warn(
+                                                            "Trade blocked due to risk violations: {}",
+                                                            riskCheck.getViolations());
+                                                    return signal;
+                                                }
                                                 paperTradingService.createTrade(savedEntity, indicator);
                                                 return signal;
                                             });

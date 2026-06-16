@@ -281,9 +281,7 @@ public class BacktestingService {
         return technicalIndicatorRepository
                 .findTopBySymbolOrderByTradeDateDesc(
                         symbol)
-                .orElseThrow(
-                        () -> new RuntimeException(
-                                "Indicator not found"));
+                .orElse(null);
 
     }
 }

@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.dto;
 
+import com.ram.trading.signal.engine.contant.Recommendation;
 import lombok.*;
 
 @Builder
@@ -20,4 +21,5 @@ public class OpportunityResponse {
     private String sentiment;
     private String technicalReason;
     private String sentimentReason;
+    private Recommendation recommendation;
 }

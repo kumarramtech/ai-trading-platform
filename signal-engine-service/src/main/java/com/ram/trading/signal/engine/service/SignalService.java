@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import static com.ram.trading.signal.engine.util.TradeUtil.getRecommendation;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -94,6 +96,8 @@ public class SignalService {
                                                 .sentiment(sentiment.getSentiment())
                                                 .sentimentScore(sentiment.getSentimentScore())
                                                 .score(signal.getConfidence()+ sentiment.getSentimentScore())
+                                                .recommendation(getRecommendation(signal.getConfidence()
+                                                                        + sentiment.getSentimentScore()))
                                                 .build()))
                 .doOnNext(signal ->
                         log.info(

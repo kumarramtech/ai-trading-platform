@@ -13,6 +13,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
+import com.ram.trading.signal.engine.util.TradeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -72,6 +73,10 @@ public class PaperTradingService {
             return;
         }
         log.info("Confidence = " + signal.getConfidence());
+        log.info(
+                "Creating Trade => target={}, stop={}",
+                signal.getTargetPrice(),
+                signal.getStopLoss());
         PaperTrade trade =
                 PaperTrade.builder()
                         .symbol(signal.getSymbol())
@@ -86,12 +91,19 @@ public class PaperTradingService {
                         .ema20(indicatorResponse.getEma20())
                         .ema50(indicatorResponse.getEma50())
                         .macd(indicatorResponse.getMacd())
+                        .targetPrice(signal.getTargetPrice())
+                        .stopLoss(signal.getStopLoss())
                         .status(SignalStatus.OPEN)
                         .confidence(signal.getConfidence())
                         .entryTime(LocalDateTime.now())
                         .build();
+        PaperTrade saved =
+                repository.save(trade);
 
-        repository.save(trade);
+        log.info(
+                "Saved Trade => target={}, stop={}",
+                saved.getTargetPrice(),
+                saved.getStopLoss());
 
         NotificationRequest request =
                 NotificationRequest.builder()
@@ -757,6 +769,32 @@ public class PaperTradingService {
                         }
                     }
 
+                    else if ("BUY".equals(trade.getSignal())) {
+
+                        if (currentPrice >= trade.getTargetPrice()) {
+
+                            log.info(
+                                    "Trade {} TARGET HIT",
+                                    trade.getId());
+
+                            closeTrade(
+                                    trade,
+                                    currentPrice,
+                                    SignalStatus.TARGET_HIT);
+
+                        } else if (currentPrice <= trade.getStopLoss()) {
+
+                            log.info(
+                                    "Trade {} STOP LOSS HIT",
+                                    trade.getId());
+
+                            closeTrade(
+                                    trade,
+                                    currentPrice,
+                                    SignalStatus.STOP_LOSS_HIT);
+                        }
+                    }
+
                     return Mono.empty();
                 });
     }
@@ -887,7 +925,7 @@ public class PaperTradingService {
                 .map(signal -> {
 
                     double allocationPercentage =
-                            getAllocationPercentage(
+                            TradeUtil.getAllocationPercentage(
                                     signal.getConfidence());
 
                     double investment =
@@ -917,10 +955,10 @@ public class PaperTradingService {
                             .symbol(signal.getSymbol())
                             .capital(capital)
                             .confidence(signal.getConfidence())
-                            .recommendedInvestment(round(investment))
+                            .recommendedInvestment(TradeUtil.round(investment))
                             .recommendedQuantity(quantity)
-                            .riskPerShare(round(riskPerShare))
-                            .totalRisk(round(quantity * riskPerShare))
+                            .riskPerShare(TradeUtil.round(riskPerShare))
+                            .totalRisk(TradeUtil.round(quantity * riskPerShare))
                             .build();
                 });
     }
@@ -1050,6 +1088,7 @@ public class PaperTradingService {
                                                 .sentimentScore(opportunity.getSentimentScore())
                                                 .technicalReason(opportunity.getTechnicalReason())
                                                 .sentimentReason(opportunity.getSentimentReason())
+                                                .recommendation(opportunity.getRecommendation())
                                                 .recommendedInvestment(position.getRecommendedInvestment())
                                                 .recommendedQuantity(position.getRecommendedQuantity())
                                                 .riskPerShare(position.getRiskPerShare())
@@ -1057,20 +1096,102 @@ public class PaperTradingService {
                                                 .build()));
     }
 
-    private double getAllocationPercentage(Integer confidence) {
-        if (confidence >= 80) {
-            return 0.20;
+    public AnalyticsMetricsResponse getAdvancedMetrics() {
+
+        List<PaperTrade> trades =
+                repository.findAll()
+                        .stream()
+                        .filter(t -> t.getProfitLoss() != null)
+                        .toList();
+
+        if (trades.isEmpty()) {
+
+            return AnalyticsMetricsResponse.builder()
+                    .profitFactor(0)
+                    .expectancy(0)
+                    .maxDrawdown(0)
+                    .consecutiveWins(0)
+                    .consecutiveLosses(0)
+                    .build();
         }
-        if (confidence >= 70) {
-            return 0.15;
-        }
-        if (confidence >= 50) {
-            return 0.10;
-        }
-        return 0.05;
+
+        double grossProfit =
+                trades.stream()
+                        .filter(t -> t.getProfitLoss() > 0)
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .sum();
+
+        double grossLoss =
+                Math.abs(
+                        trades.stream()
+                                .filter(t -> t.getProfitLoss() < 0)
+                                .mapToDouble(PaperTrade::getProfitLoss)
+                                .sum());
+
+        double profitFactor =
+                grossLoss == 0
+                        ? grossProfit
+                        : grossProfit / grossLoss;
+
+        long winningTrades =
+                trades.stream()
+                        .filter(t -> t.getProfitLoss() > 0)
+                        .count();
+
+        long losingTrades =
+                trades.stream()
+                        .filter(t -> t.getProfitLoss() < 0)
+                        .count();
+
+        double avgWin =
+                trades.stream()
+                        .filter(t -> t.getProfitLoss() > 0)
+                        .mapToDouble(PaperTrade::getProfitLoss)
+                        .average()
+                        .orElse(0);
+
+        double avgLoss =
+                Math.abs(
+                        trades.stream()
+                                .filter(t -> t.getProfitLoss() < 0)
+                                .mapToDouble(PaperTrade::getProfitLoss)
+                                .average()
+                                .orElse(0));
+
+        double totalTrades =
+                winningTrades + losingTrades;
+
+        double winRate =
+                totalTrades == 0
+                        ? 0
+                        : winningTrades / totalTrades;
+
+        double lossRate =
+                totalTrades == 0
+                        ? 0
+                        : losingTrades / totalTrades;
+
+        double expectancy =
+                (winRate * avgWin)
+                        - (lossRate * avgLoss);
+
+        double maxDrawdown =
+                TradeUtil.calculateMaxDrawdown(trades);
+
+        long consecutiveWins =
+                TradeUtil.calculateConsecutiveWins(trades);
+
+        long consecutiveLosses =
+                TradeUtil.calculateConsecutiveLosses(trades);
+
+        return AnalyticsMetricsResponse.builder()
+                .profitFactor(TradeUtil.round(profitFactor))
+                .expectancy(TradeUtil.round(expectancy))
+                .maxDrawdown(TradeUtil.round(maxDrawdown))
+                .consecutiveWins(consecutiveWins)
+                .consecutiveLosses(consecutiveLosses)
+                .build();
     }
-    private double round(double value) {
-        return Math.round(value * 100.0) / 100.0;
-    }
+
 
 }
