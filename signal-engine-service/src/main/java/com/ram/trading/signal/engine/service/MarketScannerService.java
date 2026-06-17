@@ -1,12 +1,17 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.IndicatorClient;
+import com.ram.trading.signal.engine.client.NewsAnalysisClient;
+import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.dto.NewsAnalysisRequest;
 import com.ram.trading.signal.engine.dto.RiskCheckResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
+import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.strategy.TradingStrategy;
+import com.ram.trading.signal.engine.util.ConfidenceCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,6 +30,9 @@ public class MarketScannerService {
     private final PaperTradingService paperTradingService;
     private final IndicatorClient indicatorClient;
     private final RiskManagementService riskManagementService;
+    private final NewsAnalysisClient newsAnalysisClient;
+    private final ConfidenceCalculator confidenceCalculator;
+    private final PaperTradeRepository paperTradeRepository;
 
     private static final List<String> WATCHLIST =
             List.of(
@@ -82,6 +90,10 @@ public class MarketScannerService {
 
         RiskCheckResponse riskCheck =
                 riskManagementService.validateTrade();
+        log.info(
+                "Risk Allowed={} Violations={}",
+                riskCheck.isAllowed(),
+                riskCheck.getViolations());
 
         if (!riskCheck.isAllowed()) {
 
@@ -92,28 +104,61 @@ public class MarketScannerService {
             return Mono.just(signal);
         }
 
-        TradingSignalEntity savedSignal =
-                tradingSignalService.save(signal);
+        NewsAnalysisRequest request =
+                NewsAnalysisRequest.builder()
+                        .symbol(signal.getSymbol())
+                        .headline(
+                                signal.getReason())
+                        .build();
 
-        return indicatorClient
-                .getLatest(signal.getSymbol())
-                .onErrorResume(error -> {
-                    log.warn(
-                            "Indicator not available for {}",
-                            signal.getSymbol());
-                    return Mono.empty();
-                })
-                .map(indicator -> {
-                    paperTradingService
-                            .createTrade(
-                                    savedSignal,
-                                    indicator);
+        return newsAnalysisClient
+                .analyze(request)
+                .flatMap(news -> {
+
+                    Integer technicalScore =
+                            signal.getConfidence();
+
+                    Integer finalConfidence =
+                            confidenceCalculator.calculate(
+                                    technicalScore,
+                                    news.getScore());
+
                     log.info(
-                            "Trade Created : {} {}",
-                            signal.getSymbol(),
-                            signal.getSignal());
+                            "Technical Score={} News Score={} Final={}",
+                            technicalScore,
+                            news.getScore(),
+                            finalConfidence);
 
-                    return signal;
+                    signal.setConfidence(finalConfidence);
+
+                    signal.setNewsScore(
+                            news.getScore());
+
+                    signal.setNewsSentiment(
+                            news.getSentiment());
+
+                    signal.setNewsSummary(
+                            news.getSummary());
+
+                    return indicatorClient
+                            .getLatest(signal.getSymbol())
+                            .onErrorResume(error -> {
+                                log.warn("Indicator not available for {}",signal.getSymbol());
+                                return Mono.empty();
+                            })
+                            .map(indicator -> {
+                                boolean tradeExists =
+                                        paperTradeRepository.existsBySymbolAndStatus(signal.getSymbol(),
+                                                        SignalStatus.OPEN);
+                                if (tradeExists) {
+                                    log.info("Skipping {} because open trade already exists",signal.getSymbol());
+                                    return signal;
+                                }
+                                TradingSignalEntity savedSignal =tradingSignalService.save(signal);
+                                paperTradingService.createTrade(savedSignal,indicator);
+                                log.info("Trade Created : {} {}",signal.getSymbol(),signal.getSignal());
+                                return signal;
+                            });
                 });
     }
 }

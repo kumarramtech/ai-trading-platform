@@ -736,12 +736,21 @@ public class PaperTradingService {
             return Mono.empty();
         }
 
+
         return stockServiceClient
                 .getStockPrice(trade.getSymbol())
                 .flatMap(stock -> {
 
                     Double currentPrice =
                             stock.getPrice();
+                    log.info(
+                            "Trade={} Symbol={} Current={} Target={} Stop={} Signal={}",
+                            trade.getId(),
+                            trade.getSymbol(),
+                            currentPrice,
+                            trade.getTargetPrice(),
+                            trade.getStopLoss(),
+                            trade.getSignal());
 
                     if ("SELL".equals(trade.getSignal())) {
 
@@ -829,6 +838,20 @@ public class PaperTradingService {
         trade.setProfitLoss(profitLoss);
 
         repository.save(trade);
+
+        NotificationRequest request =
+                NotificationRequest.builder()
+                        .channel(NotificationChannel.WHATSAPP)
+                        .title("TRADE CLOSED")
+                        .message(
+                                "Symbol: " + trade.getSymbol()
+                                        + ", Status: " + status
+                                        + ", PnL: " + profitLoss)
+                        .build();
+
+        notificationClient
+                .sendNotification(request)
+                .subscribe();
 
         log.info(
                 "Trade {} closed with status {} profit {}",

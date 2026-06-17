@@ -25,7 +25,7 @@ public class RiskManagementService {
 
     private static final double MAX_EXPOSURE_PERCENT = 60;
 
-    private static final int MAX_OPEN_TRADES = 3;
+    private static final int MAX_OPEN_TRADES = 20;
 
     private static final int MAX_CONSECUTIVE_LOSSES = 3;
 
@@ -120,6 +120,12 @@ public class RiskManagementService {
         log.info(
                 "Current Exposure = {}",
                 exposure);
+
+        log.info(
+                "Exposure={}, MaxAllowedExposure={}, MaxPercent={}",
+                exposure,
+                maxAllowedExposure,
+                MAX_EXPOSURE_PERCENT);
 
         return exposure >= maxAllowedExposure;
     }

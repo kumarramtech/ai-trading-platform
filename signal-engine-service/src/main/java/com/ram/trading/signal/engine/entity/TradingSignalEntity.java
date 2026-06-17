@@ -60,4 +60,11 @@ public class TradingSignalEntity {
 
     private Double macd;
 
+    private Integer newsScore;
+
+    private String newsSentiment;
+
+    @Column(length = 1000)
+    private String newsSummary;
+
 }

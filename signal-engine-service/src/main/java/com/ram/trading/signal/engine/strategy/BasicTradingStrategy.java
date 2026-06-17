@@ -162,7 +162,7 @@ public class BasicTradingStrategy
                             indicator.getRsi14(),
                             indicator.getEma20(),
                             indicator.getEma50(),
-                            indicator.getMacd()
+                            indicator.getMacd(),null,null,null
                     );
                 });
     }

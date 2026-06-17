@@ -23,7 +23,8 @@ public interface PaperTradeRepository
             SignalStatus status);
 
     List<PaperTrade> findAllByOrderByEntryTimeDesc();
-
     List<PaperTrade> findTop20ByStatusNotOrderByIdDesc(SignalStatus status);
     long countByStatus(SignalStatus status);
+
+    boolean existsBySymbolAndStatus(String symbol,SignalStatus status);
 }

@@ -20,4 +20,7 @@ public class TradingSignal {
     private Double ema20;
     private Double ema50;
     private Double macd;
+    private Integer newsScore;
+    private String newsSentiment;
+    private String newsSummary;
 }
