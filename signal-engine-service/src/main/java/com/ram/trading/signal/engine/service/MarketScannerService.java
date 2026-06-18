@@ -8,7 +8,9 @@ import com.ram.trading.signal.engine.dto.RiskCheckResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
+import com.ram.trading.signal.engine.entity.WatchlistStock;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
+import com.ram.trading.signal.engine.repo.WatchlistStockRepository;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.strategy.TradingStrategy;
 import com.ram.trading.signal.engine.util.ConfidenceCalculator;
@@ -33,7 +35,8 @@ public class MarketScannerService {
     private final NewsAnalysisClient newsAnalysisClient;
     private final ConfidenceCalculator confidenceCalculator;
     private final PaperTradeRepository paperTradeRepository;
-
+    private final WatchlistStockRepository watchlistRepository;
+    private final OpportunityService opportunityService;
     private static final List<String> WATCHLIST =
             List.of(
                     "TCS",
@@ -44,8 +47,10 @@ public class MarketScannerService {
             );
 
     public void scanMarket() {
-        log.info("Scanning {} symbols", WATCHLIST.size());
-        WATCHLIST.forEach(this::scanSymbol);
+        List<WatchlistStock> stocks =
+                watchlistRepository.findByActiveTrue();
+        log.info("Scanning {} symbols",stocks.size());
+        stocks.forEach(stock -> scanSymbol(stock.getSymbol()));
     }
 
     private void scanSymbol(String symbol) {
@@ -130,16 +135,10 @@ public class MarketScannerService {
                             finalConfidence);
 
                     signal.setConfidence(finalConfidence);
-
-                    signal.setNewsScore(
-                            news.getScore());
-
-                    signal.setNewsSentiment(
-                            news.getSentiment());
-
-                    signal.setNewsSummary(
-                            news.getSummary());
-
+                    signal.setNewsScore(news.getScore());
+                    signal.setNewsSentiment(news.getSentiment());
+                    signal.setNewsSummary(news.getSummary());
+                    opportunityService.save(signal);
                     return indicatorClient
                             .getLatest(signal.getSymbol())
                             .onErrorResume(error -> {
