@@ -14,7 +14,6 @@ public interface OpportunityRepository
 
     List<Opportunity> findBySelectedTrue();
 
-    List<Opportunity>
-    findTop3ByOrderByConfidenceDesc();
+    List<Opportunity> findTop3ByOrderByConfidenceDesc();
 
 }

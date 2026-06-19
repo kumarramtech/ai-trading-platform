@@ -48,4 +48,7 @@ public class TradingSignalService {
     }
 
 
+    public TradingSignalEntity findById(Long signalId) {
+        return repository.findById(signalId).orElse(null);
+    }
 }

@@ -92,9 +92,9 @@ public class PaperTradingController {
     }
 
     @GetMapping("/opportunity-dashboard")
-    public Mono<OpportunityDashboard>getOpportunityDashboard(@RequestParam Double capital) {
+    public Mono<OpportunityDashboardResponse>getOpportunityDashboard(@RequestParam Double capital) {
 
-        return service.getBestOpportunity(capital);
+        return service.getBestOpportunities(capital);
     }
 
     @GetMapping("/advanced-metrics")

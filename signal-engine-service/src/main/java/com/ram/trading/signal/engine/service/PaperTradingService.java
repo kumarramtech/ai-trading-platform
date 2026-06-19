@@ -1084,26 +1084,42 @@ public class PaperTradingService {
                 .build();
     }
 
-    public Mono<OpportunityDashboard> getBestOpportunity(
+    public Mono<OpportunityDashboardResponse> getBestOpportunities(
             Double capital) {
 
         return signalService
                 .getTopOpportunities()
-                .next()
+                .take(3)
+
                 .flatMap(opportunity ->
 
                         getPositionSize(
                                 opportunity.getSymbol(),
                                 capital)
 
-                                .map(position ->
+                                .map(position -> {
 
-                                        OpportunityDashboard
+                                    double reward =
+                                            Math.abs(
+                                                    opportunity.getTargetPrice()
+                                                            - opportunity.getEntryPrice());
+
+                                    double risk =
+                                            Math.abs(
+                                                    opportunity.getEntryPrice()
+                                                            - opportunity.getStopLoss());
+
+                                    double riskRewardRatio =
+                                            risk == 0
+                                                    ? 0
+                                                    : Math.round((reward / risk) * 100.0) / 100.0;
+
+                                       return OpportunityDashboard
                                                 .builder()
                                                 .symbol(opportunity.getSymbol())
                                                 .signal(opportunity.getSignal())
                                                 .confidence(opportunity.getConfidence())
-                                                .score(opportunity.getScore())
+                                                .tradeScore(opportunity.getScore())
                                                 .targetPrice(opportunity.getTargetPrice())
                                                 .stopLoss(opportunity.getStopLoss())
                                                 .entryPrice(opportunity.getEntryPrice())
@@ -1116,7 +1132,30 @@ public class PaperTradingService {
                                                 .recommendedQuantity(position.getRecommendedQuantity())
                                                 .riskPerShare(position.getRiskPerShare())
                                                 .totalRisk(position.getTotalRisk())
-                                                .build()));
+                                                .riskRewardRatio(riskRewardRatio)
+                                                .build();}))
+                                                .collectList()
+                                        .map(list -> {
+
+                                            for (int i = 0; i < list.size(); i++) {
+                                                list.get(i).setRank(i + 1);
+                                            }
+
+                                            double recommendedCapital =
+                                                    list.stream()
+                                                            .mapToDouble(
+                                                                    OpportunityDashboard::getRecommendedInvestment)
+                                                            .sum();
+
+                                            return OpportunityDashboardResponse
+                                                    .builder()
+                                                    .capital(capital)
+                                                    .recommendedCapital(recommendedCapital)
+                                                    .remainingCapital(capital - recommendedCapital)
+                                                    .opportunityCount(list.size())
+                                                    .opportunities(list)
+                                                    .build();
+                                        });
     }
 
     public AnalyticsMetricsResponse getAdvancedMetrics() {

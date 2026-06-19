@@ -4,6 +4,7 @@ import com.ram.trading.signal.engine.entity.Opportunity;
 import com.ram.trading.signal.engine.service.OpportunityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -30,5 +31,17 @@ public class OpportunityController {
     @GetMapping("/latestopportunity")
     public List<Opportunity> latestOpportunity() {
         return service.latestOpportunities();
+    }
+
+    @PostMapping("/select")
+    public String selectTopOpportunities() {
+        service.markTopOpportunities();
+        return "Top opportunities selected";
+    }
+
+    @PostMapping("/execute")
+    public String execute() {
+        service.executeSelectedOpportunities();
+        return "Execution Started";
     }
 }

@@ -12,10 +12,11 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class OpportunityDashboard {
 
+    private Integer rank;
     private String symbol;
     private String signal;
     private Integer confidence;
-    private Integer score;
+    private Integer tradeScore;
     private Double entryPrice;
     private Double targetPrice;
     private Double stopLoss;
@@ -28,4 +29,5 @@ public class OpportunityDashboard {
     private String technicalReason;
     private String sentimentReason;
     private Recommendation recommendation;
+    private Double riskRewardRatio;
 }

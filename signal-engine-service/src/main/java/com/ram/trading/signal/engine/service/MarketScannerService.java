@@ -138,7 +138,7 @@ public class MarketScannerService {
                     signal.setNewsScore(news.getScore());
                     signal.setNewsSentiment(news.getSentiment());
                     signal.setNewsSummary(news.getSummary());
-                    opportunityService.save(signal);
+                    //opportunityService.save(signal);
                     return indicatorClient
                             .getLatest(signal.getSymbol())
                             .onErrorResume(error -> {
@@ -146,6 +146,9 @@ public class MarketScannerService {
                                 return Mono.empty();
                             })
                             .map(indicator -> {
+                                TradingSignalEntity savedSignal =tradingSignalService.save(signal);
+                                log.info("Signal Saved ID={}",savedSignal.getId());
+                                opportunityService.save(signal,savedSignal.getId());
                                 boolean tradeExists =
                                         paperTradeRepository.existsBySymbolAndStatus(signal.getSymbol(),
                                                         SignalStatus.OPEN);
@@ -153,8 +156,9 @@ public class MarketScannerService {
                                     log.info("Skipping {} because open trade already exists",signal.getSymbol());
                                     return signal;
                                 }
-                                TradingSignalEntity savedSignal =tradingSignalService.save(signal);
-                                paperTradingService.createTrade(savedSignal,indicator);
+                                //TradingSignalEntity savedSignal =tradingSignalService.save(signal);
+                                //log.info("Signal Saved ID={}", savedSignal.getId());
+                                //opportunityService.save(signal);
                                 log.info("Trade Created : {} {}",signal.getSymbol(),signal.getSignal());
                                 return signal;
                             });

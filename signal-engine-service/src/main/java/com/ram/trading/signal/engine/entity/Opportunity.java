@@ -33,4 +33,7 @@ public class Opportunity {
     private Boolean selected;
 
     private LocalDateTime createdAt;
+
+    private Long signalId;
+
 }

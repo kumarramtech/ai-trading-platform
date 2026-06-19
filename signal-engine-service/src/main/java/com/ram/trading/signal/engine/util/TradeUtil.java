@@ -7,19 +7,30 @@ import java.util.List;
 
 public class TradeUtil {
 
-    public static Recommendation getRecommendation(
-            Integer score) {
+    public static Recommendation getRecommendation(String signal, Integer score) {
 
-        if (score >= 150) {
-            return Recommendation.STRONG_BUY;
+        if ("SELL".equalsIgnoreCase(signal)) {
+
+            if (score >= 150) {
+                return Recommendation.STRONG_SELL;
+            }
+
+            return Recommendation.SELL;
         }
 
-        if (score >= 120) {
-            return Recommendation.BUY;
-        }
+        if ("BUY".equalsIgnoreCase(signal)) {
 
-        if (score >= 80) {
-            return Recommendation.WATCH;
+            if (score >= 150) {
+                return Recommendation.STRONG_BUY;
+            }
+
+            if (score >= 120) {
+                return Recommendation.BUY;
+            }
+
+            if (score >= 80) {
+                return Recommendation.WATCH;
+            }
         }
 
         return Recommendation.AVOID;

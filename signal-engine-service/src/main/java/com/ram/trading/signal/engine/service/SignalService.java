@@ -8,6 +8,7 @@ import com.ram.trading.signal.engine.dto.RiskAnalysisRequest;
 import com.ram.trading.signal.engine.dto.RiskAnalysisResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
+import com.ram.trading.signal.engine.util.TradeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -83,22 +84,25 @@ public class SignalService {
 
                                 .map(sentiment ->
 
-                                        OpportunityResponse
-                                                .builder()
-                                                .symbol(signal.getSymbol())
-                                                .signal(signal.getSignal())
-                                                .confidence(signal.getConfidence())
-                                                .targetPrice(signal.getTargetPrice())
-                                                .stopLoss(signal.getStopLoss())
-                                                .entryPrice(signal.getEntryPrice())
-                                                .technicalReason(signal.getReason())
-                                                .sentimentReason(sentiment.getReason())
-                                                .sentiment(sentiment.getSentiment())
-                                                .sentimentScore(sentiment.getSentimentScore())
-                                                .score(signal.getConfidence()+ sentiment.getSentimentScore())
-                                                .recommendation(getRecommendation(signal.getConfidence()
-                                                                        + sentiment.getSentimentScore()))
-                                                .build()))
+                                {
+                                    int score = signal.getConfidence() + sentiment.getSentimentScore();
+                                    return OpportunityResponse
+                                            .builder()
+                                            .symbol(signal.getSymbol())
+                                            .signal(signal.getSignal())
+                                            .confidence(signal.getConfidence())
+                                            .targetPrice(signal.getTargetPrice())
+                                            .stopLoss(signal.getStopLoss())
+                                            .entryPrice(signal.getEntryPrice())
+                                            .technicalReason(signal.getReason())
+                                            .sentimentReason(sentiment.getReason())
+                                            .sentiment(sentiment.getSentiment())
+                                            .sentimentScore(sentiment.getSentimentScore())
+                                            .score(score)
+                                            .recommendation(TradeUtil.getRecommendation(
+                                                            signal.getSignal(), score))
+                                            .build();
+                                }))
                 .doOnNext(signal ->
                         log.info(
                                 "Signal={} Symbol={} EntryPrice={}",
