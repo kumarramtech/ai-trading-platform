@@ -17,6 +17,8 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
@@ -77,39 +79,55 @@ public class OpportunityService {
     @Transactional
     public void markTopOpportunities() {
 
-        List<Opportunity> opportunities =  getTopOpportunities();
+        // Reset old selections
+        opportunityRepository.resetSelections();
+
+        List<Opportunity> opportunities =
+                getTopOpportunities();
 
         opportunities.forEach(opportunity -> {
             opportunity.setSelected(true);
             opportunityRepository.save(opportunity);
         });
+
+        log.info("Selected Top Opportunities={}",
+                opportunities.size());
     }
 
-    public void executeSelectedOpportunities() {
+    public Mono<Void> executeSelectedOpportunities() {
 
         List<Opportunity> opportunities =
                 opportunityRepository.findBySelectedTrue();
 
-        opportunities.forEach(opportunity -> {
+        return Flux.fromIterable(opportunities)
 
-            boolean exists = paperTradeRepository.existsBySymbolAndStatus(opportunity.getSymbol(),SignalStatus.OPEN);
-            if (exists) {
-                return;
-            }
+                .filter(opportunity ->
+                        !paperTradeRepository.existsBySymbolAndStatus(
+                                opportunity.getSymbol(),
+                                SignalStatus.OPEN))
 
-            TradingSignalEntity savedSignal =
-                    tradingSignalService.findById(opportunity.getSignalId());
+                .filter(opportunity ->
+                        opportunity.getSignalId() != null)
 
-            if(savedSignal == null){
-                return;
-            }
+                .flatMap(opportunity -> {
 
-            TechnicalIndicatorResponse indicator =indicatorClient
+                    TradingSignalEntity savedSignal =
+                            tradingSignalService.findById(
+                                    opportunity.getSignalId());
+
+                    if(savedSignal == null) {
+                        return Mono.empty();
+                    }
+
+                    return indicatorClient
                             .getLatest(opportunity.getSymbol())
-                            .block();
+                            .doOnNext(indicator ->
+                                    paperTradingService.createTrade(
+                                            savedSignal,
+                                            indicator));
+                })
 
-            paperTradingService.createTrade(savedSignal,indicator);
-        });
+                .then();
     }
 
 

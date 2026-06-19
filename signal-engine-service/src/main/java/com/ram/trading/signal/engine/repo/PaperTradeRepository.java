@@ -27,4 +27,7 @@ public interface PaperTradeRepository
     long countByStatus(SignalStatus status);
 
     boolean existsBySymbolAndStatus(String symbol,SignalStatus status);
+
+    List<PaperTrade> findAll();
+
 }

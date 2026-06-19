@@ -2,6 +2,8 @@ package com.ram.trading.signal.engine.repo;
 
 import com.ram.trading.signal.engine.entity.Opportunity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -14,6 +16,8 @@ public interface OpportunityRepository
 
     List<Opportunity> findBySelectedTrue();
 
-    List<Opportunity> findTop3ByOrderByConfidenceDesc();
+    @Modifying
+    @Query("update Opportunity o set o.selected=false")
+    void resetSelections();
 
 }

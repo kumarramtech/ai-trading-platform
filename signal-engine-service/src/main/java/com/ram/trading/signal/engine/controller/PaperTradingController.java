@@ -6,6 +6,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -31,11 +32,6 @@ public class PaperTradingController {
     @GetMapping("/summary")
     public PaperTradeSummary getSummary() {
         return service.getSummary();
-    }
-
-    @GetMapping("/performance")
-    public TradePerformance getPerformance() {
-        return service.getPerformance();
     }
 
     @GetMapping("/history")
@@ -101,6 +97,16 @@ public class PaperTradingController {
     public AnalyticsMetricsResponse advancedMetrics() {
 
         return service.getAdvancedMetrics();
+    }
+
+    @GetMapping("/performance")
+    public PerformanceAnalytics performance() {
+        return service.getPerformanceAnalytics();
+    }
+
+    @GetMapping("/open-positions")
+    public Mono<OpenPositionDashboard> openPositions() {
+        return service.getOpenPositions();
     }
 
 }

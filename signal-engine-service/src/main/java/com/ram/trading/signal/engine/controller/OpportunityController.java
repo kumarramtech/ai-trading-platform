@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -33,15 +34,16 @@ public class OpportunityController {
         return service.latestOpportunities();
     }
 
-    @PostMapping("/select")
+   /* @PostMapping("/select")
     public String selectTopOpportunities() {
         service.markTopOpportunities();
         return "Top opportunities selected";
-    }
+    }*/
 
     @PostMapping("/execute")
-    public String execute() {
-        service.executeSelectedOpportunities();
-        return "Execution Started";
+    public Mono<String> execute() {
+        service.markTopOpportunities();
+        return service.executeSelectedOpportunities()
+                .thenReturn("Execution Started");
     }
 }

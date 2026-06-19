@@ -22,6 +22,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -285,85 +286,6 @@ public class PaperTradingService {
                                 "Failed to send notification",
                                 error))
                 .subscribe();
-    }
-
-    public TradePerformance getPerformance() {
-
-        List<PaperTrade> trades =
-                repository.findAll();
-
-        long totalTrades = trades.size();
-
-        List<PaperTrade> closedTrades =
-                trades.stream()
-                        .filter(t ->
-                                t.getStatus() != SignalStatus.OPEN)
-                        .toList();
-
-        long winningTrades =
-                closedTrades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null
-                                        && t.getProfitLoss() > 0)
-                        .count();
-
-        long losingTrades =
-                closedTrades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null
-                                        && t.getProfitLoss() < 0)
-                        .count();
-
-        double averageProfit =
-                closedTrades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null
-                                        && t.getProfitLoss() > 0)
-                        .mapToDouble(PaperTrade::getProfitLoss)
-                        .average()
-                        .orElse(0);
-
-        double averageLoss =
-                closedTrades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null
-                                        && t.getProfitLoss() < 0)
-                        .mapToDouble(PaperTrade::getProfitLoss)
-                        .average()
-                        .orElse(0);
-
-        double bestTrade =
-                closedTrades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null)
-                        .mapToDouble(PaperTrade::getProfitLoss)
-                        .max()
-                        .orElse(0);
-
-        double worstTrade =
-                closedTrades.stream()
-                        .filter(t ->
-                                t.getProfitLoss() != null)
-                        .mapToDouble(PaperTrade::getProfitLoss)
-                        .min()
-                        .orElse(0);
-
-        double winRate =
-                closedTrades.isEmpty()
-                        ? 0
-                        : ((double) winningTrades
-                        / closedTrades.size()) * 100;
-
-        return TradePerformance.builder()
-                .totalTrades(totalTrades)
-                .winningTrades(winningTrades)
-                .losingTrades(losingTrades)
-                .averageProfit(averageProfit)
-                .averageLoss(averageLoss)
-                .bestTrade(bestTrade)
-                .worstTrade(worstTrade)
-                .winRate(winRate)
-                .build();
     }
 
     public List<PaperTrade> getHistory() {
@@ -1255,5 +1177,259 @@ public class PaperTradingService {
                 .build();
     }
 
+    public PerformanceAnalytics getPerformanceAnalytics() {
+
+        List<PaperTrade> trades =
+                repository.findAll();
+
+        int totalTrades = trades.size();
+
+        int openTrades =
+                (int) trades.stream()
+                        .filter(t ->
+                                t.getStatus() == SignalStatus.OPEN)
+                        .count();
+
+        int winningTrades =
+                (int) trades.stream()
+                        .filter(t ->
+                                t.getStatus() == SignalStatus.TARGET_HIT)
+                        .count();
+
+        int losingTrades =
+                (int) trades.stream()
+                        .filter(t ->
+                                t.getStatus() == SignalStatus.STOP_LOSS_HIT)
+                        .count();
+
+        double totalProfit =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() > 0)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .sum();
+
+        double totalLoss =
+                trades.stream()
+                        .filter(t ->
+                                t.getProfitLoss() != null
+                                        && t.getProfitLoss() < 0)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .sum();
+
+        double netProfit =
+                totalProfit + totalLoss;
+
+        double winRate =
+                (winningTrades + losingTrades) == 0
+                        ? 0
+                        : ((double) winningTrades
+                        / (winningTrades + losingTrades))
+                        * 100;
+
+        double averageProfit =
+                winningTrades == 0
+                        ? 0
+                        : totalProfit / winningTrades;
+
+        double averageLoss =
+                losingTrades == 0
+                        ? 0
+                        : Math.abs(totalLoss)
+                        / losingTrades;
+
+        double profitFactor =
+                totalLoss == 0
+                        ? totalProfit
+                        : totalProfit
+                        / Math.abs(totalLoss);
+
+        return PerformanceAnalytics
+                .builder()
+                .totalTrades(totalTrades)
+                .openTrades(openTrades)
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .winRate(
+                        Math.round(winRate * 100.0)
+                                / 100.0)
+                .totalProfit(totalProfit)
+                .totalLoss(totalLoss)
+                .netProfit(netProfit)
+                .averageProfit(averageProfit)
+                .averageLoss(averageLoss)
+                .profitFactor(
+                        Math.round(profitFactor * 100.0)
+                                / 100.0)
+                .build();
+    }
+
+    public Mono<OpenPositionDashboard> getOpenPositions() {
+
+        return Flux.fromIterable(
+                        repository.findByStatus(
+                                SignalStatus.OPEN))
+
+                .flatMap(trade ->
+
+                        stockServiceClient
+                                .getStockPrice(
+                                        trade.getSymbol())
+
+                                .map(stock -> {
+
+                                    Double currentPrice =
+                                            stock.getPrice();
+
+                                    double progress = 0.0;
+
+                                    if ("BUY".equalsIgnoreCase(trade.getSignal())) {
+
+                                        progress =
+                                                ((currentPrice - trade.getEntryPrice())
+                                                        /
+                                                        (trade.getTargetPrice() - trade.getEntryPrice()))
+                                                        * 100;
+
+                                    } else if ("SELL".equalsIgnoreCase(trade.getSignal())) {
+
+                                        progress =
+                                                ((trade.getEntryPrice() - currentPrice)
+                                                        /
+                                                        (trade.getEntryPrice() - trade.getTargetPrice()))
+                                                        * 100;
+                                    }
+
+                                    if (!Double.isFinite(progress)) {
+                                        progress = 0.0;
+                                    }
+
+                                    progress = Math.max(0.0, progress);
+
+                                    progress =
+                                            Math.round(progress * 100.0)
+                                                    / 100.0;
+
+                                    Double currentValue =
+                                            currentPrice
+                                                    * trade.getQuantity();
+
+                                    Double pnl =
+                                            currentValue
+                                                    - trade.getInvestedAmount();
+
+                                    Double pnlPercent =
+                                            (pnl
+                                                    / trade.getInvestedAmount())
+                                                    * 100;
+
+
+                                    return OpenPositionResponse
+                                            .builder()
+                                            .tradeId(trade.getId())
+                                            .symbol(trade.getSymbol())
+                                            .signal(trade.getSignal())
+                                            .entryPrice(trade.getEntryPrice())
+                                            .currentPrice(currentPrice)
+                                            .targetPrice(trade.getTargetPrice())
+                                            .stopLoss(trade.getStopLoss())
+                                            .quantity(trade.getQuantity())
+                                            .targetProgress(progress)
+                                            .investedAmount(
+                                                    trade.getInvestedAmount())
+                                            .currentValue(currentValue)
+                                            .currentPnL(pnl)
+                                            .pnlPercentage(
+                                                    Math.round(
+                                                            pnlPercent * 100.0)
+                                                            / 100.0)
+                                            .status(
+                                                    trade.getStatus().name())
+                                            .build();
+                                }))
+
+                .collectList()
+
+
+                .map(positions -> {
+
+                    double totalInvestment =
+                            positions.stream()
+                                    .mapToDouble(
+                                            OpenPositionResponse::getInvestedAmount)
+                                    .sum();
+
+                    double currentValue =
+                            positions.stream()
+                                    .mapToDouble(
+                                            OpenPositionResponse::getCurrentValue)
+                                    .sum();
+
+                    double currentPnL =
+                            currentValue
+                                    - totalInvestment;
+
+                    positions.forEach(position -> {
+
+                        double allocation =
+                                (position.getInvestedAmount()
+                                        / totalInvestment) * 100;
+
+                        position.setPortfolioAllocation(
+                                Math.round(allocation * 100.0) / 100.0);
+                    });
+
+                    OpenPositionResponse best =
+                            positions.stream()
+                                    .max(
+                                            Comparator.comparing(
+                                                    OpenPositionResponse::getCurrentPnL))
+                                    .orElse(null);
+
+                    OpenPositionResponse worst =
+                            positions.stream()
+                                    .min(
+                                            Comparator.comparing(
+                                                    OpenPositionResponse::getCurrentPnL))
+                                    .orElse(null);
+
+                    return OpenPositionDashboard
+                            .builder()
+                            .openTrades(
+                                    positions.size())
+                            .totalInvestment(
+                                    totalInvestment)
+                            .currentValue(
+                                    currentValue)
+                            .currentPnL(
+                                    currentPnL)
+                            .positions(
+                                    positions)
+                            .bestPosition(best != null ? best.getSymbol()
+                                            : null)
+
+                            .bestPnL(
+                                    best != null
+                                            ? best.getCurrentPnL()
+                                            : 0)
+
+                            .worstPosition(
+                                    worst != null
+                                            ? worst.getSymbol()
+                                            : null)
+
+                            .worstPnL(
+                                    worst != null
+                                            ? worst.getCurrentPnL()
+                                            : 0)
+
+                            .availableCapital(
+                                    100000 - totalInvestment)
+                            .build();
+                });
+    }
 
 }
