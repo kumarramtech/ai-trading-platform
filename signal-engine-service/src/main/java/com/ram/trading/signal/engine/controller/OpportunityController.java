@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.controller;
 
+import com.ram.trading.signal.engine.dto.TradeLifecycleDto;
 import com.ram.trading.signal.engine.entity.Opportunity;
 import com.ram.trading.signal.engine.service.OpportunityService;
 import lombok.RequiredArgsConstructor;
@@ -45,5 +46,10 @@ public class OpportunityController {
         service.markTopOpportunities();
         return service.executeSelectedOpportunities()
                 .thenReturn("Execution Started");
+    }
+
+    @GetMapping("/trade-lifecycle")
+    public List<TradeLifecycleDto> getTradeLifecycle() {
+        return service.getTradeLifecycle();
     }
 }

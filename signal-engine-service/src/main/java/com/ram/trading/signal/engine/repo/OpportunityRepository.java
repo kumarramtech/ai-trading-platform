@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface OpportunityRepository
@@ -19,5 +20,7 @@ public interface OpportunityRepository
     @Modifying
     @Query("update Opportunity o set o.selected=false")
     void resetSelections();
+
+    Optional<Opportunity> findBySignalId(Long signalId);
 
 }

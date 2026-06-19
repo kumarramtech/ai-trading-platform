@@ -3,8 +3,10 @@ package com.ram.trading.signal.engine.service;
 import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
+import com.ram.trading.signal.engine.dto.TradeLifecycleDto;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.Opportunity;
+import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.OpportunityRepository;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
@@ -98,13 +100,31 @@ public class OpportunityService {
 
         List<Opportunity> opportunities =
                 opportunityRepository.findBySelectedTrue();
-
+        log.info("Executing {} selected opportunities", opportunities.size());
         return Flux.fromIterable(opportunities)
 
-                .filter(opportunity ->
-                        !paperTradeRepository.existsBySymbolAndStatus(
-                                opportunity.getSymbol(),
-                                SignalStatus.OPEN))
+                .filter(opportunity -> {
+
+                    boolean exists =
+                            paperTradeRepository.existsBySymbolAndStatus(
+                                    opportunity.getSymbol(),
+                                    SignalStatus.OPEN);
+
+                    if (exists) {
+
+                        log.info(
+                                "Skipping {} - OPEN trade already exists",
+                                opportunity.getSymbol());
+
+                    } else {
+
+                        log.info(
+                                "Creating trade for {}",
+                                opportunity.getSymbol());
+                    }
+
+                    return !exists;
+                })
 
                 .filter(opportunity ->
                         opportunity.getSignalId() != null)
@@ -115,7 +135,12 @@ public class OpportunityService {
                             tradingSignalService.findById(
                                     opportunity.getSignalId());
 
-                    if(savedSignal == null) {
+                    if (savedSignal == null) {
+
+                        log.warn(
+                                "Signal not found for opportunity {}",
+                                opportunity.getId());
+
                         return Mono.empty();
                     }
 
@@ -128,6 +153,82 @@ public class OpportunityService {
                 })
 
                 .then();
+    }
+
+    public List<TradeLifecycleDto> getTradeLifecycle() {
+
+        List<PaperTrade> trades =
+                paperTradeRepository.findAll();
+
+        return trades.stream()
+                .sorted(
+                        Comparator.comparing(
+                                        PaperTrade::getEntryTime)
+                                .reversed())
+                .map(this::mapTradeLifecycle)
+                .toList();
+    }
+
+    private TradeLifecycleDto mapTradeLifecycle(
+            PaperTrade trade) {
+
+        Opportunity opportunity =
+                opportunityRepository
+                        .findBySignalId(
+                                trade.getSignalId())
+                        .orElse(null);
+
+        return TradeLifecycleDto.builder()
+
+                .opportunityId(
+                        opportunity != null
+                                ? opportunity.getId()
+                                : null)
+
+                .signalId(trade.getSignalId())
+
+                .tradeId(trade.getId())
+
+                .symbol(trade.getSymbol())
+
+                .signal(trade.getSignal())
+
+                .confidence(
+                        opportunity != null
+                                ? opportunity.getConfidence()
+                                : null)
+
+                .newsScore(opportunity != null ? opportunity.getNewsScore(): null)
+
+                .sentiment(
+                        opportunity != null
+                                ? opportunity.getSentiment()
+                                : null)
+
+                .entryPrice(trade.getEntryPrice())
+
+                .targetPrice(trade.getTargetPrice())
+
+                .stopLoss(trade.getStopLoss())
+
+                .quantity(trade.getQuantity())
+
+                .investedAmount(
+                        trade.getInvestedAmount())
+
+                .tradeStatus(
+                        trade.getStatus().name())
+
+                .profitLoss(
+                        trade.getProfitLoss())
+
+                .entryTime(
+                        trade.getEntryTime())
+
+                .exitTime(
+                        trade.getExitTime())
+
+                .build();
     }
 
 
