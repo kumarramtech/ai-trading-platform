@@ -30,4 +30,5 @@ public interface PaperTradeRepository
 
     List<PaperTrade> findAll();
 
+    List<PaperTrade> findByStatusIn(List<SignalStatus> targetHit);
 }

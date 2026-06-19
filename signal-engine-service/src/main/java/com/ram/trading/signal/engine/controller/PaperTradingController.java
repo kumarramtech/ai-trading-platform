@@ -109,4 +109,9 @@ public class PaperTradingController {
         return service.getOpenPositions();
     }
 
+    @GetMapping("/closed-positions")
+    public ClosedPositionResponse getClosedPositions() {
+        return service.getClosedPositions();
+    }
+
 }

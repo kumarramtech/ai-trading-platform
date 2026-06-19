@@ -648,8 +648,10 @@ public class PaperTradingService {
     private Mono<Void> evaluateTrade(
             PaperTrade trade) {
 
+
         if (trade.getTargetPrice() == null
                 || trade.getStopLoss() == null) {
+
 
             log.warn(
                     "Trade {} missing target/stop loss. Skipping.",
@@ -1430,6 +1432,99 @@ public class PaperTradingService {
                                     100000 - totalInvestment)
                             .build();
                 });
+    }
+
+    public ClosedPositionResponse getClosedPositions() {
+
+        List<PaperTrade> trades = repository.findByStatusIn(
+                        List.of(
+                                SignalStatus.TARGET_HIT,
+                                SignalStatus.STOP_LOSS_HIT
+                        ))
+                .stream()
+                .sorted(Comparator.comparing(PaperTrade::getExitTime).reversed())
+                .toList();
+
+        List<ClosedPositionDto> positions = trades.stream()
+                .map(this::mapToClosedPosition)
+                .toList();
+
+        int totalTrades = trades.size();
+
+        int winningTrades = (int) trades.stream()
+                .filter(t -> t.getProfitLoss() != null && t.getProfitLoss() > 0)
+                .count();
+
+        int losingTrades = (int) trades.stream()
+                .filter(t -> t.getProfitLoss() != null && t.getProfitLoss() < 0)
+                .count();
+
+        double totalProfit = trades.stream()
+                .filter(t -> t.getProfitLoss() != null && t.getProfitLoss() > 0)
+                .mapToDouble(PaperTrade::getProfitLoss)
+                .sum();
+
+        double totalLoss = trades.stream()
+                .filter(t -> t.getProfitLoss() != null && t.getProfitLoss() < 0)
+                .mapToDouble(PaperTrade::getProfitLoss)
+                .sum();
+
+        double netProfit = trades.stream()
+                .filter(t -> t.getProfitLoss() != null)
+                .mapToDouble(PaperTrade::getProfitLoss)
+                .sum();
+
+        double winRate = totalTrades == 0
+                ? 0.0
+                : ((double) winningTrades / totalTrades) * 100;
+
+        double averageProfit = winningTrades == 0
+                ? 0.0
+                : totalProfit / winningTrades;
+
+        double averageLoss = losingTrades == 0
+                ? 0.0
+                : Math.abs(totalLoss) / losingTrades;
+
+        double profitFactor = totalLoss == 0
+                ? totalProfit
+                : totalProfit / Math.abs(totalLoss);
+
+        return ClosedPositionResponse.builder()
+                .totalTrades(totalTrades)
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .winRate(winRate)
+                .totalProfit(totalProfit)
+                .totalLoss(Math.abs(totalLoss))
+                .netProfit(netProfit)
+                .averageProfit(averageProfit)
+                .averageLoss(averageLoss)
+                .profitFactor(profitFactor)
+                .positions(positions)
+                .build();
+    }
+
+    private ClosedPositionDto mapToClosedPosition(PaperTrade trade) {
+
+        return ClosedPositionDto.builder()
+                .tradeId(trade.getId())
+                .signalId(trade.getSignalId())
+                .symbol(trade.getSymbol())
+                .signal(trade.getSignal())
+                .entryPrice(trade.getEntryPrice())
+                .exitPrice(trade.getExitPrice())
+                .quantity(trade.getQuantity())
+                .investedAmount(trade.getInvestedAmount())
+                .profitLoss(trade.getProfitLoss())
+                .targetPrice(trade.getTargetPrice())
+                .stopLoss(trade.getStopLoss())
+                .confidence(trade.getConfidence())
+                .status(trade.getStatus().name())
+                .entryTime(trade.getEntryTime())
+                .exitTime(trade.getExitTime())
+                .closedAt(trade.getExitTime())
+                .build();
     }
 
 }
