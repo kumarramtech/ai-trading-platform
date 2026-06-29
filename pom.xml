@@ -19,5 +19,6 @@
         <module>ai-service</module>
         <module>notification-service</module>
         <module>newsanalysis-service</module>
+        <module>market-data-service</module>
     </modules>
 </project>

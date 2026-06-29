@@ -1,20 +1,24 @@
 package com.ram.trading.stock.service;
 
-import reactor.core.publisher.Flux;
+import com.ram.trading.stock.dto.StockResponse;
+import com.ram.trading.stock.service.factory.MarketDataProviderFactory;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
 public class StockService {
 
-        public Flux<String> getWatchList() {
+    private final MarketDataProviderFactory factory;
 
-            return Flux.just(
-                    "TCS",
-                    "INFY",
-                    "WIPRO",
-                    "HDFCBANK",
-                    "ICICIBANK",
-                    "RELIANCE",
-                    "SBIN",
-                    "LT");
-        }
+    public Mono<StockResponse> getPrice(String symbol) {
+        return factory.getProvider().getPrice(symbol);
+    }
 
+    public List<StockResponse> getAllStocks() {
+        return factory.getProvider().getAllStocks();
+    }
 }
