@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 
-public interface InstrumentCsvParser {
+public interface InstrumentJsonParser {
 
     List<Instrument> parse(InputStream inputStream) throws IOException;
 

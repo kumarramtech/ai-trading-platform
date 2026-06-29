@@ -21,7 +21,7 @@ public class InstrumentImportServiceImpl
 
     private static final int BATCH_SIZE = 1000;
 
-    private final InstrumentCsvParser parser;
+    private final InstrumentJsonParser parser;
     private final InstrumentService instrumentService;
     private final InstrumentValidator validator;
 
@@ -77,22 +77,12 @@ public class InstrumentImportServiceImpl
     }
 
     private void saveInBatches(List<Instrument> instruments) {
-
         int batch = 1;
-
         for (int i = 0; i < instruments.size(); i += BATCH_SIZE) {
-
             int end = Math.min(i + BATCH_SIZE, instruments.size());
-
             log.info(
-                    "[InstrumentImport] Saving Batch {} ({} - {})",
-                    batch,
-                    i + 1,
-                    end);
-
-            instrumentService.saveAll(
-                    instruments.subList(i, end));
-
+                    "[InstrumentImport] Saving Batch {} ({} - {})",batch, i + 1,end);
+            instrumentService.saveAll(instruments.subList(i, end));
             batch++;
         }
 
