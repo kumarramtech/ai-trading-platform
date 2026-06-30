@@ -1,6 +1,7 @@
 package com.ram.trading.stock.service.instument;
 
 import com.ram.trading.stock.entity.Instrument;
+import com.ram.trading.stock.exceptions.InstrumentNotFoundException;
 import com.ram.trading.stock.repo.InstrumentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +37,18 @@ public class InstrumentServiceImpl implements InstrumentService {
     @Override
     public Optional<Instrument> findByInstrumentKey(String instrumentKey) {
         return repository.findByInstrumentKey(instrumentKey);
+    }
+
+    @Override
+    public Instrument getActiveInstrument(String tradingSymbol) {
+
+        return repository
+                .findByTradingSymbolAndExchangeAndIsActiveTrue(
+                        tradingSymbol,
+                        "NSE")
+                .orElseThrow(() ->
+                        new InstrumentNotFoundException(tradingSymbol));
+
     }
 
     @Override

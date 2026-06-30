@@ -28,25 +28,16 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
 
     @Override
     public List<Instrument> parse(InputStream inputStream) throws IOException {
-
         log.info("[InstrumentParser] JSON parsing started.");
-
         List<Instrument> instruments = new ArrayList<>();
-
         JsonFactory factory = objectMapper.getFactory();
-
         try (JsonParser parser = factory.createParser(inputStream)) {
-
             if (parser.nextToken() != JsonToken.START_ARRAY) {
                 throw new IOException("Expected JSON Array");
             }
-
             while (parser.nextToken() == JsonToken.START_OBJECT) {
-
                 JsonNode node = objectMapper.readTree(parser);
-
                 log.info("{}", node);
-
                 Instrument instrument = Instrument.builder()
                         .broker("UPSTOX")
                         .exchange(getText(node, "exchange"))
@@ -65,48 +56,36 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
                         .optionType(getText(node, "option_type"))
                         .isActive(true)
                         .build();
-
                 instruments.add(instrument);
             }
         }
-
         log.info("[InstrumentParser] Parsed {} instruments.",
                 instruments.size());
-
         return instruments;
     }
 
 
     private String getText(JsonNode node, String field) {
-
         JsonNode value = node.get(field);
-
         if (value == null || value.isNull()) {
             return null;
         }
-
         return value.asText();
     }
 
     private Integer getInteger(JsonNode node, String field) {
-
         JsonNode value = node.get(field);
-
         if (value == null || value.isNull()) {
             return null;
         }
-
         return value.numberValue().intValue();
     }
 
     private BigDecimal getDecimal(JsonNode node, String field) {
-
         JsonNode value = node.get(field);
-
         if (value == null || value.isNull()) {
             return null;
         }
-
         return value.decimalValue();
     }
 

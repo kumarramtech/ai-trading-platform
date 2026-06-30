@@ -4,6 +4,7 @@ import com.ram.trading.stock.client.UpstoxClient;
 import com.ram.trading.stock.client.properties.UpstoxProperties;
 import com.ram.trading.stock.dto.UpstoxTokenResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class UpstoxAuthService {
 
     private final UpstoxProperties properties;
@@ -35,10 +37,14 @@ public class UpstoxAuthService {
 
     public Mono<String> authenticate(String code) {
 
+        log.info("Authentication started...");
+
         return upstoxClient.exchangeCode(code)
                 .map(token -> {
+                    log.info("Received Token from Upstox");
                     tokenService.saveToken(token);
                     return "Authentication Successful";
                 });
+
     }
 }

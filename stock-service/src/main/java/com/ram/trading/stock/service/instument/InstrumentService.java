@@ -20,5 +20,7 @@ public interface InstrumentService {
 
     List<Instrument> findAll();
 
+    Instrument getActiveInstrument(String tradingSymbol);
+
     void deleteAll();
 }

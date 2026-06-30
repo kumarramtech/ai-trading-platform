@@ -1,7 +1,6 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
-import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.client.NotificationClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
@@ -9,6 +8,10 @@ import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
 import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
+import com.ram.trading.signal.engine.dto.request.ClosedPositionDto;
+import com.ram.trading.signal.engine.dto.request.OpenPositionDashboard;
+import com.ram.trading.signal.engine.dto.request.OpportunityDashboard;
+import com.ram.trading.signal.engine.dto.response.*;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;

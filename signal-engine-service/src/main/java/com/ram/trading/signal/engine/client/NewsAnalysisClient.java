@@ -1,7 +1,7 @@
 package com.ram.trading.signal.engine.client;
 
-import com.ram.trading.signal.engine.dto.NewsAnalysisRequest;
-import com.ram.trading.signal.engine.dto.NewsAnalysisResponse;
+import com.ram.trading.signal.engine.dto.request.NewsAnalysisRequest;
+import com.ram.trading.signal.engine.dto.response.NewsAnalysisResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;

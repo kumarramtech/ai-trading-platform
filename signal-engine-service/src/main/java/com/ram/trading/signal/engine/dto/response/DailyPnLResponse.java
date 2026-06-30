@@ -1,4 +1,4 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.signal.engine.dto.response;
 
 import lombok.*;
 

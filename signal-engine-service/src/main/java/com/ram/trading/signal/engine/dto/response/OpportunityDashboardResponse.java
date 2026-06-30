@@ -1,5 +1,6 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.signal.engine.dto.response;
 
+import com.ram.trading.signal.engine.dto.request.OpportunityDashboard;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

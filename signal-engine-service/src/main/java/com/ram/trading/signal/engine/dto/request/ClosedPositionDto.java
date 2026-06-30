@@ -1,4 +1,4 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.signal.engine.dto.request;
 
 import lombok.Builder;
 import lombok.Data;

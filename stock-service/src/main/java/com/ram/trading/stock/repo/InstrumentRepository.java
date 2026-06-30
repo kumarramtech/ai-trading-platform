@@ -17,4 +17,11 @@ public interface InstrumentRepository
 
     List<Instrument> findByExchange(String exchange);
 
+    Optional<Instrument> findByTradingSymbolAndIsActiveTrue(
+            String tradingSymbol);
+
+    Optional<Instrument> findByTradingSymbolAndExchangeAndIsActiveTrue(
+            String tradingSymbol,
+            String exchange);
+
 }

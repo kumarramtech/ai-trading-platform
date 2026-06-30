@@ -1,4 +1,4 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.signal.engine.dto.request;
 
 import com.ram.trading.signal.engine.contant.Recommendation;
 import lombok.AllArgsConstructor;

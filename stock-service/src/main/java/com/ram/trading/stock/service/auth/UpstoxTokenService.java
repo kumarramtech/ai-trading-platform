@@ -13,18 +13,16 @@ public class UpstoxTokenService {
     private UpstoxTokenResponse token;
 
     public void saveToken(UpstoxTokenResponse token) {
-
         this.token = token;
-
         log.info("Upstox Access Token Stored Successfully.");
+        log.info("Token Saved : {}", token.getAccessToken().substring(0,10));
     }
 
     public String getAccessToken() {
-
         if (token == null) {
             throw new IllegalStateException("Upstox is not authenticated.");
         }
-
+        log.info("Access Token Retrieved Successfully");
         return token.getAccessToken();
     }
 

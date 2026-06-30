@@ -2,11 +2,15 @@ package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.dto.request.OpenPositionDashboard;
+import com.ram.trading.signal.engine.dto.response.AnalyticsMetricsResponse;
+import com.ram.trading.signal.engine.dto.response.ClosedPositionResponse;
+import com.ram.trading.signal.engine.dto.response.DailyPnLResponse;
+import com.ram.trading.signal.engine.dto.response.OpportunityDashboardResponse;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;

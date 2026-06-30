@@ -19,5 +19,6 @@ public class UpstoxProperties {
     private String tokenUrl;
     private String analyticsToken;
     private String marketUrl;
+    private String baseUrl;
 
 }
