@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.indicator.macd;
 
+import com.ram.trading.signal.engine.contant.IndicatorSignal;
 import com.ram.trading.signal.engine.dto.indicator.Candle;
 import com.ram.trading.signal.engine.indicator.ema.EMACalculator;
 import lombok.RequiredArgsConstructor;

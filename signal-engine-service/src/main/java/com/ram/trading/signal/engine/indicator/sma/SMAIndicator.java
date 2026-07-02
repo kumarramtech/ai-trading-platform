@@ -1,6 +1,8 @@
 package com.ram.trading.signal.engine.indicator.sma;
 
 
+import com.ram.trading.signal.engine.contant.IndicatorSignal;
+import com.ram.trading.signal.engine.contant.IndicatorType;
 import com.ram.trading.signal.engine.dto.indicator.Candle;
 import com.ram.trading.signal.engine.dto.indicator.IndicatorResult;
 import com.ram.trading.signal.engine.indicator.service.Indicator;
