@@ -1,6 +1,6 @@
 package com.ram.trading.stock.service.history;
 
-import com.ram.trading.stock.dto.HistoricalCandleResponse;
+import com.ram.trading.stock.dto.history.HistoricalCandleResponse;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;

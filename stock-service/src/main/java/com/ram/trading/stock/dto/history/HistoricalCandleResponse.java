@@ -1,5 +1,6 @@
-package com.ram.trading.stock.dto;
+package com.ram.trading.stock.dto.history;
 
+import com.ram.trading.stock.dto.history.Candle;
 import lombok.*;
 
 import java.util.List;

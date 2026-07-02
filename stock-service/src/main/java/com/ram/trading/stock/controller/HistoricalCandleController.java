@@ -2,7 +2,7 @@ package com.ram.trading.stock.controller;
 
 
 
-import com.ram.trading.stock.dto.HistoricalCandleResponse;
+import com.ram.trading.stock.dto.history.HistoricalCandleResponse;
 import com.ram.trading.stock.service.history.HistoricalCandleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
