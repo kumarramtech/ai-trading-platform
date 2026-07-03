@@ -1,7 +1,10 @@
 package com.ram.trading.signal.engine.client;
 
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
+import com.ram.trading.signal.engine.dto.ai.TradingDecisionRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -12,14 +15,21 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AIServiceClient {
 
-    private final WebClient.Builder webClientBuilder;
+    @Value("${ai.service.url}")
+    private String aiServiceUrl;
+
+    private final WebClient.Builder builder;
+
+    private WebClient client() {
+        return builder.baseUrl(aiServiceUrl).build();
+    }
 
     public Mono<SignalExplanationResponse> explainSignal(
             SignalExplanationRequest request) {
 
-        return webClientBuilder.build()
+        return client()
                 .post()
-                .uri("http://localhost:8086/ai/explain-signal")
+                .uri("/ai/explain-signal")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(SignalExplanationResponse.class);
@@ -28,9 +38,9 @@ public class AIServiceClient {
     public Mono<TradeReviewResponse> reviewTrade(
             TradeReviewRequest request) {
 
-        return webClientBuilder.build()
+        return client()
                 .post()
-                .uri("http://localhost:8086/ai/review-trade")
+                .uri("/ai/review-trade")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(TradeReviewResponse.class);
@@ -39,9 +49,9 @@ public class AIServiceClient {
     public Mono<StrategyReviewResponse> reviewStrategy(
             List<TradeReviewRequest> request) {
 
-        return webClientBuilder.build()
+        return  client()
                 .post()
-                .uri("http://localhost:8086/ai/strategy-review")
+                .uri("/ai/strategy-review")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(StrategyReviewResponse.class);
@@ -50,11 +60,28 @@ public class AIServiceClient {
     public Mono<RiskAnalysisResponse> analyzeRisk(
             RiskAnalysisRequest request) {
 
-        return webClientBuilder.build()
+        return client()
                 .post()
-                .uri("http://localhost:8086/ai/risk-analysis")
+                .uri("/ai/risk-analysis")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(RiskAnalysisResponse.class);
+    }
+
+    public AiDecisionResponse evaluate(
+            TradingDecisionRequest request) {
+
+        return client().post()
+
+                .uri("/ai/trading-decision")
+
+                .bodyValue(request)
+
+                .retrieve()
+
+                .bodyToMono(AiDecisionResponse.class)
+
+                .block();
+
     }
 }

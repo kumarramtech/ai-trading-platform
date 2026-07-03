@@ -4,6 +4,7 @@ import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.indicator.HistoricalCandleResponse;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
@@ -15,20 +16,27 @@ import java.time.LocalDate;
 @RequiredArgsConstructor
 public class StockServiceClient implements MarketDataProvider {
 
-    private final WebClient webClient;
+    private final WebClient.Builder webClientBuilder;
+    @Value("${stock.service.url}")
+    private String stockServiceUrl;
+
     @Override
     public Mono<StockResponse> getStockPrice(String symbol) {
 
-        return webClient
+        return webClientBuilder
+                .baseUrl(stockServiceUrl)
+                .build()
                 .get()
-                .uri("/stocks/{symbol}",symbol)
+                .uri("/stocks/{symbol}", symbol)
                 .retrieve()
                 .bodyToMono(StockResponse.class);
     }
 
     public Flux<StockResponse> getAllStocks() {
 
-        return webClient
+        return webClientBuilder
+                .baseUrl(stockServiceUrl)
+                .build()
                 .get()
                 .uri("/stocks/allstocks")
                 .retrieve()
@@ -41,7 +49,7 @@ public class StockServiceClient implements MarketDataProvider {
             LocalDate from,
             LocalDate to){
 
-        return webClient.get()
+        return webClientBuilder.baseUrl(stockServiceUrl).build().get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/stocks/{symbol}/history")
                         .queryParam("interval", interval)

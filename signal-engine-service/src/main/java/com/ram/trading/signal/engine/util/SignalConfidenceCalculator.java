@@ -3,7 +3,7 @@ package com.ram.trading.signal.engine.util;
 import org.springframework.stereotype.Service;
 
 @Service
-public class ConfidenceCalculator {
+public class SignalConfidenceCalculator {
 
     public Integer calculate(
             Integer technicalScore,

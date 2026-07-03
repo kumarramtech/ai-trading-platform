@@ -13,9 +13,15 @@ public class TechnicalIndicatorResponse {
 
     private Double rsi14;
 
+    private Double sma20;
+
+    private Double sma50;
+
     private Double ema20;
 
     private Double ema50;
 
     private Double macd;
+
+    private Double volumeRatio;
 }

@@ -11,12 +11,12 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 public class NotificationClient {
 
-    private final WebClient webClient;
+    private final WebClient.Builder webClientBuilder;
 
     public Mono<NotificationResponse> sendNotification(
             NotificationRequest request) {
 
-        return webClient
+        return webClientBuilder.build()
                 .post()
                 .uri("http://localhost:8087/notifications/send")
                 .bodyValue(request)

@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
-public class ConfidenceCalculator {
+public class RuleConfidenceCalculator {
 
     public int calculateScore(List<RuleResult> results) {
 

@@ -3,16 +3,19 @@ package com.ram.trading.signal.engine.service;
 import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.client.NewsAnalysisClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.request.NewsAnalysisRequest;
 import com.ram.trading.signal.engine.dto.RiskCheckResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
+import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.entity.WatchlistStock;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.repo.WatchlistStockRepository;
+import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
+import com.ram.trading.signal.engine.service.ai.mapper.TradingSignalMapper;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
-import com.ram.trading.signal.engine.strategy.TradingStrategy;
-import com.ram.trading.signal.engine.util.ConfidenceCalculator;
+import com.ram.trading.signal.engine.util.SignalConfidenceCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,24 +29,20 @@ import java.util.List;
 public class MarketScannerService {
 
     private final MarketDataProvider marketDataProvider;
-    private final TradingStrategy tradingStrategy;
+    private final SignalPreparationService signalPreparationService;
     private final TradingSignalService tradingSignalService;
-    private final PaperTradingService paperTradingService;
+    private final TradingOrchestratorService tradingOrchestratorService;
     private final IndicatorClient indicatorClient;
     private final RiskManagementService riskManagementService;
     private final NewsAnalysisClient newsAnalysisClient;
-    private final ConfidenceCalculator confidenceCalculator;
+    private final SignalConfidenceCalculator confidenceCalculator;
     private final PaperTradeRepository paperTradeRepository;
     private final WatchlistStockRepository watchlistRepository;
     private final OpportunityService opportunityService;
-    private static final List<String> WATCHLIST =
-            List.of(
-                    "TCS",
-                    "INFY",
-                    "RELIANCE",
-                    "HDFC",
-                    "ICICIBANK"
-            );
+    private final TradingSignalMapper tradingSignalMapper;
+    private static final String DEFAULT_NEWS = "No News";
+    private static final String DEFAULT_SECTOR = "No Sector";
+    private static final String DEFAULT_PORTFOLIO = "Healthy Portfolio";
 
     public void scanMarket() {
         List<WatchlistStock> stocks =
@@ -61,19 +60,14 @@ public class MarketScannerService {
                                 "Price Received {} = {}",
                                 stock.getSymbol(),
                                 stock.getPrice()))
-                .flatMap(stock ->
-                        tradingStrategy.generateSignal(stock)
-                                .flatMap(this::processSignal))
-                .subscribe(
-                        result ->
-                                log.info(
-                                        "Scan Completed {}",
-                                        symbol),
-                        error ->
-                                log.error(
-                                        "Scanner failed for {}",
-                                        symbol,
-                                        error));
+                .flatMap(stock ->signalPreparationService.prepare(stock)
+                        .flatMap(signalRequest ->
+                                processSignal(createTradingSignal(signalRequest))
+                        )
+
+                )
+                .subscribe(result -> log.info("Scan Completed {}",symbol),
+                        error -> log.error("Scanner failed for {}",symbol,error));
     }
 
     private Mono<TradingSignal> processSignal(
@@ -162,5 +156,16 @@ public class MarketScannerService {
                                 return signal;
                             });
                 });
+    }
+
+    private TradingSignal createTradingSignal(SignalGenerationRequest request){
+
+        AiDecisionResponse aiDecision =
+                tradingOrchestratorService.executeTrade(request,
+                        DEFAULT_NEWS,
+                        DEFAULT_SECTOR,
+                        DEFAULT_PORTFOLIO);
+        return tradingSignalMapper.map(aiDecision,request);
+
     }
 }

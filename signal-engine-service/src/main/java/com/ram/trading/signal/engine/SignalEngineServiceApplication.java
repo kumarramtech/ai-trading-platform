@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-//@EnableScheduling
+@EnableScheduling
 public class SignalEngineServiceApplication {
 
 	public static void main(String[] args) {

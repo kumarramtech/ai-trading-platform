@@ -6,17 +6,19 @@ import com.ram.trading.signal.engine.dto.rules.RuleResult;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TradingDecisionEngine {
 
     private final RuleEngine ruleEngine;
 
-    private final ConfidenceCalculator confidenceCalculator;
+    private final RuleConfidenceCalculator confidenceCalculator;
 
     public TradingDecision generateDecision(
             SignalGenerationRequest request) {
@@ -32,6 +34,7 @@ public class TradingDecisionEngine {
 
         ConfidenceLevel level =
                 confidenceCalculator.determineLevel(confidence);
+
 
         return TradingDecision.builder()
                 .signal(signal)

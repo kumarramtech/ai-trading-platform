@@ -52,7 +52,7 @@ public class InstrumentServiceImpl implements InstrumentService {
     }
 
     @Override
-    public List<Instrument> findByExchange(String exchange) {
+    public List<Instrument> findActiveByExchange(String exchange) {
         return repository.findByExchange(exchange);
     }
 

@@ -2,7 +2,6 @@ package com.ram.trading.stock.service.instument;
 
 import com.ram.trading.stock.entity.Instrument;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -16,7 +15,7 @@ public interface InstrumentService {
 
     Optional<Instrument> findByInstrumentKey(String instrumentKey);
 
-    List<Instrument> findByExchange(String exchange);
+    List<Instrument> findActiveByExchange(String exchange);
 
     List<Instrument> findAll();
 
