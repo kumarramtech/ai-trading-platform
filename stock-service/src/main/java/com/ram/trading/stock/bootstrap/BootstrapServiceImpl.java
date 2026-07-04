@@ -18,7 +18,7 @@ public class BootstrapServiceImpl
     private final IndicatorBootstrapService indicatorBootstrapService;
 
     @Override
-    public void initialize() {
+    public void bootstrap() {
 
         log.info("");
         log.info("====================================================");

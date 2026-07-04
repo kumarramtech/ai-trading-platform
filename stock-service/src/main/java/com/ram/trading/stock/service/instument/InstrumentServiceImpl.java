@@ -63,6 +63,7 @@ public class InstrumentServiceImpl implements InstrumentService {
 
     @Override
     public void deleteAll() {
-        repository.deleteAll();
+        repository.deleteAllInBatch();
+        repository.flush();
     }
 }

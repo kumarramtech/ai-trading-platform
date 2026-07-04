@@ -45,28 +45,24 @@ public class HistoricalDataBootstrapServiceImpl
     private void bootstrapHistoricalData(Instrument instrument) {
 
         try {
-
             LocalDate toDate = LocalDate.now();
-
             LocalDate fromDate =
-                    toDate.minusDays(
-                            properties.getLookbackDays());
+                    toDate.minusDays(properties.getLookbackDays());
 
             log.info("Downloading historical data for {}",instrument.getTradingSymbol());
 
             HistoricalCandleResponse response =
                     historicalCandleService
-                            .getHistoricalCandles(
-                                    instrument.getTradingSymbol(),
-                                    properties.getInterval(),
+                            .getHistoricalCandles(instrument.getTradingSymbol(),properties.getInterval(),
                                     fromDate,
-                                    toDate)
-                            .block();
+                                    toDate).block();
 
             if (response != null) {
                 persistenceService.save(response);
-                log.info("Completed historical data for {}",
-                        instrument.getTradingSymbol());
+                log.info("Completed historical data for {}", instrument.getTradingSymbol());
+            } else {
+                log.warn("No historical data returned for {}", instrument.getTradingSymbol());
+
             }
             log.info("Completed historical data");
 

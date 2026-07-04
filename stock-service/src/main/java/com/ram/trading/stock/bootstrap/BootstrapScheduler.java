@@ -17,7 +17,7 @@ public class BootstrapScheduler {
     @Scheduled(cron = "${bootstrap.cron}", zone = "Asia/Kolkata")
     public void bootstrap() {
 
-        bootstrapService.initialize();
+        bootstrapService.bootstrap();
 
     }
 }
