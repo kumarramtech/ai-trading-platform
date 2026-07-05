@@ -6,7 +6,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -17,7 +19,19 @@ public class HistoricalPriceServiceImpl implements HistoricalPriceService {
     @Override
     public void saveAll(List<HistoricalPrice> prices) {
 
-        repository.saveAll(prices);
+        Map<String, HistoricalPrice> unique = new LinkedHashMap<>();
+
+        for (HistoricalPrice hp : prices) {
+
+            String key =
+                    hp.getSymbol() + "|" +
+                            hp.getTradeDate() + "|" +
+                            hp.getIntervalType();
+
+            unique.putIfAbsent(key, hp);
+        }
+
+        repository.saveAll(unique.values());
 
     }
 
@@ -58,6 +72,11 @@ public class HistoricalPriceServiceImpl implements HistoricalPriceService {
                 .findTop100BySymbolOrderByTradeDateDesc(
                         symbol);
 
+    }
+
+    @Override
+    public void flush() {
+        repository.flush();
     }
 
 }

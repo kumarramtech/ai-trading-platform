@@ -1,6 +1,8 @@
 package com.ram.trading.stock.repo;
 
 import com.ram.trading.stock.entity.Instrument;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -23,5 +25,14 @@ public interface InstrumentRepository
     Optional<Instrument> findByTradingSymbolAndExchangeAndIsActiveTrue(
             String tradingSymbol,
             String exchange);
+    List<Instrument> findByExchangeAndSegmentAndInstrumentTypeAndIsActiveTrue(
+            String exchange,
+            String segment,
+            String instrumentType);
+
+    Page<Instrument> findByExchangeAndSegmentAndInstrumentTypeAndIsActiveTrue(
+            String exchange,
+            String segment,
+            String instrumentType, Pageable pageable);
 
 }

@@ -20,22 +20,22 @@ public class InstrumentValidatorImpl implements InstrumentValidator {
 
         List<String> errors = new ArrayList<>();
 
-        Set<String> keys = new HashSet<>();
+        Set<String> instrumentKeys = new HashSet<>();
+
+        Set<String> brokerTradingSymbols = new HashSet<>();
 
         int line = 2;
 
         for (Instrument instrument : instruments) {
 
-            String error = validateRecord(instrument, keys);
+            String error = validateRecord(
+                    instrument,
+                    instrumentKeys);
 
             if (error == null) {
-
                 valid.add(instrument);
-
             } else {
-
                 errors.add("Line " + line + " : " + error);
-
             }
 
             line++;
@@ -68,7 +68,7 @@ public class InstrumentValidatorImpl implements InstrumentValidator {
 
     private String validateRecord(
             Instrument instrument,
-            Set<String> keys) {
+            Set<String> instrumentKeys) {
 
         if (isBlank(instrument.getTradingSymbol()))
             return "Trading Symbol Missing";
@@ -82,8 +82,16 @@ public class InstrumentValidatorImpl implements InstrumentValidator {
         if (isBlank(instrument.getSegment()))
             return "Segment Missing";
 
-        if (!keys.add(instrument.getInstrumentKey()))
+        if (!instrumentKeys.add(instrument.getInstrumentKey()))
             return "Duplicate Instrument Key";
+
+        /*String businessKey =
+                instrument.getBroker() + "|" +
+                        instrument.getTradingSymbol();
+
+        if (!brokerTradingSymbols.add(businessKey))
+            return "Duplicate Broker + Trading Symbol";*/
+       /* validateRecord(instrument,instrumentKeys,brokerTradingSymbols);*/
 
         return null;
     }

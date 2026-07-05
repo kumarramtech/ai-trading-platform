@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.client;
 
 import com.ram.trading.signal.engine.dto.StockResponse;
+import com.ram.trading.signal.engine.dto.history.HistoricalPriceResponse;
 import com.ram.trading.signal.engine.dto.indicator.HistoricalCandleResponse;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import lombok.RequiredArgsConstructor;
@@ -58,5 +59,18 @@ public class StockServiceClient implements MarketDataProvider {
                         .build(symbol))
                 .retrieve()
                 .bodyToMono(HistoricalCandleResponse.class);
+    }
+
+    public Flux<HistoricalPriceResponse> getHistoricalPrices(
+            String symbol) {
+
+        return webClientBuilder
+                .baseUrl(stockServiceUrl)
+                .build()
+                .get()
+                .uri("/api/v1/history/{symbol}", symbol)
+                .retrieve()
+                .bodyToFlux(HistoricalPriceResponse.class);
+
     }
 }

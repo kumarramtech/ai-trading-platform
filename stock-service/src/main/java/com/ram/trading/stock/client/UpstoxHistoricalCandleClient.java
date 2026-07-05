@@ -40,7 +40,7 @@ public class UpstoxHistoricalCandleClient {
 
         String url = UriComponentsBuilder
                 .fromHttpUrl(properties.getBaseUrl())
-                .path("/v3/historical-candle/{instrumentKey}/{interval}/{toDate}/{fromDate}")
+                .path("/historical-candle/{instrumentKey}/{interval}/{toDate}/{fromDate}")
                 .buildAndExpand(
                         instrumentKey,
                         interval,

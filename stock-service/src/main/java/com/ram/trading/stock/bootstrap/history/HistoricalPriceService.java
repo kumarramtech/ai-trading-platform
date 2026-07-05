@@ -22,4 +22,5 @@ public interface HistoricalPriceService {
             String symbol,
             Integer limit);
 
+    void flush();
 }

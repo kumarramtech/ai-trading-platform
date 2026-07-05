@@ -42,6 +42,8 @@ public class HistoricalPricePersistenceServiceImpl
 
         historicalPriceService.deleteBySymbol(response.getSymbol());
 
+        historicalPriceService.flush();
+
         historicalPriceService.saveAll(prices);
 
         log.info("Successfully persisted {} historical candles for {}",

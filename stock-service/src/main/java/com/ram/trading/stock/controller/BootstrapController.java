@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @Slf4j
 @RestController
@@ -23,14 +25,17 @@ public class BootstrapController {
      * Download Instrument Master
      */
     @PostMapping("/instruments")
-    public ResponseEntity<String> downloadInstruments() {
+    public Mono<ResponseEntity<String>>  downloadInstruments() {
 
         log.info("Manual Instrument Bootstrap Triggered");
 
         instrumentBootstrapService.bootstrap();
 
-        return ResponseEntity.ok(
-                "Instrument Bootstrap Completed Successfully");
+        return Mono.fromCallable(() -> {
+                    bootstrapService.bootstrap();
+                    return ResponseEntity.ok("Instrument Bootstrap Completed Successfully");
+                })
+                .subscribeOn(Schedulers.boundedElastic());
 
     }
 
@@ -38,27 +43,26 @@ public class BootstrapController {
      * Download Historical Data
      */
     @PostMapping("/history")
-    public ResponseEntity<String> downloadHistoricalData() {
+    public Mono<ResponseEntity<String>> downloadHistoricalData() {
 
-        log.info("Manual Historical Bootstrap Triggered");
-
-        historicalDataBootstrapService.bootstrap();
-
-        return ResponseEntity.ok(
-                "Historical Bootstrap Completed Successfully");
-
+        return Mono.fromRunnable(() -> historicalDataBootstrapService.bootstrap())
+                .subscribeOn(Schedulers.boundedElastic())
+                .thenReturn(ResponseEntity.ok("Historical Bootstrap Completed Successfully"));
     }
 
     /**
      * Complete Bootstrap
      */
     @PostMapping("/full")
-    public ResponseEntity<String> fullBootstrap() {
+    public Mono<ResponseEntity<String>> fullBootstrap() {
 
         log.info("Manual Full Bootstrap Triggered");
-        bootstrapService.bootstrap();
-        return ResponseEntity.ok("Full Bootstrap Completed Successfully");
 
+        return Mono.fromCallable(() -> {
+                    bootstrapService.bootstrap();
+                    return ResponseEntity.ok("Full Bootstrap Completed Successfully");
+                })
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
 }

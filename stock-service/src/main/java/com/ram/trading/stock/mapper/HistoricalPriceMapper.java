@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class HistoricalPriceMapper {
 
-    public HistoricalPriceResponse toResponse(
+    public static HistoricalPriceResponse toResponse(
             HistoricalPrice entity) {
 
         return HistoricalPriceResponse.builder()

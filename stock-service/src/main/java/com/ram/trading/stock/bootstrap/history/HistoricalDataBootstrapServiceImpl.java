@@ -7,9 +7,11 @@ import com.ram.trading.stock.service.instument.InstrumentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDate;
-import java.util.List;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 @Service
 @RequiredArgsConstructor
@@ -28,48 +30,67 @@ public class HistoricalDataBootstrapServiceImpl
     @Override
     public void bootstrap() {
 
-        log.info("======================================");
-        log.info("Historical Bootstrap Started");
-        log.info("======================================");
+        log.info("Starting Historical Bootstrap...");
 
-        List<Instrument> instruments = instrumentService.findActiveByExchange("NSE");
+        int pageNo = 0;
 
-        log.info("Found {} instruments", instruments.size());
+        int batchSize = properties.getMaxSymbolsPerRun();
 
-        instruments.stream().limit(properties.getMaxSymbolsPerRun()).forEach(this::bootstrapHistoricalData);
+        Page<Instrument> page;
+
+        do {
+
+            page = instrumentService.findTradableEquities(
+                    PageRequest.of(pageNo, batchSize));
+
+            page.getContent().stream()
+
+                    .filter(i -> "NSE".equalsIgnoreCase(i.getExchange()))
+
+                    .filter(i -> "NSE_EQ".equalsIgnoreCase(i.getSegment()))
+
+                    .filter(i -> "EQ".equalsIgnoreCase(i.getInstrumentType()))
+
+                    .forEach(this::bootstrapHistoricalData);
+
+            pageNo++;
+
+        } while (page.hasNext());
 
         log.info("Historical Bootstrap Completed");
-
     }
 
     private void bootstrapHistoricalData(Instrument instrument) {
 
         try {
-            LocalDate toDate = LocalDate.now();
-            LocalDate fromDate =
-                    toDate.minusDays(properties.getLookbackDays());
 
-            log.info("Downloading historical data for {}",instrument.getTradingSymbol());
+            // Download only completed trading days
+            LocalDate toDate = LocalDate.now().minusDays(1);
+            LocalDate fromDate = toDate.minusDays(properties.getLookbackDays());
+
+            log.info("Downloading historical data for {}", instrument.getTradingSymbol());
 
             HistoricalCandleResponse response =
                     historicalCandleService
-                            .getHistoricalCandles(instrument.getTradingSymbol(),properties.getInterval(),
+                            .getHistoricalCandles(
+                                    instrument.getTradingSymbol(),
+                                    properties.getInterval(),
                                     fromDate,
-                                    toDate).block();
+                                    toDate)
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .block();
 
             if (response != null) {
                 persistenceService.save(response);
                 log.info("Completed historical data for {}", instrument.getTradingSymbol());
             } else {
                 log.warn("No historical data returned for {}", instrument.getTradingSymbol());
-
             }
-            log.info("Completed historical data");
 
         } catch (Exception ex) {
-            log.error("Historical bootstrap failed for symbol {}", instrument.getTradingSymbol(),
+            log.error("Historical bootstrap failed for symbol {}",
+                    instrument.getTradingSymbol(),
                     ex);
-
         }
 
     }
