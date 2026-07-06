@@ -1,8 +1,9 @@
 package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
-import com.ram.trading.signal.engine.client.IndicatorClient;
+
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import com.ram.trading.signal.engine.service.*;
 import com.ram.trading.signal.engine.service.interfac.AIAnalysisService;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
@@ -36,7 +37,7 @@ public class SignalController {
 
     private final PaperTradingService paperTradingService;
 
-    private final IndicatorClient indicatorClient;
+    private final TechnicalIndicatorService technicalIndicatorService;
 
     private final AIAnalysisService aiAnalysisService;
 
@@ -59,7 +60,7 @@ public class SignalController {
                                         return Mono.just(signal);
                                     }
                                     TradingSignalEntity savedEntity = tradingSignalService.save(signal);
-                                    return indicatorClient.getLatest(signal.getSymbol())
+                                    return technicalIndicatorService.calculate(signal.getSymbol())
                                             .map(indicator -> {
                                                 RiskCheckResponse riskCheck =
                                                         riskManagementService.validateTrade();
@@ -101,7 +102,7 @@ public class SignalController {
                 .getStockPrice(symbol)
                 .flatMap(stock -> tradingStrategy
                         .generateSignal(stock)
-                        .flatMap(signal -> indicatorClient.getLatest(symbol)
+                        .flatMap(signal -> technicalIndicatorService.calculate(symbol)
                                 .map(indicator -> aiAnalysisService
                                         .explainSignal(signal, indicator))));
     }
@@ -114,8 +115,8 @@ public class SignalController {
                 .getStockPrice(symbol)
                 .flatMap(stock ->
                         tradingStrategy.generateSignal(stock)
-                                .flatMap(signal -> indicatorClient
-                                                .getLatest(symbol)
+                                .flatMap(signal -> technicalIndicatorService
+                                                .calculate(symbol)
                                                 .flatMap(indicator -> {
                                                     SignalExplanationRequest request =
                                                             SignalExplanationRequest

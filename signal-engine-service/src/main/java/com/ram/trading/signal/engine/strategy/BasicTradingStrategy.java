@@ -1,15 +1,17 @@
 package com.ram.trading.signal.engine.strategy;
 
-import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.contant.SignalWeights;
 import com.ram.trading.signal.engine.dto.StockResponse;
-import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
+import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 @Service
 @RequiredArgsConstructor
@@ -17,14 +19,14 @@ import reactor.core.publisher.Mono;
 public class BasicTradingStrategy
         implements TradingStrategy {
 
-    private final IndicatorClient indicatorClient;
+    private final TechnicalIndicatorService technicalIndicatorService;
 
     @Override
     public Mono<TradingSignal> generateSignal(
             StockResponse stock) {
 
-        return indicatorClient
-                .getLatest(stock.getSymbol())
+        return technicalIndicatorService
+                .calculate(stock.getSymbol())
                 .map(indicator -> {
 
                     Double price =
@@ -154,9 +156,9 @@ public class BasicTradingStrategy
                     return new TradingSignal(
                             stock.getSymbol(),
                             signal,
-                            price,
-                            targetPrice,
-                            stopLoss,
+                            round(price),
+                            round(targetPrice),
+                            round(stopLoss),
                             finalReason,
                             confidence,
                             indicator.getRsi14(),
@@ -165,5 +167,16 @@ public class BasicTradingStrategy
                             indicator.getMacd(),null,null,null
                     );
                 });
+    }
+
+    private Double round(Double value) {
+
+        if (value == null) {
+            return null;
+        }
+
+        return BigDecimal.valueOf(value)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 }

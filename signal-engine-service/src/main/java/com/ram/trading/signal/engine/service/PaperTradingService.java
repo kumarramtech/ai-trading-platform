@@ -23,6 +23,8 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -86,7 +88,7 @@ public class PaperTradingService {
                         .symbol(signal.getSymbol())
                         .signalId(signal.getId())
                         .signal(signal.getSignal())
-                        .entryPrice(signal.getEntryPrice())
+                        .entryPrice(round(signal.getEntryPrice()))
                         .quantity(quantity)
                         .investedAmount(
                                 quantity *
@@ -95,8 +97,8 @@ public class PaperTradingService {
                         .ema20(indicatorResponse.getEma20())
                         .ema50(indicatorResponse.getEma50())
                         .macd(indicatorResponse.getMacd())
-                        .targetPrice(signal.getTargetPrice())
-                        .stopLoss(signal.getStopLoss())
+                        .targetPrice(round(signal.getTargetPrice()))
+                        .stopLoss(round(signal.getStopLoss()))
                         .status(SignalStatus.OPEN)
                         .confidence(signal.getConfidence())
                         .entryTime(LocalDateTime.now())
@@ -130,6 +132,17 @@ public class PaperTradingService {
                                 "Failed to send notification",
                                 error))
                 .subscribe();
+    }
+
+    private Double round(Double value) {
+
+        if (value == null) {
+            return null;
+        }
+
+        return BigDecimal.valueOf(value)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 
     public List<PaperTrade> getByStatus(SignalStatus status) {

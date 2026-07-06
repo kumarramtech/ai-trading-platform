@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -23,9 +25,9 @@ public class TradingSignalService {
             TradingSignalEntity entity = TradingSignalEntity.builder()
                     .symbol(signal.getSymbol())
                     .signal(signal.getSignal())
-                    .entryPrice(signal.getEntryPrice())
-                    .targetPrice(signal.getTargetPrice())
-                    .stopLoss(signal.getStopLoss())
+                    .entryPrice(round(signal.getEntryPrice()))
+                    .targetPrice(round(signal.getTargetPrice()))
+                    .stopLoss(round(signal.getStopLoss()))
                     .confidence(signal.getConfidence())
                     .reason(signal.getReason())
                     .signalTime(LocalDateTime.now())
@@ -35,6 +37,17 @@ public class TradingSignalService {
 
             return repository.save(entity);
         }
+
+    private Double round(Double value) {
+
+        if (value == null) {
+            return null;
+        }
+
+        return BigDecimal.valueOf(value)
+                .setScale(2, RoundingMode.HALF_UP)
+                .doubleValue();
+    }
     
         public List<TradingSignalEntity> getHistory(
                 String symbol) {

@@ -1,3 +1,4 @@
+/*
 package com.ram.trading.signal.engine.client;
 
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
@@ -24,4 +25,4 @@ public class IndicatorClient {
                         TechnicalIndicatorResponse.class);
     }
 
-}
+}*/

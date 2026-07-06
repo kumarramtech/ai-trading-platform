@@ -1,10 +1,10 @@
 package com.ram.trading.signal.engine.service;
 
-import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.rules.MarketContext;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
+import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -13,13 +13,13 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 public class SignalPreparationService {
 
-    private final IndicatorClient indicatorClient;
+    private final TechnicalIndicatorService technicalIndicatorService;
 
     public Mono<SignalGenerationRequest> prepare(
             StockResponse stock) {
 
-        return indicatorClient
-                .getLatest(stock.getSymbol())
+        return technicalIndicatorService
+                .calculate(stock.getSymbol())
                 .map(indicator -> buildRequest(stock, indicator));
     }
 

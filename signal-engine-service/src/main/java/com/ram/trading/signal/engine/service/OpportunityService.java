@@ -1,13 +1,12 @@
 package com.ram.trading.signal.engine.service;
 
-import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
-import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradeLifecycleDto;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.Opportunity;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
+import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import com.ram.trading.signal.engine.repo.OpportunityRepository;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +30,7 @@ public class OpportunityService {
     private final TradingSignalService tradingSignalService;
     private final PaperTradingService paperTradingService;
     private final PaperTradeRepository paperTradeRepository;
-    private final IndicatorClient indicatorClient;
+    private final TechnicalIndicatorService technicalIndicatorService;
 
     public Opportunity save(TradingSignal signal,Long signalId) {
         Opportunity opportunity =
@@ -144,8 +143,8 @@ public class OpportunityService {
                         return Mono.empty();
                     }
 
-                    return indicatorClient
-                            .getLatest(opportunity.getSymbol())
+                    return technicalIndicatorService
+                            .calculate(opportunity.getSymbol())
                             .doOnNext(indicator ->
                                     paperTradingService.createTrade(
                                             savedSignal,

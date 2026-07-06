@@ -1,6 +1,5 @@
 package com.ram.trading.signal.engine.service;
 
-import com.ram.trading.signal.engine.client.IndicatorClient;
 import com.ram.trading.signal.engine.client.NewsAnalysisClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
@@ -10,6 +9,7 @@ import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.entity.WatchlistStock;
+import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.repo.WatchlistStockRepository;
 import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
@@ -32,7 +32,7 @@ public class MarketScannerService {
     private final SignalPreparationService signalPreparationService;
     private final TradingSignalService tradingSignalService;
     private final TradingOrchestratorService tradingOrchestratorService;
-    private final IndicatorClient indicatorClient;
+    private final TechnicalIndicatorService technicalIndicatorService;
     private final RiskManagementService riskManagementService;
     private final NewsAnalysisClient newsAnalysisClient;
     private final SignalConfidenceCalculator confidenceCalculator;
@@ -132,8 +132,8 @@ public class MarketScannerService {
                     signal.setNewsSentiment(news.getSentiment());
                     signal.setNewsSummary(news.getSummary());
                     //opportunityService.save(signal);
-                    return indicatorClient
-                            .getLatest(signal.getSymbol())
+                    return technicalIndicatorService
+                            .calculate(signal.getSymbol())
                             .onErrorResume(error -> {
                                 log.warn("Indicator not available for {}",signal.getSymbol());
                                 return Mono.empty();

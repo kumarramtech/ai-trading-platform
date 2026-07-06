@@ -2,6 +2,7 @@ package com.ram.trading.stock.client;
 
 import com.ram.trading.stock.client.properties.UpstoxProperties;
 import com.ram.trading.stock.dto.MarketQuoteResponse;
+import com.ram.trading.stock.service.auth.UpstoxTokenService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -18,11 +19,15 @@ public class UpstoxMarketClient {
 
     private final WebClient webClient;
     private final UpstoxProperties properties;
+    private final UpstoxTokenService tokenService;
 
     public Mono<MarketQuoteResponse> getQuote(String instrumentKey) {
 
         log.info("Fetching live quote for {}", instrumentKey);
 
+        String token = tokenService.getAccessToken();
+
+        log.info("Using Access Token : {}", token.substring(0,10));
         return webClient.get()
 
                 .uri(properties.getMarketUrl()
@@ -30,7 +35,7 @@ public class UpstoxMarketClient {
                         + instrumentKey)
 
                 .header(HttpHeaders.AUTHORIZATION,
-                        "Bearer " + properties.getAnalyticsToken())
+                        "Bearer " + tokenService.getAccessToken())
 
                 .accept(MediaType.APPLICATION_JSON)
 
