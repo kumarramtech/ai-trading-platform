@@ -4,6 +4,7 @@ import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.ai.TradingDecisionRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -13,6 +14,7 @@ import java.util.List;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AIServiceClient {
 
     @Value("${ai.service.url}")
@@ -68,20 +70,29 @@ public class AIServiceClient {
                 .bodyToMono(RiskAnalysisResponse.class);
     }
 
-    public AiDecisionResponse evaluate(
+    public Mono<AiDecisionResponse> evaluate(
             TradingDecisionRequest request) {
 
-        return client().post()
+        String symbol = request.getSignalRequest() != null
+                ? request.getSignalRequest().getSymbol()
+                : "UNKNOWN";
 
+        log.info("Preparing AI Decision Request for {}", symbol);
+
+        return client()
+                .post()
                 .uri("/ai/trading-decision")
-
                 .bodyValue(request)
-
                 .retrieve()
-
                 .bodyToMono(AiDecisionResponse.class)
-
-                .block();
-
+                .doOnSubscribe(subscription ->
+                        log.info("Calling AI Decision Service for {}", symbol))
+                .doOnSuccess(response ->
+                        log.info("AI Decision Received for {} : Decision={}, Confidence={}",
+                                symbol,
+                                response.getDecision(),
+                                response.getDecision().getConfidence()))
+                .doOnError(error ->
+                        log.error("AI Decision Failed for {}", symbol, error));
     }
 }

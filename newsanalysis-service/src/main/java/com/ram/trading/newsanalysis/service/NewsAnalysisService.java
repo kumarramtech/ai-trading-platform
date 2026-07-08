@@ -2,77 +2,52 @@ package com.ram.trading.newsanalysis.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ram.trading.newsanalysis.client.AIClient;
 import com.ram.trading.newsanalysis.dto.NewsAnalysisResponse;
+import com.ram.trading.newsanalysis.parser.NewsAnalysisResponseParser;
+import com.ram.trading.newsanalysis.prompt.NewsAnalysisPromptBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class NewsAnalysisService {
 
-    private final ChatClient.Builder chatClientBuilder;
+    private final AIClient aiClient;
 
-    public NewsAnalysisResponse analyze(
-            String symbol,
-            String headline) {
+    private final NewsCollectionService newsCollectionService;
 
-        String prompt = """
-                Analyze the following stock market news.
+    private final NewsAnalysisPromptBuilder promptBuilder;
 
-                Return ONLY JSON.
+    private final ObjectMapper objectMapper;
 
-                Format:
-                {
-                  "sentiment":"POSITIVE|NEGATIVE|NEUTRAL",
-                  "score":0-100,
-                  "summary":"one line summary"
-                }
+    private final NewsAnalysisResponseParser parser;
 
-                News:
-                %s
-                """.formatted(headline);
+    public Mono<NewsAnalysisResponse> analyze(String symbol) {
+        log.info("Starting News Analysis for {}", symbol);
+        return newsCollectionService
+                .collectNews(symbol)
+                .flatMap(headlines -> {
+                    log.info("Collected {} headlines for {}",
+                            headlines.size(),
+                            symbol);
+                    return aiClient
+                            .analyze(
+                                    promptBuilder.build(
+                                            symbol,
+                                            headlines))
+                            .map(aiResponse ->
+                                    parser.parse(
+                                            symbol,
+                                            aiResponse));
+                });
 
-        String response =
-                chatClientBuilder.build()
-                        .prompt(prompt)
-                        .call()
-                        .content();
-
-        log.info("AI Response={}", response);
-
-        try {
-
-            ObjectMapper mapper =
-                    new ObjectMapper();
-
-            JsonNode node =
-                    mapper.readTree(response);
-
-            return NewsAnalysisResponse.builder()
-                    .symbol(symbol)
-                    .sentiment(
-                            node.get("sentiment").asText())
-                    .score(
-                            node.get("score").asInt())
-                    .summary(
-                            node.get("summary").asText())
-                    .build();
-
-        } catch (Exception e) {
-
-            log.error(
-                    "Failed to parse AI response",
-                    e);
-
-            return NewsAnalysisResponse.builder()
-                    .symbol(symbol)
-                    .sentiment("NEUTRAL")
-                    .score(50)
-                    .summary("Unable to analyze")
-                    .build();
-        }
     }
+
 }

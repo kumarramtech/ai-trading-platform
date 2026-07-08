@@ -62,9 +62,8 @@ public class MarketScannerService {
                                 stock.getPrice()))
                 .flatMap(stock ->signalPreparationService.prepare(stock)
                         .flatMap(signalRequest ->
-                                processSignal(createTradingSignal(signalRequest))
-                        )
-
+                                createTradingSignal(signalRequest)
+                                        .flatMap(this::processSignal))
                 )
                 .subscribe(result -> log.info("Scan Completed {}",symbol),
                         error -> log.error("Scanner failed for {}",symbol,error));
@@ -158,14 +157,12 @@ public class MarketScannerService {
                 });
     }
 
-    private TradingSignal createTradingSignal(SignalGenerationRequest request){
+    private Mono<TradingSignal> createTradingSignal(SignalGenerationRequest request){
 
-        AiDecisionResponse aiDecision =
-                tradingOrchestratorService.executeTrade(request,
-                        DEFAULT_NEWS,
-                        DEFAULT_SECTOR,
-                        DEFAULT_PORTFOLIO);
-        return tradingSignalMapper.map(aiDecision,request);
+        return tradingOrchestratorService.executeTrade(request,
+                DEFAULT_NEWS,
+                DEFAULT_SECTOR,
+                DEFAULT_PORTFOLIO).map(aiDecisionResponse -> tradingSignalMapper.map(aiDecisionResponse,request));
 
     }
 }

@@ -153,19 +153,27 @@ public class BasicTradingStrategy
                                         finalReason.length() - 2);
                     }
 
-                    return new TradingSignal(
-                            stock.getSymbol(),
-                            signal,
-                            round(price),
-                            round(targetPrice),
-                            round(stopLoss),
-                            finalReason,
-                            confidence,
-                            indicator.getRsi14(),
-                            indicator.getEma20(),
-                            indicator.getEma50(),
-                            indicator.getMacd(),null,null,null
-                    );
+                    return TradingSignal.builder()
+                            .symbol(stock.getSymbol())
+                            .signal(signal)
+                            .entryPrice(round(price))
+                            .targetPrice(round(targetPrice))
+                            .stopLoss(round(stopLoss))
+                            .reason(finalReason)
+                            .confidence(confidence)
+                            .rsi(round(indicator.getRsi14()))
+                            .ema20(round(indicator.getEma20()))
+                            .ema50(round(indicator.getEma50()))
+                            .macd(round(indicator.getMacd()))
+                            .newsScore(null)
+                            .newsSentiment(null)
+                            .newsSummary(null)
+                            .aiRecommendation(null)
+                            .aiReasoning(null)
+                            .riskLevel(null)
+                            .exitStrategy(null)
+                            .positionSize(null)
+                            .build();
                 });
     }
 

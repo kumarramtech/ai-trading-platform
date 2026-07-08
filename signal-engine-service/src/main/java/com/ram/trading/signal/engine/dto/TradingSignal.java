@@ -25,4 +25,9 @@ public class TradingSignal {
     private Integer newsScore;
     private String newsSentiment;
     private String newsSummary;
+    private String aiRecommendation;
+    private String aiReasoning;
+    private String riskLevel;
+    private String exitStrategy;
+    private String positionSize;
 }

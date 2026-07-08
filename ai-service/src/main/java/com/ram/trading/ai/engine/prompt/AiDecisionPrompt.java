@@ -96,8 +96,54 @@ public final class AiDecisionPrompt {
                                          }
                                          
                                          Return ONLY JSON.
-                                         Do not use markdown.
-                                         Do not wrap the JSON in ```json blocks.
+                                        IMPORTANT JSON RULES
+                                                                                
+                                                                                1. Return STRICT VALID JSON only.
+                                                                                
+                                                                                2. Never return strings for numeric fields.
+                                                                                
+                                                                                3. Numeric fields are:
+                                                                                
+                                                                                - confidence
+                                                                                - technicalAnalysis.rsi.value
+                                                                                - technicalAnalysis.ema.ema20
+                                                                                - technicalAnalysis.ema.ema50
+                                                                                - technicalAnalysis.macd.value
+                                                                                - technicalAnalysis.macd.signalLine
+                                                                                - technicalAnalysis.volume.current
+                                                                                - technicalAnalysis.volume.average
+                                                                                - executionPlan.entry
+                                                                                - executionPlan.stopLoss
+                                                                                - executionPlan.target
+                                                                                - executionPlan.positionSize
+                                                                                
+                                                                                4. If a numeric value is unavailable,
+                                                                                return null.
+                                                                                
+                                                                                GOOD
+                                                                                
+                                                                                "entry": null
+                                                                                
+                                                                                BAD
+                                                                                
+                                                                                "entry": "Not applicable"
+                                                                                
+                                                                                BAD
+                                                                                
+                                                                                "entry": "N/A"
+                                                                                
+                                                                                BAD
+                                                                                
+                                                                                "entry": "Unknown"
+                                                                                
+                                                                                5. Never return text for numeric fields.
+                                                                                
+                                                                                6. If recommendation is HOLD then:
+                                                                                
+                                                                                "entry": null,
+                                                                                "stopLoss": null,
+                                                                                "target": null,
+                                                                                "positionSize": null
             """;
 
 }

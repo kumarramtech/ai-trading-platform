@@ -8,8 +8,6 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class NewsAnalysisRequest {
-
-    private String symbol;
-
     private String headline;
+    private String symbol;
 }

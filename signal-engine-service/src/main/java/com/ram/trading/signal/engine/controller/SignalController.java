@@ -47,7 +47,9 @@ public class SignalController {
 
     private final RiskManagementService riskManagementService;
 
-    @GetMapping("/{symbol}")
+    private final SignalGenerationService signalGenerationService;
+
+    /*@GetMapping("/{symbol}")
     public Mono<TradingSignal> generateSignal(
             @PathVariable String symbol) {
 
@@ -75,7 +77,14 @@ public class SignalController {
                                             });
                                 }));
     }
+*/
 
+    @GetMapping("/{symbol}")
+    public Mono<TradingSignal> generateSignal(
+            @PathVariable String symbol) {
+
+        return signalGenerationService.generateSignal(symbol);
+    }
     @GetMapping("/history/{symbol}")
     public List<TradingSignalEntity> getHistory(
             @PathVariable String symbol) {

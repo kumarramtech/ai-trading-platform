@@ -39,6 +39,31 @@ public class TradingSignalMapper {
                                 .getMacd()
                                 .getValue())
                 .reason(aiResponse.getAiReasoning())
+                .aiRecommendation(
+                        aiResponse.getDecision()
+                                .getRecommendation()
+                                .name())
+
+                .aiRecommendation(
+                        aiResponse.getDecision()
+                                .getRecommendation()
+                                .name())
+
+                .aiReasoning(
+                        aiResponse.getAiReasoning())
+
+                .riskLevel(
+                        aiResponse.getRiskAnalysis()
+                                .getRiskLevel())
+
+                .positionSize(
+                        String.valueOf(
+                                aiResponse.getExecutionPlan()
+                                        .getPositionSize()==null?null:aiResponse.getExecutionPlan()
+                                        .getPositionSize()))
+                .exitStrategy(
+                aiResponse.getExecutionPlan()
+                        .getHoldingPeriod())
                 .build();
         log.info(
                 "Mapped AI Response -> TradingSignal | Symbol={} Signal={} Confidence={}",

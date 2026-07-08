@@ -8,20 +8,21 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("/news")
 @RequiredArgsConstructor
 public class NewsAnalysisController {
 
-    private final NewsAnalysisService service;
+    private final NewsAnalysisService newsAnalysisService;
 
     @PostMapping("/analyze")
-    public NewsAnalysisResponse analyze(
+    public Mono<NewsAnalysisResponse> analyze(
             @RequestBody NewsAnalysisRequest request) {
 
-        return service.analyze(
-                request.getSymbol(),
-                request.getHeadline());
+        return newsAnalysisService.analyze(
+                request.getSymbol());
+
     }
 }

@@ -9,6 +9,7 @@ import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.ai.TradingDecisionRequest;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
+import reactor.core.publisher.Mono;
 
 
 @Service
@@ -22,7 +23,7 @@ public class TradingOrchestratorService {
 
     private final AiDecisionIntegrationService aiDecisionIntegrationService;
 
-    public AiDecisionResponse executeTrade(
+    public Mono<AiDecisionResponse> executeTrade(
             SignalGenerationRequest signalRequest,
             String newsSummary,
             String sectorSummary,
@@ -31,20 +32,31 @@ public class TradingOrchestratorService {
         log.info("Starting AI Trading Pipeline for {}",
                 signalRequest.getSymbol());
 
-        TradingDecision technicalDecision = generateTechnicalDecision(signalRequest);
+        TradingDecision technicalDecision =
+                generateTechnicalDecision(signalRequest);
 
         TradingDecisionRequest aiRequest =
-                buildAIRequest(signalRequest, technicalDecision, newsSummary,
-                        sectorSummary, portfolioSummary);
+                buildAIRequest(
+                        signalRequest,
+                        technicalDecision,
+                        newsSummary,
+                        sectorSummary,
+                        portfolioSummary);
 
-        AiDecisionResponse response = callAI(aiRequest);
+        return callAI(aiRequest)
+                .doOnNext(response -> {
 
-        log.info("Calling AI Service...");
-        log.info("AI Recommendation = {}", response.getDecision().getRecommendation());
+                    log.info("Calling AI Service...");
 
-        log.info("AI Confidence = {}", response.getDecision().getConfidence());
+                    log.info(
+                            "AI Recommendation={}",
+                            response.getDecision().getRecommendation());
 
-        return response;
+                    log.info(
+                            "AI Confidence={}",
+                            response.getDecision().getConfidence());
+
+                });
     }
 
     private TradingDecision generateTechnicalDecision(
@@ -58,10 +70,10 @@ public class TradingOrchestratorService {
         return tradingDecisionMapper.map(signalRequest, decision, newsSummary,
                 sectorSummary, portfolioSummary);
     }
-    private AiDecisionResponse callAI(
+    private Mono<AiDecisionResponse> callAI(
             TradingDecisionRequest request) {
-        return aiDecisionIntegrationService.getDecision(request);
 
+        return aiDecisionIntegrationService.getDecision(request);
     }
 
 }

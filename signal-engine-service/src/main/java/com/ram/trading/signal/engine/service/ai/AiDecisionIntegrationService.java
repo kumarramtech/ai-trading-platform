@@ -6,6 +6,7 @@ import com.ram.trading.signal.engine.dto.ai.TradingDecisionRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 @Service
 @RequiredArgsConstructor
@@ -14,13 +15,12 @@ public class AiDecisionIntegrationService {
 
     private final AIServiceClient client;
 
-    public AiDecisionResponse getDecision(
+    public Mono<AiDecisionResponse> getDecision(
             TradingDecisionRequest request) {
 
         log.info("Calling AI Decision Service");
 
         return client.evaluate(request);
-
     }
 
 }
