@@ -21,4 +21,8 @@ public class TradingDecisionRequest {
 
     private String portfolioSummary;
 
+    private String newsSentiment;
+
+    private Integer newsScore;
+
 }

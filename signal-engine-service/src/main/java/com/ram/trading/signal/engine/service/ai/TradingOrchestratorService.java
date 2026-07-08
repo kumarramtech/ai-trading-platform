@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.service.ai;
 
 import com.ram.trading.signal.engine.service.ai.mapper.TradingDecisionMapper;
+import com.ram.trading.signal.engine.service.context.TradingContext;
 import com.ram.trading.signal.engine.service.rules.TradingDecisionEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,9 +26,7 @@ public class TradingOrchestratorService {
 
     public Mono<AiDecisionResponse> executeTrade(
             SignalGenerationRequest signalRequest,
-            String newsSummary,
-            String sectorSummary,
-            String portfolioSummary) {
+            TradingContext context) {
 
         log.info("Starting AI Trading Pipeline for {}",
                 signalRequest.getSymbol());
@@ -36,12 +35,7 @@ public class TradingOrchestratorService {
                 generateTechnicalDecision(signalRequest);
 
         TradingDecisionRequest aiRequest =
-                buildAIRequest(
-                        signalRequest,
-                        technicalDecision,
-                        newsSummary,
-                        sectorSummary,
-                        portfolioSummary);
+                tradingDecisionMapper.map(signalRequest,technicalDecision,context);
 
         return callAI(aiRequest)
                 .doOnNext(response -> {
@@ -65,11 +59,10 @@ public class TradingOrchestratorService {
 
     }
 
-    private TradingDecisionRequest buildAIRequest(SignalGenerationRequest signalRequest,
-            TradingDecision decision, String newsSummary, String sectorSummary, String portfolioSummary){
-        return tradingDecisionMapper.map(signalRequest, decision, newsSummary,
-                sectorSummary, portfolioSummary);
-    }
+   /* private TradingDecisionRequest buildAIRequest(SignalGenerationRequest signalRequest,
+            TradingDecision decision, TradingContext context){
+        return tradingDecisionMapper.map(signalRequest, decision, context);
+    }*/
     private Mono<AiDecisionResponse> callAI(
             TradingDecisionRequest request) {
 

@@ -14,6 +14,7 @@ import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.repo.WatchlistStockRepository;
 import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingSignalMapper;
+import com.ram.trading.signal.engine.service.context.TradingContextService;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.util.SignalConfidenceCalculator;
 import lombok.RequiredArgsConstructor;
@@ -40,9 +41,7 @@ public class MarketScannerService {
     private final WatchlistStockRepository watchlistRepository;
     private final OpportunityService opportunityService;
     private final TradingSignalMapper tradingSignalMapper;
-    private static final String DEFAULT_NEWS = "No News";
-    private static final String DEFAULT_SECTOR = "No Sector";
-    private static final String DEFAULT_PORTFOLIO = "Healthy Portfolio";
+    private final TradingContextService tradingContextService;
 
     public void scanMarket() {
         List<WatchlistStock> stocks =
@@ -157,12 +156,20 @@ public class MarketScannerService {
                 });
     }
 
-    private Mono<TradingSignal> createTradingSignal(SignalGenerationRequest request){
+    private Mono<TradingSignal> createTradingSignal(
+            SignalGenerationRequest request) {
 
-        return tradingOrchestratorService.executeTrade(request,
-                DEFAULT_NEWS,
-                DEFAULT_SECTOR,
-                DEFAULT_PORTFOLIO).map(aiDecisionResponse -> tradingSignalMapper.map(aiDecisionResponse,request));
+        return tradingContextService
+                .buildTradingContext(request.getSymbol())
+                .flatMap(context ->
+                        tradingOrchestratorService
+                                .executeTrade(
+                                        request,
+                                        context)
+                                .map(aiDecisionResponse ->
+                                        tradingSignalMapper.map(
+                                                aiDecisionResponse,
+                                                request)));
 
     }
 }

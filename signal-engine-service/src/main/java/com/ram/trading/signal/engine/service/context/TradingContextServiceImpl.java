@@ -25,18 +25,22 @@ public class TradingContextServiceImpl implements TradingContextService {
         return newsAnalysisClient
                 .analyze(request)
                 .map(news -> TradingContext.builder()
-                                .newsSummary(news.getSummary())
-                                .sectorSummary("Sector context not integrated.")
-                                .portfolioSummary("Portfolio context not integrated.")
-                                .riskSummary("Risk context not integrated.")
-                                .openPositionsSummary("Open positions not integrated.")
-                                .build())
+                        .newsSummary(news.getSummary())
+                        .newsSentiment(news.getSentiment())
+                        .newsScore(news.getScore())
+                        .sectorSummary("Sector context not integrated.")
+                        .portfolioSummary("Portfolio context not integrated.")
+                        .riskSummary("Risk context not integrated.")
+                        .openPositionsSummary("Open positions not integrated.")
+                        .build())
 
                 .onErrorResume(ex -> {
                     log.error("News Analysis Failed", ex);
                     return Mono.just(
                             TradingContext.builder()
                                     .newsSummary("No market news available.")
+                                    .newsSentiment("UNKNOWN")
+                                    .newsScore(50)
                                     .sectorSummary("Sector context not integrated.")
                                     .portfolioSummary("Portfolio context not integrated.")
                                     .riskSummary("Risk context not integrated.")

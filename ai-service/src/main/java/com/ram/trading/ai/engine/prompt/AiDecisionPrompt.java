@@ -75,10 +75,10 @@ public final class AiDecisionPrompt {
                                              ]
                                            },
                                            "newsAnalysis": {
-                                             "sentiment": "POSITIVE",
-                                             "summary": "...",
-                                             "impact": "Positive"
-                                           },
+                                                 "sentiment": "POSITIVE",
+                                                 "score": 82,
+                                                 "summary": "Positive quarterly earnings and strong buying interest."
+                                             },
                                            "portfolioAnalysis": {
                                              "currentExposure": "28%",
                                              "availableCapital": "₹72000",
@@ -116,6 +116,22 @@ public final class AiDecisionPrompt {
                                                                                 - executionPlan.stopLoss
                                                                                 - executionPlan.target
                                                                                 - executionPlan.positionSize
+                                                                                - newsAnalysis.score
+                                                                                newsAnalysis.score is mandatory.
+                                                                                
+                                                                                It must always be an integer between 0 and 100.
+                                                                                
+                                                                                0   = Extremely Bearish
+                                                                                
+                                                                                25  = Bearish
+                                                                                
+                                                                                50  = Neutral
+                                                                                
+                                                                                75  = Bullish
+                                                                                
+                                                                                100 = Extremely Bullish
+                                                                                
+                                                                                Never omit this field.
                                                                                 
                                                                                 4. If a numeric value is unavailable,
                                                                                 return null.

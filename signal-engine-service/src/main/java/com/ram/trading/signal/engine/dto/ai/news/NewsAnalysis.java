@@ -11,8 +11,8 @@ public class NewsAnalysis {
 
     private String sentiment;
 
-    private String summary;
+    private Integer score;
 
-    private String impact;
+    private String summary;
 
 }

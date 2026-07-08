@@ -50,6 +50,15 @@ public class AiDecisionServiceImpl implements AiDecisionService {
         log.info("AI Decision_Recommendation : {}",
                 response.getDecision().getRecommendation());
 
+
+        log.info("========== Parsed News ==========");
+        log.info("Summary   : {}", response.getNewsAnalysis().getSummary());
+        log.info("Sentiment : {}", response.getNewsAnalysis().getSentiment());
+        log.info("Score     : {}", response.getNewsAnalysis().getScore());
+        log.info("================================");
+
+
+
         return response;
     }
 

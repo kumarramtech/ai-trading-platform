@@ -3,6 +3,7 @@ package com.ram.trading.signal.engine.service.ai.mapper;
 import com.ram.trading.signal.engine.dto.ai.TradingDecisionRequest;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
+import com.ram.trading.signal.engine.service.context.TradingContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -13,18 +14,18 @@ public class TradingDecisionMapper {
     public TradingDecisionRequest map(
             SignalGenerationRequest signalRequest,
             TradingDecision technicalDecision,
-            String newsSummary,
-            String sectorSummary,
-            String portfolioSummary) {
+            TradingContext context) {
 
         log.debug("Preparing TradingDecisionRequest for AI Service.");
 
         return TradingDecisionRequest.builder()
                 .signalRequest(signalRequest)
                 .technicalDecision(technicalDecision)
-                .newsSummary(newsSummary)
-                .sectorSummary(sectorSummary)
-                .portfolioSummary(portfolioSummary)
+                .newsSummary(context.getNewsSummary())
+                .newsSentiment(context.getNewsSentiment())
+                .newsScore(context.getNewsScore())
+                .sectorSummary(context.getSectorSummary())
+                .portfolioSummary(context.getPortfolioSummary())
                 .build();
 
     }

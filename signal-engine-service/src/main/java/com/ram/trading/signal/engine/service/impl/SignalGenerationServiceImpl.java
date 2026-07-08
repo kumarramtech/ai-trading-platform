@@ -29,15 +29,6 @@ import reactor.core.publisher.Mono;
 public class SignalGenerationServiceImpl
         implements SignalGenerationService {
 
-    private static final String DEFAULT_NEWS =
-            "No major market news available.";
-
-    private static final String DEFAULT_SECTOR =
-            "Sector data not available.";
-
-    private static final String DEFAULT_PORTFOLIO =
-            "Portfolio summary not available.";
-
     private final MarketDataProvider marketDataProvider;
 
     private final TradingOrchestratorService tradingOrchestratorService;
@@ -89,9 +80,7 @@ public class SignalGenerationServiceImpl
         return tradingOrchestratorService
                 .executeTrade(
                         request,
-                        context.getNewsSummary(),
-                        context.getSectorSummary(),
-                        context.getPortfolioSummary())
+                        context)
                 .map(aiResponse ->
                         tradingSignalMapper.map(
                                 aiResponse,

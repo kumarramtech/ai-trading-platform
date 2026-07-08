@@ -19,4 +19,8 @@ public class TradingContext {
 
     private String openPositionsSummary;
 
+    private String newsSentiment;
+
+    private Integer newsScore;
+
 }

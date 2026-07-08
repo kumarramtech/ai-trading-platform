@@ -64,6 +64,20 @@ public class TradingSignalMapper {
                 .exitStrategy(
                 aiResponse.getExecutionPlan()
                         .getHoldingPeriod())
+                .newsSummary(
+                        aiResponse.getNewsAnalysis() == null
+                                ? null
+                                : aiResponse.getNewsAnalysis().getSummary())
+
+                .newsSentiment(
+                        aiResponse.getNewsAnalysis() == null
+                                ? null
+                                : aiResponse.getNewsAnalysis().getSentiment())
+
+                .newsScore(
+                        aiResponse.getNewsAnalysis() == null
+                                ? null
+                                : aiResponse.getNewsAnalysis().getScore())
                 .build();
         log.info(
                 "Mapped AI Response -> TradingSignal | Symbol={} Signal={} Confidence={}",
