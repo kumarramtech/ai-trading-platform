@@ -1,4 +1,4 @@
-package com.ram.trading.portfolio.service;
+package com.ram.trading.portfolio.client;
 
 import com.ram.trading.portfolio.dto.StockResponse;
 import lombok.RequiredArgsConstructor;

@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.service.context;
 
+import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -13,7 +14,7 @@ public class TradingContext {
 
     private String sectorSummary;
 
-    private String portfolioSummary;
+    private PortfolioContextResponse portfolioContext;
 
     private String riskSummary;
 

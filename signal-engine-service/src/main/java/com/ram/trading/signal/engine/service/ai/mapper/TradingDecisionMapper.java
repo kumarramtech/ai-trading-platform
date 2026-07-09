@@ -25,7 +25,7 @@ public class TradingDecisionMapper {
                 .newsSentiment(context.getNewsSentiment())
                 .newsScore(context.getNewsScore())
                 .sectorSummary(context.getSectorSummary())
-                .portfolioSummary(context.getPortfolioSummary())
+                .portfolioContext(context.getPortfolioContext())
                 .build();
 
     }

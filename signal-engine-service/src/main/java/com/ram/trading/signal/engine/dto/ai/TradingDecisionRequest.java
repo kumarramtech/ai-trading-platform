@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.dto.ai;
 
+import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
 import lombok.*;
@@ -19,7 +20,7 @@ public class TradingDecisionRequest {
 
     private String sectorSummary;
 
-    private String portfolioSummary;
+    private PortfolioContextResponse portfolioContext;
 
     private String newsSentiment;
 

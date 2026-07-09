@@ -75,7 +75,10 @@ public class SignalGenerationServiceImpl
         log.info("========== Trading Context ==========");
         log.info("News      : {}", context.getNewsSummary());
         log.info("Sector    : {}", context.getSectorSummary());
-        log.info("Portfolio : {}", context.getPortfolioSummary());
+        log.info("Portfolio Risk : {}", context.getPortfolioContext().getRisk().getRiskLevel());
+        log.info("Portfolio Health : {}",context.getPortfolioContext().getHealth().getStatus());
+        log.info("Portfolio Summary : {}", context.getPortfolioContext().getSummary());
+        log.info("Portfolio Recommendations : {}",context.getPortfolioContext().getRecommendations());
         log.info("====================================");
         return tradingOrchestratorService
                 .executeTrade(

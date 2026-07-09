@@ -1,7 +1,8 @@
 package com.ram.trading.ai.engine.dto;
 
+import com.ram.trading.ai.engine.dto.portfolio.PortfolioContextResponse;
 import lombok.*;
-import reactor.core.publisher.SignalType;
+
 
 @Builder
 @Getter
@@ -18,6 +19,6 @@ public class TradingDecisionRequest {
 
     private String sectorSummary;
 
-    private String portfolioSummary;
+    private PortfolioContextResponse portfolioContext;;
 
 }

@@ -3,7 +3,7 @@ package com.ram.trading.portfolio.controller;
 import com.ram.trading.portfolio.dto.*;
 import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.service.PortfolioService;
-import com.ram.trading.portfolio.service.StockServiceClient;
+import com.ram.trading.portfolio.client.StockServiceClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
@@ -93,6 +93,12 @@ public class PortfolioController {
 
         return portfolioService
                 .getRecommendation();
+    }
+
+    @GetMapping("/context")
+    public PortfolioContextResponse getContext() {
+
+        return portfolioService.getContext();
     }
 
     @GetMapping("/health")

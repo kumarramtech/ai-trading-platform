@@ -23,6 +23,10 @@ public final class AiDecisionPrompt {
             9. Sector Trend
             10. News Sentiment
             11. Portfolio Summary
+            12. Portfolio Risk
+            13. Portfolio Health
+            14. Portfolio Allocation
+            15. Portfolio Recommendations
 
             Rules:
 

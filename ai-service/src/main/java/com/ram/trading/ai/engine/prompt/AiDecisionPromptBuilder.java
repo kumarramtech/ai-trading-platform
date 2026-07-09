@@ -94,8 +94,72 @@ public class AiDecisionPromptBuilder {
         builder.append("\nSector Summary : ")
                 .append(request.getSectorSummary());
 
-        builder.append("\nPortfolio Summary : ")
-                .append(request.getPortfolioSummary());
+        if (request.getPortfolioContext() != null) {
+
+            var portfolio = request.getPortfolioContext();
+
+            builder.append("\n\n========== PORTFOLIO CONTEXT ==========");
+
+            if (portfolio.getSummary() != null) {
+
+                builder.append("\nTotal Invested : ")
+                        .append(portfolio.getSummary().getTotalInvested());
+
+                builder.append("\nCurrent Value : ")
+                        .append(portfolio.getSummary().getCurrentValue());
+
+                builder.append("\nProfit/Loss : ")
+                        .append(portfolio.getSummary().getTotalProfitLoss());
+            }
+
+            if (portfolio.getRisk() != null) {
+
+                builder.append("\nRisk Level : ")
+                        .append(portfolio.getRisk().getRiskLevel());
+
+                builder.append("\nRisk Message : ")
+                        .append(portfolio.getRisk().getMessage());
+            }
+
+            if (portfolio.getHealth() != null) {
+
+                builder.append("\nHealth Score : ")
+                        .append(portfolio.getHealth().getScore());
+
+                builder.append("\nHealth Status : ")
+                        .append(portfolio.getHealth().getStatus());
+            }
+
+            if (portfolio.getAllocations() != null
+                    && !portfolio.getAllocations().isEmpty()) {
+
+                builder.append("\n\nAllocations:");
+
+                portfolio.getAllocations().forEach(a ->
+                        builder.append("\n- ")
+                                .append(a.getSymbol())
+                                .append(" : ")
+                                .append(a.getAllocationPercentage())
+                                .append("%"));
+            }
+
+            if (portfolio.getRecommendations() != null
+                    && !portfolio.getRecommendations().isEmpty()) {
+
+                builder.append("\n\nPortfolio Recommendations:");
+
+                portfolio.getRecommendations().forEach(r ->
+                        builder.append("\n- ")
+                                .append(r.getSymbol())
+                                .append(" : ")
+                                .append(r.getAction())
+                                .append(" (")
+                                .append(r.getReason())
+                                .append(")"));
+            }
+
+            builder.append("\n======================================");
+        }
 
         return builder.toString();
     }

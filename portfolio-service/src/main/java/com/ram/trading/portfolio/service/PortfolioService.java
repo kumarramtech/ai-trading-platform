@@ -1,5 +1,6 @@
 package com.ram.trading.portfolio.service;
 
+import com.ram.trading.portfolio.client.StockServiceClient;
 import com.ram.trading.portfolio.contant.PortfolioHealthStatus;
 import com.ram.trading.portfolio.contant.RecommendationActionEnum;
 import com.ram.trading.portfolio.contant.RiskLevel;
@@ -244,5 +245,23 @@ public class PortfolioService {
         }
 
         return new PortfolioHealth(score, status);
+    }
+
+    public PortfolioContextResponse getContext() {
+
+        return PortfolioContextResponse.builder()
+
+                .summary(getSummary())
+
+                .risk(getRiskAnalysis())
+
+                .health(getHealthScore())
+
+                .allocations(getAllocation())
+
+                .recommendations(getRecommendation())
+
+                .build();
+
     }
 }
