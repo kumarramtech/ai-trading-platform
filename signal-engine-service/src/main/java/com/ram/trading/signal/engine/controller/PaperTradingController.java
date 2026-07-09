@@ -2,6 +2,7 @@ package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.dto.ai.portfolio.OpenPositionContextResponse;
 import com.ram.trading.signal.engine.dto.request.OpenPositionDashboard;
 import com.ram.trading.signal.engine.dto.response.AnalyticsMetricsResponse;
 import com.ram.trading.signal.engine.dto.response.ClosedPositionResponse;
@@ -56,6 +57,12 @@ public class PaperTradingController {
     @GetMapping("/strategy-report")
     public StrategyReport getStrategyReport() {
         return service.getStrategyReport();
+    }
+
+    @GetMapping("/open-position/{symbol}")
+    public Mono<OpenPositionContextResponse> getOpenPositionContext(
+            @PathVariable String symbol) {
+        return service.getOpenPositionContext(symbol);
     }
 
     @GetMapping("/{id}/review")

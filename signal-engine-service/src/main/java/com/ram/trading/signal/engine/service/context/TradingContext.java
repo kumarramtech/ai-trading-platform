@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.service.context;
 
+import com.ram.trading.signal.engine.dto.ai.portfolio.OpenPositionContextResponse;
 import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
 import lombok.Builder;
 import lombok.Getter;
@@ -23,5 +24,7 @@ public class TradingContext {
     private String newsSentiment;
 
     private Integer newsScore;
+
+    private OpenPositionContextResponse openPositionContext;
 
 }

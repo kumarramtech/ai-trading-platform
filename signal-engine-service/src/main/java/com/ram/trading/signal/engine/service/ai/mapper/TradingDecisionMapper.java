@@ -26,6 +26,7 @@ public class TradingDecisionMapper {
                 .newsScore(context.getNewsScore())
                 .sectorSummary(context.getSectorSummary())
                 .portfolioContext(context.getPortfolioContext())
+                .openPositionContext(context.getOpenPositionContext())
                 .build();
 
     }

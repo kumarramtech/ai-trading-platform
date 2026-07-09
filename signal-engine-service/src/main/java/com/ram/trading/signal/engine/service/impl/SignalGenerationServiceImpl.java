@@ -75,10 +75,17 @@ public class SignalGenerationServiceImpl
         log.info("========== Trading Context ==========");
         log.info("News      : {}", context.getNewsSummary());
         log.info("Sector    : {}", context.getSectorSummary());
-        log.info("Portfolio Risk : {}", context.getPortfolioContext().getRisk().getRiskLevel());
-        log.info("Portfolio Health : {}",context.getPortfolioContext().getHealth().getStatus());
         log.info("Portfolio Summary : {}", context.getPortfolioContext().getSummary());
         log.info("Portfolio Recommendations : {}",context.getPortfolioContext().getRecommendations());
+        log.info("Portfolio Risk      : {}",context.getPortfolioContext().getRisk().getRiskLevel());
+        log.info("Portfolio Health    : {}",context.getPortfolioContext().getHealth().getStatus());
+        log.info("Open Position Exists: {}",context.getOpenPositionContext().isPositionExists());
+        log.info("News Score : {}", context.getNewsScore());
+        log.info("News Sentiment : {}", context.getNewsSentiment());
+        if (context.getOpenPositionContext() != null && context.getOpenPositionContext().isPositionExists()) {
+            log.info("Open Position Signal : {}",context.getOpenPositionContext().getSignal());
+            log.info("Current PnL : {}",context.getOpenPositionContext().getCurrentPnL());
+        }
         log.info("====================================");
         return tradingOrchestratorService
                 .executeTrade(
@@ -95,39 +102,23 @@ public class SignalGenerationServiceImpl
             TradingSignal signal) {
 
         if (SignalType.HOLD.name().equals(signal.getSignal())) {
-
             log.info("Signal is HOLD. Skipping save.");
-
             return Mono.just(signal);
         }
 
-        TradingSignalEntity entity =
-                tradingSignalService.save(signal);
-
+        TradingSignalEntity entity = tradingSignalService.save(signal);
         return technicalIndicatorService
-
                 .calculate(signal.getSymbol())
-
                 .map(indicator -> {
-
-                    RiskCheckResponse riskCheck =
-                            riskManagementService.validateTrade();
+                    RiskCheckResponse riskCheck = riskManagementService.validateTrade();
 
                     if (!riskCheck.isAllowed()) {
-
-                        log.warn(
-                                "Trade blocked due to {}",
-                                riskCheck.getViolations());
-
+                        log.warn("Trade blocked due to {}",riskCheck.getViolations());
                         return signal;
                     }
 
-                    paperTradingService.createTrade(
-                            entity,
-                            indicator);
-
+                    paperTradingService.createTrade(entity,indicator);
                     return signal;
-
                 });
 
     }

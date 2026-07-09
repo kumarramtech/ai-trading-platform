@@ -6,6 +6,7 @@ import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.*;
+import com.ram.trading.signal.engine.dto.ai.portfolio.OpenPositionContextResponse;
 import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
 import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
 import com.ram.trading.signal.engine.dto.request.ClosedPositionDto;
@@ -152,6 +153,61 @@ public class PaperTradingService {
 
     public List<PaperTrade> getAll() {
         return repository.findAll();
+    }
+
+    public Mono<OpenPositionContextResponse> getOpenPositionContext(String symbol) {
+
+        PaperTrade trade = repository
+                .findTopBySymbolAndStatusOrderByEntryTimeDesc(
+                        symbol,
+                        SignalStatus.OPEN)
+                .orElse(null);
+
+        if (trade == null) {
+            return Mono.just(OpenPositionContextResponse.builder()
+                            .positionExists(false)
+                            .symbol(symbol)
+                            .build());
+        }
+
+        return stockServiceClient
+                .getStockPrice(symbol)
+                .map(stock -> {
+
+                    Double currentPrice = stock.getPrice();
+
+                    Double currentPnL;
+
+                    if ("BUY".equalsIgnoreCase(trade.getSignal())) {
+
+                        currentPnL =
+                                (currentPrice - trade.getEntryPrice())
+                                        * trade.getQuantity();
+
+                    } else {
+
+                        currentPnL =
+                                (trade.getEntryPrice() - currentPrice)
+                                        * trade.getQuantity();
+                    }
+
+                    Double pnlPercentage =
+                            (currentPnL / trade.getInvestedAmount()) * 100;
+
+                    return OpenPositionContextResponse.builder()
+                            .positionExists(true)
+                            .symbol(trade.getSymbol())
+                            .quantity(trade.getQuantity())
+                            .entryPrice(trade.getEntryPrice())
+                            .currentPrice(currentPrice)
+                            .currentPnL(Math.round(currentPnL * 100.0) / 100.0)
+                            .pnlPercentage(Math.round(pnlPercentage * 100.0) / 100.0)
+                            .stopLoss(trade.getStopLoss())
+                            .targetPrice(trade.getTargetPrice())
+                            .status(trade.getStatus().name())
+                            .signal(trade.getSignal())
+                            .build();
+                });
     }
 
     public PaperTradeSummary getSummary() {

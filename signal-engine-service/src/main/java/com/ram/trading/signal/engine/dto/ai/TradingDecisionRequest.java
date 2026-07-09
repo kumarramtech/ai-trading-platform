@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.dto.ai;
 
+import com.ram.trading.signal.engine.dto.ai.portfolio.OpenPositionContextResponse;
 import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
@@ -25,5 +26,7 @@ public class TradingDecisionRequest {
     private String newsSentiment;
 
     private Integer newsScore;
+
+    private OpenPositionContextResponse openPositionContext;
 
 }

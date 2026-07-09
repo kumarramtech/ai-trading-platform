@@ -1,5 +1,6 @@
 package com.ram.trading.ai.engine.dto;
 
+import com.ram.trading.ai.engine.dto.portfolio.OpenPositionContextResponse;
 import com.ram.trading.ai.engine.dto.portfolio.PortfolioContextResponse;
 import lombok.*;
 
@@ -20,5 +21,7 @@ public class TradingDecisionRequest {
     private String sectorSummary;
 
     private PortfolioContextResponse portfolioContext;;
+
+    private OpenPositionContextResponse openPositionContext;
 
 }

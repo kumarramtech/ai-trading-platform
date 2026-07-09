@@ -158,6 +158,48 @@ public class AiDecisionPromptBuilder {
                                 .append(")"));
             }
 
+            if (request.getOpenPositionContext() != null) {
+
+                var position = request.getOpenPositionContext();
+
+                builder.append("\n\n========== OPEN POSITION ==========");
+
+                builder.append("\nPosition Exists : ")
+                        .append(position.isPositionExists());
+
+                if (position.isPositionExists()) {
+
+                    builder.append("\nSignal : ")
+                            .append(position.getSignal());
+
+                    builder.append("\nQuantity : ")
+                            .append(position.getQuantity());
+
+                    builder.append("\nEntry Price : ")
+                            .append(position.getEntryPrice());
+
+                    builder.append("\nCurrent Price : ")
+                            .append(position.getCurrentPrice());
+
+                    builder.append("\nCurrent PnL : ")
+                            .append(position.getCurrentPnL());
+
+                    builder.append("\nPnL % : ")
+                            .append(position.getPnlPercentage());
+
+                    builder.append("\nStop Loss : ")
+                            .append(position.getStopLoss());
+
+                    builder.append("\nTarget : ")
+                            .append(position.getTargetPrice());
+
+                    builder.append("\nStatus : ")
+                            .append(position.getStatus());
+                }
+
+                builder.append("\n===================================");
+            }
+
             builder.append("\n======================================");
         }
 

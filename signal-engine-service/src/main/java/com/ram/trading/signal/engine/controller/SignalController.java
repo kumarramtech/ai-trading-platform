@@ -7,7 +7,6 @@ import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService
 import com.ram.trading.signal.engine.service.*;
 import com.ram.trading.signal.engine.service.interfac.AIAnalysisService;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
-import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.strategy.TradingStrategy;
 import lombok.RequiredArgsConstructor;
@@ -35,8 +34,6 @@ public class SignalController {
 
     private final SignalStatService signalStatService;
 
-    private final PaperTradingService paperTradingService;
-
     private final TechnicalIndicatorService technicalIndicatorService;
 
     private final AIAnalysisService aiAnalysisService;
@@ -45,39 +42,8 @@ public class SignalController {
 
     private final SignalService signalService;
 
-    private final RiskManagementService riskManagementService;
-
     private final SignalGenerationService signalGenerationService;
 
-    /*@GetMapping("/{symbol}")
-    public Mono<TradingSignal> generateSignal(
-            @PathVariable String symbol) {
-
-        return marketDataProvider.getStockPrice(symbol).
-                flatMap(stock ->
-                        tradingStrategy.generateSignal(stock)
-                                .flatMap(signal -> {
-                                    if (SignalType.HOLD.name()
-                                            .equals(signal.getSignal())) {
-                                        return Mono.just(signal);
-                                    }
-                                    TradingSignalEntity savedEntity = tradingSignalService.save(signal);
-                                    return technicalIndicatorService.calculate(signal.getSymbol())
-                                            .map(indicator -> {
-                                                RiskCheckResponse riskCheck =
-                                                        riskManagementService.validateTrade();
-                                                if (!riskCheck.isAllowed()) {
-                                                    log.warn(
-                                                            "Trade blocked due to risk violations: {}",
-                                                            riskCheck.getViolations());
-                                                    return signal;
-                                                }
-                                                paperTradingService.createTrade(savedEntity, indicator);
-                                                return signal;
-                                            });
-                                }));
-    }
-*/
 
     @GetMapping("/{symbol}")
     public Mono<TradingSignal> generateSignal(

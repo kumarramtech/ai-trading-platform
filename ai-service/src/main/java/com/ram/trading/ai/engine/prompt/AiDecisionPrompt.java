@@ -164,6 +164,14 @@ public final class AiDecisionPrompt {
                                                                                 "stopLoss": null,
                                                                                 "target": null,
                                                                                 "positionSize": null
+                                                                                7. Use the open position context while making your decision.
+                                                                                   
+                                                                                   If an open position already exists for the same symbol:
+                                                                                   
+                                                                                   - Avoid recommending another BUY or SELL unless there is a strong justification.
+                                                                                   - Consider the current profit/loss.
+                                                                                   - Consider the stop loss and target.
+                                                                                   - Prefer HOLD or EXIT recommendations when appropriate.
             """;
 
 }
