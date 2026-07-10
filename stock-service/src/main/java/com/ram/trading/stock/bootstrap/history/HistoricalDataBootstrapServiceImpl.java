@@ -10,6 +10,10 @@ import org.springframework.stereotype.Service;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDate;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 
@@ -33,30 +37,49 @@ public class HistoricalDataBootstrapServiceImpl
         log.info("Starting Historical Bootstrap...");
 
         int pageNo = 0;
-
         int batchSize = properties.getMaxSymbolsPerRun();
 
-        Page<Instrument> page;
+        ExecutorService executor = Executors.newFixedThreadPool(properties.getThreadPoolSize());
+        try {
+            Page<Instrument> page;
+            do {
+                page = instrumentService.findTradableEquities(
+                        PageRequest.of(pageNo, batchSize));
+                for (Instrument instrument : page.getContent()) {
+                    if (!"NSE".equalsIgnoreCase(instrument.getExchange())) {
+                        continue;
+                    }
+                    if (!"NSE_EQ".equalsIgnoreCase(instrument.getSegment())) {
+                        continue;
+                    }
+                    if (!"EQ".equalsIgnoreCase(instrument.getInstrumentType())) {
+                        continue;
+                    }
+                    executor.submit(() -> {
+                        try {
+                            bootstrapHistoricalData(instrument);
+                        } catch (Exception ex) {
+                            log.error("Unexpected bootstrap failure for {}",
+                                    instrument.getTradingSymbol(),
+                                    ex);
+                        }
+                    });
+                }
+                pageNo++;
 
-        do {
+            } while (page.hasNext());
 
-            page = instrumentService.findTradableEquities(
-                    PageRequest.of(pageNo, batchSize));
-
-            page.getContent().stream()
-
-                    .filter(i -> "NSE".equalsIgnoreCase(i.getExchange()))
-
-                    .filter(i -> "NSE_EQ".equalsIgnoreCase(i.getSegment()))
-
-                    .filter(i -> "EQ".equalsIgnoreCase(i.getInstrumentType()))
-
-                    .forEach(this::bootstrapHistoricalData);
-
-            pageNo++;
-
-        } while (page.hasNext());
-
+        } finally {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(2, TimeUnit.HOURS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException ex) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
         log.info("Historical Bootstrap Completed");
     }
 
@@ -64,11 +87,43 @@ public class HistoricalDataBootstrapServiceImpl
 
         try {
 
-            // Download only completed trading days
             LocalDate toDate = LocalDate.now().minusDays(1);
-            LocalDate fromDate = toDate.minusDays(properties.getLookbackDays());
 
-            log.info("Downloading historical data for {}", instrument.getTradingSymbol());
+            LocalDate lastDownloadedDate =
+                    persistenceService.getLastDownloadedDate(
+                            instrument.getTradingSymbol());
+
+            LocalDate fromDate;
+
+            if (lastDownloadedDate == null) {
+
+                // First bootstrap
+                fromDate = toDate.minusDays(properties.getLookbackDays());
+
+                log.info("Initial bootstrap for {} from {} to {}",
+                        instrument.getTradingSymbol(),
+                        fromDate,
+                        toDate);
+
+            } else {
+
+                // Incremental download
+                fromDate = lastDownloadedDate.plusDays(1);
+
+                if (fromDate.isAfter(toDate)) {
+
+                    log.info("{} is already up-to-date. Last Candle={}",
+                            instrument.getTradingSymbol(),
+                            lastDownloadedDate);
+
+                    return;
+                }
+
+                log.info("Incremental download for {} from {} to {}",
+                        instrument.getTradingSymbol(),
+                        fromDate,
+                        toDate);
+            }
 
             HistoricalCandleResponse response =
                     historicalCandleService
@@ -80,19 +135,17 @@ public class HistoricalDataBootstrapServiceImpl
                             .subscribeOn(Schedulers.boundedElastic())
                             .block();
 
-            if (response != null) {
+            if (response != null && response.getCandles() != null
+                    && !response.getCandles().isEmpty()) {
                 persistenceService.save(response);
                 log.info("Completed historical data for {}", instrument.getTradingSymbol());
             } else {
-                log.warn("No historical data returned for {}", instrument.getTradingSymbol());
+                log.info("No new candles available for {}", instrument.getTradingSymbol());
             }
 
         } catch (Exception ex) {
-            log.error("Historical bootstrap failed for symbol {}",
-                    instrument.getTradingSymbol(),
-                    ex);
+            log.error("Historical bootstrap failed for symbol {}", instrument.getTradingSymbol(),ex);
         }
-
     }
 
 }

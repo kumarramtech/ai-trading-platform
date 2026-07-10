@@ -11,8 +11,6 @@ public interface HistoricalPriceService {
 
     List<HistoricalPrice> findBySymbol(String symbol);
 
-    void deleteBySymbol(String symbol);
-
     List<HistoricalPrice> findBySymbolAndDateRange(
             String symbol,
             LocalDate from,
@@ -23,4 +21,6 @@ public interface HistoricalPriceService {
             Integer limit);
 
     void flush();
+
+    LocalDate getLastDownloadedDate(String symbol);
 }

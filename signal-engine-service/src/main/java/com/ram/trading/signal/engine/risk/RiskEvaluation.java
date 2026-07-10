@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.risk;
 
 import com.ram.trading.signal.engine.dto.TradingSignal;
+import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.ai.decision.Decision;
 import com.ram.trading.signal.engine.service.context.TradingContext;
 import lombok.Builder;
@@ -17,5 +18,7 @@ public class RiskEvaluation {
     private Decision decision;
 
     private TradingSignal signal;
+
+    private AiDecisionResponse aiResponse;
 
 }

@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 public interface HistoricalPriceRepository extends JpaRepository<HistoricalPrice,Long> {
 
@@ -27,5 +28,7 @@ public interface HistoricalPriceRepository extends JpaRepository<HistoricalPrice
 
     List<HistoricalPrice> findTop100BySymbolOrderByTradeDateDesc(
             String symbol);
+
+    Optional<HistoricalPrice> findTopBySymbolOrderByTradeDateDesc(String symbol);
 
 }

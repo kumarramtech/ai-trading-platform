@@ -42,12 +42,12 @@ public class HistoricalPriceServiceImpl implements HistoricalPriceService {
 
     }
 
-    @Override
+  /*  @Override
     public void deleteBySymbol(String symbol) {
 
         repository.deleteBySymbol(symbol);
 
-    }
+    }*/
 
     @Override
     public List<HistoricalPrice> findBySymbolAndDateRange(
@@ -77,6 +77,15 @@ public class HistoricalPriceServiceImpl implements HistoricalPriceService {
     @Override
     public void flush() {
         repository.flush();
+    }
+
+    @Override
+    public LocalDate getLastDownloadedDate(String symbol) {
+
+        return repository
+                .findTopBySymbolOrderByTradeDateDesc(symbol)
+                .map(HistoricalPrice::getTradeDate)
+                .orElse(null);
     }
 
 }
