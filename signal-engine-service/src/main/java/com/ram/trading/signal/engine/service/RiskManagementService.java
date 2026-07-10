@@ -1,7 +1,7 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
-import com.ram.trading.signal.engine.dto.RiskCheckResponse;
+import com.ram.trading.signal.engine.risk.RiskCheckResponse;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;

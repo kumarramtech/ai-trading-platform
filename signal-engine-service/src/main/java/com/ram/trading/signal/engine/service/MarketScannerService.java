@@ -2,9 +2,8 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.NewsAnalysisClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
-import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.request.NewsAnalysisRequest;
-import com.ram.trading.signal.engine.dto.RiskCheckResponse;
+import com.ram.trading.signal.engine.risk.RiskCheckResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;

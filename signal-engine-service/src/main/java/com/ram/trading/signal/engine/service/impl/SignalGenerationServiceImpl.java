@@ -1,14 +1,17 @@
 package com.ram.trading.signal.engine.service.impl;
 
 import com.ram.trading.signal.engine.contant.SignalType;
-import com.ram.trading.signal.engine.dto.RiskCheckResponse;
+
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
-
+import com.ram.trading.signal.engine.risk.RiskViolation;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
+import com.ram.trading.signal.engine.risk.RiskEvaluation;
+import com.ram.trading.signal.engine.risk.RiskGuardResult;
+import com.ram.trading.signal.engine.risk.RiskGuardService;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import com.ram.trading.signal.engine.service.RiskManagementService;
 import com.ram.trading.signal.engine.service.SignalGenerationService;
@@ -44,6 +47,8 @@ public class SignalGenerationServiceImpl
     private final RiskManagementService riskManagementService;
 
     private final TradingContextService tradingContextService;
+
+    private final RiskGuardService riskGuardService;
 
     @Override
     public Mono<TradingSignal> generateSignal(String symbol) {
@@ -102,25 +107,59 @@ public class SignalGenerationServiceImpl
             TradingSignal signal) {
 
         if (SignalType.HOLD.name().equals(signal.getSignal())) {
+
             log.info("Signal is HOLD. Skipping save.");
+
             return Mono.just(signal);
         }
 
-        TradingSignalEntity entity = tradingSignalService.save(signal);
+        /*
+         * Risk Guard Evaluation
+         */
+        RiskEvaluation evaluation =
+                RiskEvaluation.builder()
+                        .signal(signal)
+                        .build();
+
+        RiskGuardResult guardResult =
+                riskGuardService.evaluate(evaluation);
+
+        if (!guardResult.isApproved()) {
+
+            log.warn("Trade rejected by Risk Guard");
+
+            guardResult.getViolations().forEach(v ->
+                    log.warn("{} -> {}",
+                            v.getRule(),
+                            v.getReason()));
+
+            signal.setSignal(SignalType.HOLD.name());
+
+            signal.setReason(
+                    guardResult.getViolations()
+                            .stream()
+                            .map(RiskViolation::getReason)
+                            .collect(java.util.stream.Collectors.joining(", "))
+            );
+
+            return Mono.just(signal);
+        }
+
+        TradingSignalEntity entity =
+                tradingSignalService.save(signal);
+
         return technicalIndicatorService
                 .calculate(signal.getSymbol())
                 .map(indicator -> {
-                    RiskCheckResponse riskCheck = riskManagementService.validateTrade();
 
-                    if (!riskCheck.isAllowed()) {
-                        log.warn("Trade blocked due to {}",riskCheck.getViolations());
-                        return signal;
-                    }
+                    paperTradingService.createTrade(
+                            entity,
+                            indicator);
 
-                    paperTradingService.createTrade(entity,indicator);
+                    log.info("Paper Trade created successfully.");
+
                     return signal;
                 });
-
     }
 
     private SignalGenerationRequest buildSignalRequest(

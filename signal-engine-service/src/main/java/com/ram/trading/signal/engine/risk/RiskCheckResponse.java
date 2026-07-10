@@ -1,4 +1,4 @@
-package com.ram.trading.signal.engine.dto;
+package com.ram.trading.signal.engine.risk;
 
 import lombok.Builder;
 import lombok.Getter;

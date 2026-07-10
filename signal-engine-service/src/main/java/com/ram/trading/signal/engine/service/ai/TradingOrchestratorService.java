@@ -37,6 +37,8 @@ public class TradingOrchestratorService {
         TradingDecisionRequest aiRequest =
                 tradingDecisionMapper.map(signalRequest,technicalDecision,context);
 
+
+
         return callAI(aiRequest)
                 .doOnNext(response -> {
 
@@ -59,10 +61,6 @@ public class TradingOrchestratorService {
 
     }
 
-   /* private TradingDecisionRequest buildAIRequest(SignalGenerationRequest signalRequest,
-            TradingDecision decision, TradingContext context){
-        return tradingDecisionMapper.map(signalRequest, decision, context);
-    }*/
     private Mono<AiDecisionResponse> callAI(
             TradingDecisionRequest request) {
 
