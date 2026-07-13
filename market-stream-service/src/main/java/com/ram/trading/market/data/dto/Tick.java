@@ -1,12 +1,16 @@
 package com.ram.trading.market.data.dto;
 
 import lombok.Builder;
+import lombok.Data;
 import lombok.Getter;
 import lombok.Setter;
 
-@Getter
-@Setter
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+
 @Builder
+@Data
 public class Tick {
 
     private String exchange;
@@ -28,5 +32,17 @@ public class Tick {
     private Long volume;
 
     private Long timestamp;
+
+    private Double previousClose;
+
+    private Double change;
+
+    private Double changePercentage;
+
+    public LocalDateTime getTradeTime() {
+        return LocalDateTime.ofInstant(
+                Instant.ofEpochMilli(timestamp),
+                ZoneId.of("Asia/Kolkata"));
+    }
 
 }

@@ -7,6 +7,6 @@ public interface MarketEventPublisher {
 
     void publishPriceUpdate(LivePrice livePrice);
 
-    void publishTick(Tick tick);
+    void process(Tick tick);
 
 }

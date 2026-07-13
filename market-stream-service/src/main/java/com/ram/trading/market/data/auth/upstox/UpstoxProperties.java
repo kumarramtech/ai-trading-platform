@@ -20,5 +20,6 @@ public class UpstoxProperties {
     private String marketUrl;
     private String baseUrl;
     private String marketFeedUrl;
+    private String defaultInstruments;
 
 }

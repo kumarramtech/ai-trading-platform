@@ -7,7 +7,6 @@ import com.ram.trading.market.data.service.MarketDataProvider;
 import com.ram.trading.market.data.service.TickProcessor;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -50,7 +49,7 @@ public class MockMarketDataProvider implements MarketDataProvider {
         executor.scheduleAtFixedRate(() -> {
             for (MarketInstrument instrument : instrumentCache.findAll()){
                         Tick tick = generateTick(instrument);
-                        tickProcessor.process(tick);
+                        tickProcessor.publishTick(tick);
                     }
 
                 },0,1, TimeUnit.SECONDS);

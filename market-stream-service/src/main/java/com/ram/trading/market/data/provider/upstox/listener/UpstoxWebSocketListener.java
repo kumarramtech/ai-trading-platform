@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -35,7 +36,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
 
         webSocket.request(1);
 
-        return null;
+        return CompletableFuture.completedFuture(null);
     }
 
     @Override
@@ -50,7 +51,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
 
         webSocket.request(1);
 
-        return null;
+        return CompletableFuture.completedFuture(null);
     }
 
     @Override

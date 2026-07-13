@@ -18,7 +18,7 @@ public class MarketEventPublisherImpl implements MarketEventPublisher {
     }
 
     @Override
-    public void publishTick(Tick tick) {
+    public void process(Tick tick) {
 
         log.debug("Publishing Tick : {}", tick);
 

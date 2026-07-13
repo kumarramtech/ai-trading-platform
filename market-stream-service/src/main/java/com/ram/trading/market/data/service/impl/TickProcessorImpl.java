@@ -9,8 +9,6 @@ import com.ram.trading.market.data.service.TickProcessor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 @Service
 @RequiredArgsConstructor
 public class TickProcessorImpl implements TickProcessor {
@@ -22,7 +20,7 @@ public class TickProcessorImpl implements TickProcessor {
     private final MarketMetrics marketMetrics;
 
     @Override
-    public void process(Tick tick) {
+    public void publishTick(Tick tick) {
 
         LivePrice livePrice = LivePrice.builder()
                 .symbol(tick.getSymbol())
@@ -33,7 +31,7 @@ public class TickProcessorImpl implements TickProcessor {
 
         livePriceCache.update(livePrice);
         publisher.publishPriceUpdate(livePrice);
-        publisher.publishTick(tick);
+        publisher.process(tick);
         marketMetrics.incrementTick();
         marketMetrics.updateLastTick();
     }

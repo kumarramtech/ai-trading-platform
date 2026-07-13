@@ -4,6 +4,6 @@ import com.ram.trading.market.data.dto.Tick;
 
 public interface TickProcessor {
 
-    void process(Tick tick);
+    void publishTick(Tick tick);
 
 }
