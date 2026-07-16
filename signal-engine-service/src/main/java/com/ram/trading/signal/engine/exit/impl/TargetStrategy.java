@@ -1,9 +1,6 @@
 package com.ram.trading.signal.engine.exit.impl;
 
-import com.ram.trading.signal.engine.dto.market.ExitReason;
-import com.ram.trading.signal.engine.dto.market.MarketTick;
-import com.ram.trading.signal.engine.dto.market.OpenPosition;
-import com.ram.trading.signal.engine.dto.market.StrategyOrder;
+import com.ram.trading.signal.engine.dto.market.*;
 import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.exit.ExitStrategy;
 import com.ram.trading.signal.engine.exit.ExitType;
@@ -18,14 +15,14 @@ public class TargetStrategy implements ExitStrategy {
 
     @Override
     public ExitDecision evaluate(OpenPosition position,
-                                 MarketTick tick) {
+                                 Tick tick) {
 
-        if (tick.getLastPrice().compareTo(position.getTargetPrice()) >= 0) {
+        if (tick.getLastTradedPrice().compareTo(position.getTargetPrice()) >= 0) {
             log.info("Target Achieved for {}", position.getSymbol());
             return ExitDecision.builder()
                     .exit(true)
                     .reason(ExitReason.TARGET)
-                    .exitPrice(tick.getLastPrice())
+                    .exitPrice(tick.getLastTradedPrice())
                     .exitType(ExitType.TARGET)
                     .build();
         }

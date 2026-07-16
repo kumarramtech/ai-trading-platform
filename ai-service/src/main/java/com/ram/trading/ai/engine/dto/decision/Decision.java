@@ -18,4 +18,6 @@ public class Decision {
 
     private String decisionStrength;
 
+    private String reason;
+
 }

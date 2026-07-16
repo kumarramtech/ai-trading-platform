@@ -16,21 +16,23 @@ public class OpenPosition {
 
     private String symbol;
 
+    private String signal;
+
     private TradeType tradeType;
 
     private int quantity;
 
-    private BigDecimal entryPrice;
+    private Double entryPrice;
 
-    private BigDecimal currentPrice;
+    private Double currentPrice;
 
-    private BigDecimal stopLoss;
+    private Double stopLoss;
 
-    private BigDecimal targetPrice;
+    private Double targetPrice;
 
-    private BigDecimal highestPrice;
+    private Double highestPrice;
 
-    private BigDecimal lowestPrice;
+    private Double lowestPrice;
 
     private LocalDateTime entryTime;
 

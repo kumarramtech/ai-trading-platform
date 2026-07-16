@@ -16,7 +16,7 @@ public class ExitDecision {
 
     private ExitReason reason;
 
-    private BigDecimal exitPrice;
+    private Double exitPrice;
 
     private ExitType exitType;
 

@@ -55,14 +55,15 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
     }
 
     @Override
-    public CompletionStage<?> onPing(WebSocket webSocket,
-                                     ByteBuffer message) {
-
-        log.info("Ping Received");
+    public CompletionStage<?> onPing(
+            WebSocket webSocket,
+            ByteBuffer message) {
 
         webSocket.request(1);
 
-        return WebSocket.Listener.super.onPing(webSocket, message);
+        return WebSocket.Listener.super.onPing(
+                webSocket,
+                message);
     }
 
     @Override

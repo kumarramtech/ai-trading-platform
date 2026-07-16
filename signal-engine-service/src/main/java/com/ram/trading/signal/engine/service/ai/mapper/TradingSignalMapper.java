@@ -1,7 +1,10 @@
 package com.ram.trading.signal.engine.service.ai.mapper;
 
+import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
+import com.ram.trading.signal.engine.dto.ai.technical.TechnicalAnalysis;
+import com.ram.trading.signal.engine.dto.portfolio.RiskLevel;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -26,44 +29,22 @@ public class TradingSignalMapper {
                                 .getTarget())
                 .stopLoss(aiResponse.getExecutionPlan()
                                 .getStopLoss())
-                .rsi(aiResponse.getTechnicalAnalysis()
-                                .getRsi()
-                                .getValue())
-                .ema20(aiResponse.getTechnicalAnalysis()
-                                .getEma()
-                                .getEma20())
-                .ema50(aiResponse.getTechnicalAnalysis()
-                                .getEma()
-                                .getEma50())
-                .macd(aiResponse.getTechnicalAnalysis()
-                                .getMacd()
-                                .getValue())
                 .reason(aiResponse.getAiReasoning())
                 .aiRecommendation(
                         aiResponse.getDecision()
                                 .getRecommendation()
                                 .name())
 
-                .aiRecommendation(
-                        aiResponse.getDecision()
-                                .getRecommendation()
-                                .name())
-
-                .aiReasoning(
-                        aiResponse.getAiReasoning())
+                .aiReasoning(aiResponse.getAiReasoning())
 
                 .riskLevel(
-                        aiResponse.getRiskAnalysis()
-                                .getRiskLevel())
+                        aiResponse.getRiskAnalysis() == null
+                                ? RiskLevel.UNKNOWN.name()
+                                : aiResponse.getRiskAnalysis().getRiskLevel())
 
-                .positionSize(
-                        String.valueOf(
-                                aiResponse.getExecutionPlan()
-                                        .getPositionSize()==null?null:aiResponse.getExecutionPlan()
-                                        .getPositionSize()))
-                .exitStrategy(
-                aiResponse.getExecutionPlan()
-                        .getHoldingPeriod())
+                .positionSize(aiResponse.getExecutionPlan().getPositionSize() == null
+                                ? null: String.valueOf(aiResponse.getExecutionPlan().getPositionSize()))
+                .exitStrategy(aiResponse.getExecutionPlan().getHoldingPeriod())
                 .newsSummary(
                         aiResponse.getNewsAnalysis() == null
                                 ? null
@@ -79,21 +60,78 @@ public class TradingSignalMapper {
                                 ? null
                                 : aiResponse.getNewsAnalysis().getScore())
                 .build();
+
+        TechnicalAnalysis technical =
+                aiResponse.getTechnicalAnalysis();
+
+        if (technical != null) {
+            signal.setRsi(technical.getRsi().getValue());
+            signal.setEma20(technical.getEma().getEma20());
+            signal.setEma50(technical.getEma().getEma50());
+            signal.setMacd(technical.getMacd().getValue());
+        }
+        validateExecutionPlan(signal);
+
         log.info(
                 "Mapped AI Response -> TradingSignal | Symbol={} Signal={} Confidence={}",
                 signal.getSymbol(),
                 signal.getSignal(),
                 signal.getConfidence());
+
         return signal;
 
     }
 
     private String mapSignal(AiDecisionResponse response){
         if(Boolean.FALSE.equals(response.getDecision().getTradeAllowed())){
-            return "HOLD";
+            return SignalType.HOLD.name();
         }
         return response.getDecision().getRecommendation().name();
 
+    }
+
+    private void validateExecutionPlan(TradingSignal signal) {
+
+        if (SignalType.HOLD.name().equalsIgnoreCase(signal.getSignal())) {
+            return;
+        }
+
+        if (signal.getEntryPrice() == null ||
+                signal.getTargetPrice() == null ||
+                signal.getStopLoss() == null) {
+
+            throw new IllegalStateException(
+                    "AI Execution Plan contains null values.");
+        }
+
+        if ("BUY".equalsIgnoreCase(signal.getSignal())) {
+
+            if (signal.getTargetPrice() <= signal.getEntryPrice()) {
+                throw new IllegalStateException(
+                        "Invalid BUY Execution Plan from AI.");
+            }
+
+            if (signal.getStopLoss() >= signal.getEntryPrice()) {
+                throw new IllegalStateException(
+                        "Invalid BUY Stop Loss from AI.");
+            }
+
+        } else if ("SELL".equalsIgnoreCase(signal.getSignal())) {
+
+            if (signal.getTargetPrice() >= signal.getEntryPrice()) {
+                throw new IllegalStateException(
+                        "Invalid SELL Execution Plan from AI.");
+            }
+
+            if (signal.getStopLoss() <= signal.getEntryPrice()) {
+                throw new IllegalStateException(
+                        "Invalid SELL Stop Loss from AI.");
+            }
+        }
+
+        log.info(
+                "AI Execution Plan Validated Successfully for {}",
+                signal.getSymbol());
     }
 
 }

@@ -6,6 +6,7 @@ import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.market.Tick;
+import com.ram.trading.signal.engine.exit.TradeExitService;
 import com.ram.trading.signal.engine.risk.RiskViolation;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
@@ -49,6 +50,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private final RiskGuardService riskGuardService;
 
+    private final TradeExitService tradeExitService;
+
     @Override
     public Mono<TradingSignal> generateSignal(String symbol) {
 
@@ -78,18 +81,24 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
         log.info("Generating Trading Signal from Live Tick : {}", tick.getSymbol());
 
-        return technicalIndicatorService
-                .calculate(tick.getSymbol())
-                .flatMap(indicator -> {
-                    SignalGenerationRequest request =
-                            buildSignalRequest(tick, indicator);
-                    return tradingContextService
-                            .buildTradingContext(tick.getSymbol())
-                            .flatMap(context ->
-                                    generateTradingSignal(
-                                            request,
-                                            context));
-                });
+        return tradeExitService
+                .evaluateExit(tick)
+                .then(
+                        technicalIndicatorService
+                                .calculate(tick.getSymbol())
+                                .flatMap(indicator -> {
+
+                                    SignalGenerationRequest request =
+                                            buildSignalRequest(tick, indicator);
+
+                                    return tradingContextService
+                                            .buildTradingContext(tick.getSymbol())
+                                            .flatMap(context ->
+                                                    generateTradingSignal(
+                                                            request,
+                                                            context));
+                                })
+                );
     }
 
     private Mono<TradingSignal> generateTradingSignal(
