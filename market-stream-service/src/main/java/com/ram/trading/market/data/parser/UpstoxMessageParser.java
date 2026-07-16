@@ -2,15 +2,13 @@ package com.ram.trading.market.data.parser;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.ram.trading.market.data.dto.Tick;
+import com.ram.trading.market.data.service.InstrumentLookupService;
 import com.ram.trading.market.data.service.TickProcessor;
 import com.upstox.marketdatafeederv3udapi.rpc.proto.MarketDataFeed;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import java.nio.ByteBuffer;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 
 @Slf4j
 @Component
@@ -18,6 +16,8 @@ import java.time.ZoneId;
 public class UpstoxMessageParser {
 
     private final TickProcessor tickProcessor;
+
+    private final InstrumentLookupService instrumentLookupService;
 
     public void parse(ByteBuffer buffer) {
 
@@ -50,17 +50,19 @@ public class UpstoxMessageParser {
                                 : (change / previousClose) * 100;
 
                 String exchange = "";
-                String symbol = instrumentKey;
 
                 if (instrumentKey.contains("|")) {
 
-                    String[] values = instrumentKey.split("\\|");
-
-                    exchange = values[0];
-
-                    symbol = values[1];
+                    exchange = instrumentKey.split("\\|")[0];
 
                 }
+
+                String symbol =
+                        instrumentLookupService.getTradingSymbol(instrumentKey);
+                log.info("Tick Received -> Symbol: {}, Price: {}",
+                        symbol,
+                        lastPrice);
+
 
                 Tick tick = Tick.builder()
                         .exchange(exchange)
@@ -75,8 +77,12 @@ public class UpstoxMessageParser {
                         .changePercentage(changePercentage)
                         .build();
 
-                log.info("Trade Time : {}", tick.getTradeTime());
-                log.info("Tick Received : {}", tick);
+                log.info(
+                        "LIVE TICK -> Symbol={}, Price={}, Change={}%, Time={}",
+                        symbol,
+                        tick.getLastTradedPrice(),
+                        tick.getChangePercentage(),
+                        tick.getTradeTime());
 
                 tickProcessor.publishTick(tick);
 

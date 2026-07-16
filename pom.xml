@@ -20,5 +20,6 @@
         <module>notification-service</module>
         <module>newsanalysis-service</module>
         <module>market-stream-service</module>
+        <module>broker-auth-service</module>
     </modules>
 </project>

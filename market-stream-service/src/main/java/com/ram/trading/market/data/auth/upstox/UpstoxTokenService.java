@@ -1,31 +1,21 @@
 package com.ram.trading.market.data.auth.upstox;
 
+import com.ram.trading.market.data.client.BrokerAuthClient;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-@Slf4j
 @Service
-@Getter
+@RequiredArgsConstructor
 public class UpstoxTokenService {
 
-    private UpstoxTokenResponse token;
-
-    public void saveToken(UpstoxTokenResponse token) {
-        this.token = token;
-        log.info("Upstox Access Token Stored Successfully.");
-        log.info("Token Saved : {}", token.getAccessToken().substring(0,10));
-    }
+    private final BrokerAuthClient brokerAuthClient;
 
     public String getAccessToken() {
-        if (token == null) {
-            throw new IllegalStateException("Upstox is not authenticated.");
-        }
-        log.info("Access Token Retrieved Successfully");
-        return token.getAccessToken();
+
+        return brokerAuthClient.getAccessToken();
+
     }
 
-    public boolean isAuthenticated() {
-        return token != null;
-    }
 }

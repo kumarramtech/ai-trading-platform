@@ -1,8 +1,6 @@
-package com.ram.trading.stock.service.auth;
+package com.ram.trading.auth.service.upstox;
 
-import com.ram.trading.stock.client.UpstoxClient;
-import com.ram.trading.stock.client.properties.UpstoxProperties;
-import com.ram.trading.stock.dto.UpstoxTokenResponse;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

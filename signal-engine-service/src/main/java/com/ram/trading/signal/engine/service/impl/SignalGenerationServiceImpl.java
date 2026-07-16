@@ -5,6 +5,7 @@ import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
+import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.risk.RiskViolation;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
@@ -30,8 +31,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class SignalGenerationServiceImpl
-        implements SignalGenerationService {
+public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private final MarketDataProvider marketDataProvider;
 
@@ -71,6 +71,25 @@ public class SignalGenerationServiceImpl
                                     generateTradingSignal(request, context));
                 });
 
+    }
+
+    @Override
+    public Mono<TradingSignal> generateSignal(Tick tick) {
+
+        log.info("Generating Trading Signal from Live Tick : {}", tick.getSymbol());
+
+        return technicalIndicatorService
+                .calculate(tick.getSymbol())
+                .flatMap(indicator -> {
+                    SignalGenerationRequest request =
+                            buildSignalRequest(tick, indicator);
+                    return tradingContextService
+                            .buildTradingContext(tick.getSymbol())
+                            .flatMap(context ->
+                                    generateTradingSignal(
+                                            request,
+                                            context));
+                });
     }
 
     private Mono<TradingSignal> generateTradingSignal(
@@ -155,6 +174,22 @@ public class SignalGenerationServiceImpl
         return SignalGenerationRequest.builder()
                 .symbol(stock.getSymbol())
                 .currentPrice(stock.getPrice())
+                .rsi(indicator.getRsi14())
+                .ema20(indicator.getEma20())
+                .ema50(indicator.getEma50())
+                .sma20(indicator.getSma20())
+                .sma50(indicator.getSma50())
+                .macd(indicator.getMacd())
+                .build();
+    }
+
+    private SignalGenerationRequest buildSignalRequest(
+            Tick tick,
+            TechnicalIndicatorResponse indicator) {
+
+        return SignalGenerationRequest.builder()
+                .symbol(tick.getSymbol())
+                .currentPrice(tick.getLastTradedPrice())
                 .rsi(indicator.getRsi14())
                 .ema20(indicator.getEma20())
                 .ema50(indicator.getEma50())

@@ -25,37 +25,25 @@ public class UpstoxMarketClient {
 
         log.info("Fetching live quote for {}", instrumentKey);
 
-        String token = tokenService.getAccessToken();
+        return tokenService.getAccessToken()
 
-        log.info("Using Access Token : {}", token.substring(0,10));
-        return webClient.get()
+                .flatMap(token ->
 
-                .uri(properties.getMarketUrl()
-                        + "/market-quote/quotes?instrument_key="
-                        + instrumentKey)
+                        webClient.get()
 
-                .header(HttpHeaders.AUTHORIZATION,
-                        "Bearer " + tokenService.getAccessToken())
+                                .uri(properties.getMarketUrl()
+                                        + "/market-quote/quotes?instrument_key="
+                                        + instrumentKey)
 
-                .accept(MediaType.APPLICATION_JSON)
+                                .header(HttpHeaders.AUTHORIZATION,
+                                        "Bearer " + token)
 
-                .retrieve()
+                                .accept(MediaType.APPLICATION_JSON)
 
-                .onStatus(HttpStatusCode::isError,
-                        response -> response.bodyToMono(String.class)
-                                .flatMap(error -> {
+                                .retrieve()
 
-                                    log.error("Upstox Quote API Error: {}", error);
+                                .bodyToMono(MarketQuoteResponse.class)
 
-                                    return Mono.error(new RuntimeException(error));
-                                }))
-
-                .bodyToMono(MarketQuoteResponse.class)
-
-                .doOnSuccess(response ->
-                        log.info("Successfully received market quote from Upstox."))
-
-                .doOnError(error ->
-                        log.error("Error while fetching quote", error));
+                );
     }
 }

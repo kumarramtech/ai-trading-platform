@@ -1,7 +1,9 @@
 package com.ram.trading.stock.controller;
 
+import com.ram.trading.stock.dto.InstrumentLookupResponse;
 import com.ram.trading.stock.dto.StockResponse;
 import com.ram.trading.stock.service.StockService;
+import com.ram.trading.stock.service.instument.InstrumentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -9,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -16,6 +19,8 @@ import java.util.Map;
 public class StockController {
 
     private final StockService stockService;
+
+    private final InstrumentService instrumentService;
 
     @GetMapping("/stocks/{symbol}")
     public Mono<StockResponse> getStock(
@@ -30,4 +35,18 @@ public class StockController {
         return Flux.fromIterable(
                 stockService.getAllStocks());
     }
+
+    @GetMapping("/api/v1/instruments/lookup")
+    public List<InstrumentLookupResponse> lookup() {
+
+        return instrumentService.findAll()
+                .stream()
+                .map(i -> InstrumentLookupResponse.builder()
+                        .instrumentKey(i.getInstrumentKey())
+                        .tradingSymbol(i.getTradingSymbol())
+                        .build())
+                .toList();
+
+    }
+
 }

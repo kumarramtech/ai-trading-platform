@@ -35,10 +35,16 @@ public class TechnicalIndicatorServiceImpl
                 .getHistoricalPrices(symbol)
 
                 .collectList()
+                .flatMap(prices -> {
+                    if (prices.isEmpty()) {
+                        return Mono.error(new IllegalStateException(
+                                "No historical candles found for " + symbol));
+                    }
 
-                .map(this::toCandles)
+                    List<Candle> candles = toCandles(prices);
 
-                .map(candles -> buildResponse(symbol, candles));
+                    return Mono.just(buildResponse(symbol, candles));
+                });
 
     }
 

@@ -17,9 +17,9 @@ public class UpstoxProperties {
     private String authorizationUrl;
     private String tokenUrl;
     private String analyticsToken;
-    private String marketUrl;
     private String baseUrl;
-    private String marketFeedUrl;
     private String defaultInstruments;
+    private String marketFeedUrl;
+    private String marketUrl;
 
 }

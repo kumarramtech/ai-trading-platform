@@ -43,24 +43,37 @@ public class HistoricalCandleServiceImpl implements HistoricalCandleService {
         log.info("Trading Symbol : {}", symbol);
         log.info("Instrument Key : {}", instrument.getInstrumentKey());
 
-        return client.getHistoricalCandles(
-                        tokenService.getAccessToken(),
-                        instrument.getInstrumentKey(),
-                        interval,
-                        from.toString(),
-                        to.toString())
+        return tokenService.getAccessToken()
+
+                .flatMap(token ->
+
+                        client.getHistoricalCandles(
+                                token,
+                                instrument.getInstrumentKey(),
+                                interval,
+                                from.toString(),
+                                to.toString())
+                )
+
                 .map(response -> {
+
                     ObjectMapper mapper = new ObjectMapper();
 
-                    UpstoxHistoricalResponse upstoxResponse =  null;
+                    UpstoxHistoricalResponse upstoxResponse;
+
                     try {
-                        upstoxResponse = mapper.readValue(response,  UpstoxHistoricalResponse.class);
+                        upstoxResponse = mapper.readValue(
+                                response,
+                                UpstoxHistoricalResponse.class);
                     } catch (JsonProcessingException e) {
                         throw new RuntimeException(e);
                     }
 
-                    List<Candle> candles = candleMapper.map(upstoxResponse.getData().getCandles());
-                    List<Candle> sortedCandles = new ArrayList<>(candles);
+                    List<Candle> candles =
+                            candleMapper.map(upstoxResponse.getData().getCandles());
+
+                    List<Candle> sortedCandles =
+                            new ArrayList<>(candles);
 
                     sortedCandles.sort(
                             Comparator.comparing(Candle::getDateTime));
