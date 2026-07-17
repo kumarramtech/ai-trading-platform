@@ -17,4 +17,24 @@ public class NotificationRequest {
     private String title;
 
     private String message;
+
+    private String symbol;
+
+    private String signal;
+
+    private Double entryPrice;
+
+    private Double exitPrice;
+
+    private Double targetPrice;
+
+    private Double stopLoss;
+
+    private Double profitLoss;
+
+    private Integer confidence;
+
+    private String reason;
+
+    private String recipient;
 }

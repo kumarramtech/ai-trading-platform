@@ -8,15 +8,14 @@ import com.ram.trading.portfolio.dto.*;
 import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.repo.PortfolioRepository;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 @AllArgsConstructor
+@Slf4j
 public class PortfolioService {
 
     PortfolioRepository portfolioRepository;
@@ -35,8 +34,8 @@ public class PortfolioService {
 
         return portfolioRepository.findBySymbol(symbol)
                 .orElseThrow(
-                        () -> new RuntimeException(
-                                "Portfolio not found"));
+                        () -> new IllegalArgumentException(
+                                "Portfolio not found for symbol : " + symbol));
     }
 
     public PortfolioSummary getSummary() {
@@ -263,5 +262,67 @@ public class PortfolioService {
 
                 .build();
 
+    }
+
+    public Portfolio openPosition(
+            OpenPositionRequest request) {
+
+        Portfolio portfolio =
+                portfolioRepository
+                        .findBySymbol(request.getSymbol())
+                        .orElse(null);
+        log.info("Opening Portfolio Position : {}", request.getSymbol());
+
+        if (portfolio == null) {
+
+            portfolio = new Portfolio();
+
+            portfolio.setSymbol(request.getSymbol());
+            portfolio.setQuantity(request.getQuantity());
+            portfolio.setAveragePrice(request.getEntryPrice());
+
+            return portfolioRepository.save(portfolio);
+        }
+
+        int newQuantity =
+                portfolio.getQuantity() + request.getQuantity();
+
+        double investedValue =
+                (portfolio.getQuantity() * portfolio.getAveragePrice())
+                        +
+                        (request.getQuantity() * request.getEntryPrice());
+
+        portfolio.setQuantity(newQuantity);
+
+        double averagePrice =
+                Math.round((investedValue / newQuantity) * 100.0) / 100.0;
+
+        portfolio.setAveragePrice(averagePrice);
+
+        return portfolioRepository.save(portfolio);
+    }
+
+    public Portfolio closePosition(ClosePositionRequest request) {
+
+        Optional<Portfolio> optional =
+                portfolioRepository.findBySymbol(request.getSymbol());
+
+        log.info("Closing Portfolio Position : {}", request.getSymbol());
+        if (optional.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Portfolio not found for symbol : "
+                            + request.getSymbol());
+        }
+
+        Portfolio portfolio = optional.get();
+        int remaining = portfolio.getQuantity() - request.getQuantity();
+
+        if (remaining <= 0) {
+            portfolioRepository.delete(portfolio);
+            return portfolio;
+        }
+
+        portfolio.setQuantity(remaining);
+        return portfolioRepository.save(portfolio);
     }
 }

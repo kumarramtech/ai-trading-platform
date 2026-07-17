@@ -110,6 +110,14 @@ public class PaperTradingController {
         return service.getAdvancedMetrics();
     }
 
+    @PostMapping
+    public PaperTrade createPaperTrade(
+            @RequestBody CreatePaperTradeRequest request) {
+
+        return service.createPaperTrade(request);
+
+    }
+
     @GetMapping("/performance")
     public PerformanceAnalytics performance() {
         return service.getPerformanceAnalytics();

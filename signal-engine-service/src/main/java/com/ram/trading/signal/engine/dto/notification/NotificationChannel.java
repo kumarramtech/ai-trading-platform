@@ -4,5 +4,6 @@ public enum NotificationChannel {
 
     WHATSAPP,
     EMAIL,
-    TELEGRAM
+    TELEGRAM,
+    SLACK
 }

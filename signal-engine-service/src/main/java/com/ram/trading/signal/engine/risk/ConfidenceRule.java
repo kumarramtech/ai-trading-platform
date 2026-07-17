@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ConfidenceRule implements RiskRule {
 
-    private static final int MIN_CONFIDENCE = 70;
+    private static final int MIN_CONFIDENCE = 20;
 
     @Override
     public RiskViolation validate(RiskEvaluation evaluation) {

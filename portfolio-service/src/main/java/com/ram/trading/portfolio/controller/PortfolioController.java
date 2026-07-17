@@ -5,6 +5,8 @@ import com.ram.trading.portfolio.entity.Portfolio;
 import com.ram.trading.portfolio.service.PortfolioService;
 import com.ram.trading.portfolio.client.StockServiceClient;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
@@ -105,5 +107,34 @@ public class PortfolioController {
     public PortfolioHealth getHealthScore() {
 
         return portfolioService.getHealthScore();
+    }
+
+    @PostMapping("/open-position")
+    public Portfolio openPosition(
+            @RequestBody OpenPositionRequest request) {
+
+        return portfolioService.openPosition(request);
+    }
+
+    @PostMapping("/close-position")
+    public ResponseEntity<?> closePosition(
+            @RequestBody ClosePositionRequest request) {
+
+        try {
+
+            Portfolio portfolio =
+                    portfolioService.closePosition(request);
+
+            return ResponseEntity.ok(portfolio);
+
+        } catch (IllegalArgumentException ex) {
+
+            return ResponseEntity
+                    .status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.builder()
+                            .success(false)
+                            .message(ex.getMessage())
+                            .build());
+        }
     }
 }
