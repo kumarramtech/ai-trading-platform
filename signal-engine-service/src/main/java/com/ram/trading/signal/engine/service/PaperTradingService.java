@@ -60,6 +60,9 @@ public class PaperTradingService {
     @Value("${trading.capital-per-trade}")
     private double capitalPerTrade;
 
+    @Value("${trading.total-capital}")
+    private double totalCapital;
+
     public void createTrade(
             TradingSignalEntity signal,
             TechnicalIndicatorResponse indicatorResponse) {
@@ -110,6 +113,35 @@ public class PaperTradingService {
         if (quantity <= 0) {
             return;
         }
+
+        double investmentAmount = quantity * signal.getEntryPrice();
+
+        double usedCapital = repository.findByStatus(SignalStatus.OPEN)
+                .stream()
+                .mapToDouble(PaperTrade::getInvestedAmount)
+                .sum();
+
+        double availableCapital = totalCapital - usedCapital;
+
+        log.info("======================================");
+        log.info("Total Capital     : {}", totalCapital);
+        log.info("Used Capital      : {}", usedCapital);
+        log.info("Available Capital : {}", availableCapital);
+        log.info("Required Capital  : {}", investmentAmount);
+        log.info("======================================");
+
+        if (availableCapital < investmentAmount) {
+
+            log.warn("======================================");
+            log.warn("Trade Skipped - Insufficient Capital");
+            log.warn("Symbol : {}", signal.getSymbol());
+            log.warn("Available : {}", availableCapital);
+            log.warn("Required  : {}", investmentAmount);
+            log.warn("======================================");
+
+            return;
+        }
+
         log.info("Confidence = {}", signal.getConfidence());
 
         log.info(
@@ -193,9 +225,7 @@ public class PaperTradingService {
                         .signal(signal.getSignal())
                         .entryPrice(round(signal.getEntryPrice()))
                         .quantity(quantity)
-                        .investedAmount(
-                                quantity *
-                                        signal.getEntryPrice())
+                        .investedAmount(investmentAmount)
                         .rsi(indicatorResponse.getRsi14())
                         .ema20(indicatorResponse.getEma20())
                         .ema50(indicatorResponse.getEma50())
@@ -1506,8 +1536,7 @@ public class PaperTradingService {
                                             ? worst.getCurrentPnL()
                                             : 0)
 
-                            .availableCapital(
-                                    100000 - totalInvestment)
+                            .availableCapital(totalCapital - totalInvestment)
                             .build();
                 });
     }

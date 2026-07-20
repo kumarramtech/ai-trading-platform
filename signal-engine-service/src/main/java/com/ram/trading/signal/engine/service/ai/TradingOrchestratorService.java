@@ -1,7 +1,8 @@
 package com.ram.trading.signal.engine.service.ai;
 
+import com.ram.trading.signal.engine.service.EngineeringFilterService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingDecisionMapper;
-import com.ram.trading.signal.engine.service.context.TradingContext;
+import com.ram.trading.signal.engine.service.context.TradingContextService;
 import com.ram.trading.signal.engine.service.rules.TradingDecisionEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,34 +25,40 @@ public class TradingOrchestratorService {
 
     private final AiDecisionIntegrationService aiDecisionIntegrationService;
 
-    public Mono<AiDecisionResponse> executeTrade(
-            SignalGenerationRequest signalRequest,
-            TradingContext context) {
+    private final TradingContextService tradingContextService;
 
+    private final EngineeringFilterService engineeringFilterService;
+
+    public Mono<AiDecisionResponse> executeTrade(
+            SignalGenerationRequest signalRequest) {
+
+        log.info("======================================================");
         log.info("Starting AI Trading Pipeline for {}",
                 signalRequest.getSymbol());
+        log.info("======================================================");
 
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
 
-        TradingDecisionRequest aiRequest =
-                tradingDecisionMapper.map(signalRequest,technicalDecision,context);
+        if (!engineeringFilterService.isEligibleForAI(technicalDecision)) {
 
+            log.info("Engineering Filter Rejected {}",
+                    signalRequest.getSymbol());
 
+            return Mono.empty();
+        }
 
-        return callAI(aiRequest)
-                .doOnNext(response -> {
+        return tradingContextService
+                .buildTradingContext(signalRequest.getSymbol())
+                .flatMap(context -> {
 
-                    log.info("Calling AI Service...");
+                    TradingDecisionRequest aiRequest =
+                            tradingDecisionMapper.map(
+                                    signalRequest,
+                                    technicalDecision,
+                                    context);
 
-                    log.info(
-                            "AI Recommendation={}",
-                            response.getDecision().getRecommendation());
-
-                    log.info(
-                            "AI Confidence={}",
-                            response.getDecision().getConfidence());
-
+                    return callAI(aiRequest);
                 });
     }
 

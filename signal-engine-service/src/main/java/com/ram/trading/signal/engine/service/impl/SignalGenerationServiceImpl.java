@@ -120,7 +120,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         }
         log.info("====================================");
         return tradingOrchestratorService
-                .executeTrade(request, context)
+                .executeTrade(request)
                 .flatMap(aiResponse -> {
                     RiskEvaluation evaluation =
                             RiskEvaluation.builder()

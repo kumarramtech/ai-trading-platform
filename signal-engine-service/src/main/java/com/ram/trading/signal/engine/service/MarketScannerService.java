@@ -13,9 +13,9 @@ import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.repo.WatchlistStockRepository;
 import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingSignalMapper;
-import com.ram.trading.signal.engine.service.context.TradingContextService;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.util.SignalConfidenceCalculator;
+import com.ram.trading.signal.engine.config.MarketSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,12 +40,17 @@ public class MarketScannerService {
     private final WatchlistStockRepository watchlistRepository;
     private final OpportunityService opportunityService;
     private final TradingSignalMapper tradingSignalMapper;
-    private final TradingContextService tradingContextService;
+    private final MarketSessionService marketSessionService;
 
     public void scanMarket() {
-        List<WatchlistStock> stocks =
-                watchlistRepository.findByActiveTrue();
-        log.info("Scanning {} symbols",stocks.size());
+
+        if (!marketSessionService.isTradingAllowed()) {
+            log.info("Market is closed. Skipping market scan.");
+            return;
+        }
+
+        List<WatchlistStock> stocks = watchlistRepository.findByActiveTrue();
+        log.info("Scanning {} symbols", stocks.size());
         stocks.forEach(stock -> scanSymbol(stock.getSymbol()));
     }
 
@@ -158,17 +163,12 @@ public class MarketScannerService {
     private Mono<TradingSignal> createTradingSignal(
             SignalGenerationRequest request) {
 
-        return tradingContextService
-                .buildTradingContext(request.getSymbol())
-                .flatMap(context ->
-                        tradingOrchestratorService
-                                .executeTrade(
-                                        request,
-                                        context)
-                                .map(aiDecisionResponse ->
-                                        tradingSignalMapper.map(
-                                                aiDecisionResponse,
-                                                request)));
+        return tradingOrchestratorService
+                .executeTrade(request)
+                .map(aiDecisionResponse ->
+                        tradingSignalMapper.map(
+                                aiDecisionResponse,
+                                request));
 
     }
 }
