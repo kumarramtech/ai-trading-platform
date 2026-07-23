@@ -13,6 +13,7 @@ public class MarketScannerScheduler {
 
     private final MarketScannerService marketScannerService;
 
+
     @Scheduled(fixedRate = 300000)
     public void scanMarket() {
 

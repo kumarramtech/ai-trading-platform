@@ -16,4 +16,6 @@ public class RuleResult {
 
     private String reason;
 
+    private String ruleName;
+
 }

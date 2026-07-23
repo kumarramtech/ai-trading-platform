@@ -1,3 +1,4 @@
+/*
 package com.ram.trading.market.data.provider.mock;
 
 import com.ram.trading.market.data.cache.InstrumentCache;
@@ -85,4 +86,9 @@ public class MockMarketDataProvider implements MarketDataProvider {
 
     }
 
-}
+    @Override
+    public boolean isConnected() {
+        return false;
+    }
+
+}*/

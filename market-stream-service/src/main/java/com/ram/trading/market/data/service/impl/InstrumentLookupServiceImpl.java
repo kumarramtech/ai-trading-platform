@@ -34,9 +34,9 @@ public class InstrumentLookupServiceImpl implements InstrumentLookupService {
 
             cache.clear();
 
-            client.loadAll().forEach(i ->
+            client.loadSubscriptions().forEach(i ->
                     cache.put(i.getInstrumentKey(),
-                            i.getTradingSymbol()));
+                            i.getSymbol()));
 
             log.info("Loaded {} Instruments", cache.size());
 

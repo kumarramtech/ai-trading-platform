@@ -1,6 +1,7 @@
 package com.ram.trading.stock.bootstrap;
 
 import com.ram.trading.stock.bootstrap.history.HistoricalDataBootstrapService;
+import com.ram.trading.stock.service.instument.BootstrapStatusService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,22 +18,46 @@ public class BootstrapServiceImpl
 
     private final IndicatorBootstrapService indicatorBootstrapService;
 
+    private final BootstrapStatusService bootstrapStatusService;
+
     @Override
     public void bootstrap() {
 
-        log.info("");
-        log.info("====================================================");
-        log.info(" AI Trading Platform Bootstrap Started ");
-        log.info("====================================================");
+        bootstrapStatusService.bootstrapStarted();
 
-        instrumentBootstrapService.bootstrap();
+        try {
 
-        historicalDataBootstrapService.bootstrap();
+            log.info("");
+            log.info("====================================================");
+            log.info("AI Trading Platform Bootstrap Started");
+            log.info("====================================================");
 
-        indicatorBootstrapService.bootstrap();
+            long start = System.currentTimeMillis();
 
-        log.info("====================================================");
-        log.info(" Bootstrap Completed Successfully ");
-        log.info("====================================================");
+            instrumentBootstrapService.bootstrap();
+
+            historicalDataBootstrapService.bootstrap();
+
+            indicatorBootstrapService.bootstrap();
+
+            long end = System.currentTimeMillis();
+
+            bootstrapStatusService.bootstrapCompleted();
+
+            log.info("====================================================");
+            log.info("Bootstrap Completed Successfully");
+            log.info("Execution Time : {} Seconds",
+                    (end - start) / 1000);
+            log.info("Platform Ready For Trading");
+            log.info("====================================================");
+
+        } catch (Exception ex) {
+
+            bootstrapStatusService.bootstrapFailed();
+
+            log.error("Bootstrap Failed", ex);
+
+            throw ex;
+        }
     }
 }

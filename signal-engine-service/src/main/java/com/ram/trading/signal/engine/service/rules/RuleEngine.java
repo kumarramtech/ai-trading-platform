@@ -27,7 +27,12 @@ public class RuleEngine {
 
             RuleResult result = rule.evaluate(request);
 
-            log.debug("{} -> {}", rule.getRuleName(), result);
+            log.info(
+                    "Rule: {}, Signal: {}, Score: {}, Reason: {}",
+                    rule.getRuleName(),
+                    result.getSignal(),
+                    result.getScore(),
+                    result.getReason());
 
             results.add(result);
         }

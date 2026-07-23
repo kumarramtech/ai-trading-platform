@@ -8,12 +8,14 @@ import com.ram.trading.market.data.service.MarketDataProvider;
 import com.ram.trading.market.data.service.MarketMetrics;
 import com.ram.trading.market.data.service.MarketStreamService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MarketStreamServiceImpl implements MarketStreamService {
 
     private final MarketDataProvider marketDataProvider;
@@ -24,11 +26,25 @@ public class MarketStreamServiceImpl implements MarketStreamService {
 
     @Override
     public void start() {
+
+        if (marketDataProvider.isConnected()) {
+            log.debug("Market stream already connected.");
+            return;
+        }
+
+        log.info("Starting Market Stream...");
         marketDataProvider.connect();
     }
 
     @Override
     public void stop() {
+
+        if (!marketDataProvider.isConnected()) {
+            log.debug("Market stream already disconnected.");
+            return;
+        }
+
+        log.info("Stopping Market Stream...");
         marketDataProvider.disconnect();
     }
 

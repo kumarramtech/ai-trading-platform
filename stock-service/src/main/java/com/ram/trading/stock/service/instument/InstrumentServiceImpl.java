@@ -2,6 +2,7 @@ package com.ram.trading.stock.service.instument;
 
 import com.ram.trading.stock.bootstrap.properties.BootStrapProperties;
 import com.ram.trading.stock.dto.InstrumentLookupResponse;
+import com.ram.trading.stock.dto.InstrumentSubscriptionResponse;
 import com.ram.trading.stock.entity.Instrument;
 import com.ram.trading.stock.exceptions.InstrumentNotFoundException;
 import com.ram.trading.stock.repo.InstrumentRepository;
@@ -92,6 +93,12 @@ public class InstrumentServiceImpl implements InstrumentService {
                         bootStrapProperties.getSegment(),
                         bootStrapProperties.getInstrumentType(),
                         pageable);
+    }
+
+    @Override
+    public List<InstrumentSubscriptionResponse> getSubscriptionInstruments() {
+
+        return repository.findSubscriptionInstruments();
     }
 
 }

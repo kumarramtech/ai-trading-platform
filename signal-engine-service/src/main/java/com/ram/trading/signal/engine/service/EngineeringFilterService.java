@@ -1,9 +1,7 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.contant.SignalType;
-import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
-import com.ram.trading.signal.engine.service.context.TradingContext;
 import org.springframework.stereotype.Service;
 
 @Service

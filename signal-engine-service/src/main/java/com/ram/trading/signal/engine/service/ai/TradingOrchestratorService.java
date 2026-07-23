@@ -40,8 +40,19 @@ public class TradingOrchestratorService {
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
 
-        if (!engineeringFilterService.isEligibleForAI(technicalDecision)) {
+        log.info("Technical Decision Generated");
+        log.info("Symbol      : {}", signalRequest.getSymbol());
+        log.info("Signal      : {}", technicalDecision.getSignal());
+        log.info("Confidence  : {}", technicalDecision.getConfidence());
+        log.info("Reasons     : {}", technicalDecision.getReasons());
 
+        boolean eligible =
+                engineeringFilterService.isEligibleForAI(technicalDecision);
+
+        log.info("Engineering Filter Result");
+        log.info("Eligible For AI : {}", eligible);
+
+        if (!eligible) {
             log.info("Engineering Filter Rejected {}",
                     signalRequest.getSymbol());
 

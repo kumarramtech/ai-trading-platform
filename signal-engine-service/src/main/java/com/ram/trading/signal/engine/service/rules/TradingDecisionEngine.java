@@ -23,8 +23,14 @@ public class TradingDecisionEngine {
     public TradingDecision generateDecision(
             SignalGenerationRequest request) {
 
+        log.info("======================================================");
+        log.info("Generating Technical Decision for {}", request.getSymbol());
+        log.info("======================================================");
+
         List<RuleResult> results =
                 ruleEngine.executeRules(request);
+
+        log.info("Rule Engine returned {} results", results.size());
 
         SignalType signal =
                 determineSignal(results);
@@ -35,13 +41,24 @@ public class TradingDecisionEngine {
         ConfidenceLevel level =
                 confidenceCalculator.determineLevel(confidence);
 
+        log.info("Technical Decision Summary");
+        log.info("Symbol            : {}", request.getSymbol());
+        log.info("Final Signal      : {}", signal);
+        log.info("Confidence        : {}", confidence);
+        log.info("Confidence Level  : {}", level);
 
-        return TradingDecision.builder()
-                .signal(signal)
-                .confidence(confidence)
-                .confidenceLevel(level)
-                .reasons(collectReasons(results))
-                .build();
+        TradingDecision decision =
+                TradingDecision.builder()
+                        .signal(signal)
+                        .confidence(confidence)
+                        .confidenceLevel(level)
+                        .reasons(collectReasons(results))
+                        .build();
+
+        log.info("Technical Decision Created Successfully");
+        log.info("======================================================");
+
+        return decision;
     }
 
     private SignalType determineSignal(

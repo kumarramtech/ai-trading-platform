@@ -1,6 +1,7 @@
 package com.ram.trading.stock.service.instument;
 
 import com.ram.trading.stock.dto.InstrumentLookupResponse;
+import com.ram.trading.stock.dto.InstrumentSubscriptionResponse;
 import com.ram.trading.stock.entity.Instrument;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -29,5 +30,7 @@ public interface InstrumentService {
     List<Instrument> findTradableEquities();
 
     Page<Instrument> findTradableEquities(Pageable pageable);
+
+    List<InstrumentSubscriptionResponse> getSubscriptionInstruments();
 
 }

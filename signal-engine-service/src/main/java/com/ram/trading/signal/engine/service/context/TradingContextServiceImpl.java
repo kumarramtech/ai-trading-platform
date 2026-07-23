@@ -30,48 +30,60 @@ public class TradingContextServiceImpl implements TradingContextService {
                 .symbol(symbol)
                 .build();
 
-        Mono<NewsAnalysisResponse> newsMono =newsAnalysisClient.analyze(request);
+        Mono<NewsAnalysisResponse> newsMono =
+                newsAnalysisClient.analyze(request)
+                        .onErrorResume(ex -> {
+                            log.warn("Unable to fetch News Context. Continuing with default values.", ex);
 
-        Mono<PortfolioContextResponse> portfolioMono =portfolioContextClient.getPortfolioContext();
+                            return Mono.just(
+                                    NewsAnalysisResponse.builder()
+                                            .summary("No market news available.")
+                                            .sentiment("UNKNOWN")
+                                            .score(50)
+                                            .build());
+                        });
 
-        Mono<OpenPositionContextResponse> openPositionMono = openPositionContextClient.getOpenPositionContext(symbol);
+        Mono<PortfolioContextResponse> portfolioMono =
+                portfolioContextClient.getPortfolioContext()
+                        .onErrorResume(ex -> {
+                            log.warn("Unable to fetch Portfolio Context. Continuing with default values.", ex);
+
+                            return Mono.just(
+                                    PortfolioContextResponse.builder()
+                                            .build());
+                        });
+
+        Mono<OpenPositionContextResponse> openPositionMono =
+                openPositionContextClient.getOpenPositionContext(symbol)
+                        .onErrorResume(ex -> {
+                            log.warn("Unable to fetch Open Position Context. Continuing with default values.", ex);
+
+                            return Mono.just(
+                                    OpenPositionContextResponse.builder()
+                                            .positionExists(false)
+                                            .build());
+                        });
 
         return Mono.zip(
-                newsMono,
-                portfolioMono,
-                openPositionMono
-        ).map(tuple -> {
+                        newsMono,
+                        portfolioMono,
+                        openPositionMono)
+                .map(tuple -> {
 
-            NewsAnalysisResponse news = tuple.getT1();
-            PortfolioContextResponse portfolio = tuple.getT2();
-            OpenPositionContextResponse openPosition = tuple.getT3();
+                    NewsAnalysisResponse news = tuple.getT1();
+                    PortfolioContextResponse portfolio = tuple.getT2();
+                    OpenPositionContextResponse openPosition = tuple.getT3();
 
-            return TradingContext.builder()
-                    .newsSummary(news.getSummary())
-                    .newsSentiment(news.getSentiment())
-                    .newsScore(news.getScore())
-                    .portfolioContext(portfolio)
-                    .openPositionContext(openPosition)
-                    .sectorSummary("Sector context not integrated.")
-                    .riskSummary("Risk context not integrated.")
-                    .build();
-
-        }).onErrorResume(ex -> {
-
-            log.error("Unable to build Trading Context", ex);
-
-            return Mono.just(
-                    TradingContext.builder()
-                            .newsSummary("No market news available.")
-                            .newsSentiment("UNKNOWN")
-                            .newsScore(50)
-                            .portfolioContext(null)
-                            .openPositionContext(null)
+                    return TradingContext.builder()
+                            .newsSummary(news.getSummary())
+                            .newsSentiment(news.getSentiment())
+                            .newsScore(news.getScore())
+                            .portfolioContext(portfolio)
+                            .openPositionContext(openPosition)
                             .sectorSummary("Sector context not integrated.")
                             .riskSummary("Risk context not integrated.")
-                            .build());
-
-        });
+                            .build();
+                });
     }
 
 }

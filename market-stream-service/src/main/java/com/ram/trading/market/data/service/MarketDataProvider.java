@@ -7,4 +7,5 @@ public interface MarketDataProvider {
     void disconnect();
     void subscribe(List<String> instruments);
     void unsubscribe(List<String> instruments);
+    boolean isConnected();
 }

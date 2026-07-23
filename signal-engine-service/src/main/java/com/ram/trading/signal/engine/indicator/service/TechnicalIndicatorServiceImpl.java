@@ -27,25 +27,34 @@ public class TechnicalIndicatorServiceImpl
     private final IndicatorService indicatorService;
 
     @Override
-    public Mono<TechnicalIndicatorResponse> calculate(
-            String symbol) {
+    public Mono<TechnicalIndicatorResponse> calculate(String symbol) {
 
         return stockServiceClient
-
                 .getHistoricalPrices(symbol)
-
                 .collectList()
                 .flatMap(prices -> {
+
                     if (prices.isEmpty()) {
-                        return Mono.error(new IllegalStateException(
-                                "No historical candles found for " + symbol));
+                        log.warn("No historical candles found for {}", symbol);
+                        return Mono.empty();
                     }
 
                     List<Candle> candles = toCandles(prices);
 
-                    return Mono.just(buildResponse(symbol, candles));
-                });
+                    try {
+                        return Mono.just(buildResponse(symbol, candles));
 
+                    } catch (IllegalArgumentException ex) {
+
+                        log.warn(
+                                "Skipping indicator calculation for {}. {}",
+                                symbol,
+                                ex.getMessage());
+
+                        return Mono.empty();
+                    }
+
+                });
     }
 
     private List<Candle> toCandles(

@@ -2,15 +2,18 @@ package com.ram.trading.market.data.provider.upstox.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ram.trading.market.data.auth.upstox.UpstoxProperties;
+import com.ram.trading.market.data.client.StockInstrumentClient;
 import com.ram.trading.market.data.parser.UpstoxMessageParser;
 import com.ram.trading.market.data.provider.dto.FeedAuthorizationResponse;
+import com.ram.trading.market.data.provider.dto.InstrumentSubscriptionResponse;
 import com.ram.trading.market.data.provider.dto.SubscriptionData;
 import com.ram.trading.market.data.provider.dto.SubscriptionRequest;
 import com.ram.trading.market.data.provider.upstox.client.UpstoxMarketFeedClient;
 import com.ram.trading.market.data.provider.upstox.listener.UpstoxWebSocketListener;
+import com.ram.trading.market.data.service.MarketDataProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,10 +23,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
-@Component
+@Service
 @RequiredArgsConstructor
 @Slf4j
-public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient {
+public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketDataProvider {
 
     private WebSocket webSocket;
 
@@ -31,6 +34,7 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient {
     private final UpstoxMarketFeedClient marketFeedClient;
     private final ObjectMapper objectMapper;
     private final UpstoxProperties properties;
+    private final StockInstrumentClient stockInstrumentClient;
 
     @Override
     public synchronized void connect() {
@@ -89,10 +93,26 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient {
 
             log.info("=======================================");
             log.info("WebSocket Connection Established.");
-            log.info("Instrument : {}", properties.getDefaultInstruments());
             log.info("=======================================");
 
-            subscribe(List.of(properties.getDefaultInstruments()));
+            List<String> instrumentKeys =
+                    stockInstrumentClient
+                            .loadSubscriptions()
+                            .stream()
+                            .limit(100)
+                            .map(InstrumentSubscriptionResponse::getInstrumentKey)
+                            .toList();
+
+            log.info("Subscribing {} instruments", instrumentKeys.size());
+            if (instrumentKeys.isEmpty()) {
+                log.warn("No instruments available for subscription.");
+                return;
+            }
+            instrumentKeys
+                    .stream()
+                    .limit(10)
+                    .forEach(key -> log.info("{}", key));
+            subscribe(instrumentKeys);
 
         } catch (Exception ex) {
 
@@ -175,5 +195,11 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient {
         return webSocket != null
                 && !webSocket.isInputClosed()
                 && !webSocket.isOutputClosed();
+    }
+
+    @Override
+    public void unsubscribe(List<String> instrumentKeys) {
+        // TODO: Implement unsubscribe later if required.
+        log.info("Unsubscribe requested for {} instruments", instrumentKeys.size());
     }
 }
