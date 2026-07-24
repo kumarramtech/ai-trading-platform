@@ -53,6 +53,7 @@ public class TradingDecisionEngine {
                         .confidence(confidence)
                         .confidenceLevel(level)
                         .reasons(collectReasons(results))
+                        .ruleResults(results)
                         .build();
 
         log.info("Technical Decision Created Successfully");

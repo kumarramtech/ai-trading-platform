@@ -67,6 +67,13 @@ public class PaperTradingService {
             TradingSignalEntity signal,
             TechnicalIndicatorResponse indicatorResponse) {
 
+        log.info("=================================");
+        log.info("ENTERED PAPER TRADE SERVICE");
+        log.info("Symbol      : {}", signal.getSymbol());
+        log.info("Signal      : {}", signal.getSignal());
+        log.info("Entry Price : {}", signal.getEntryPrice());
+        log.info("=================================");
+
         if (indicatorResponse == null) {
             throw new RuntimeException(
                     "Technical indicators not found for "
@@ -263,15 +270,15 @@ public class PaperTradingService {
                         .channel(NotificationChannel.SLACK)
                         .title("TRADE OPENED")
                         .message(
-                                "Symbol: " + signal.getSymbol()
-                                        + ", Signal: " + signal.getSignal()
-                                        + ", Entry: " + signal.getEntryPrice()
-                                        + ", Target: " + signal.getTargetPrice()
-                                        + ", StopLoss: " + signal.getStopLoss()
-                                        + ", PnL : ₹" + signal.getProfitLoss()
-                                        + ", Confidence: "
-                                        + signal.getConfidence())
+                                "Symbol: " + saved.getSymbol()
+                                        + ", Signal: " + saved.getSignal()
+                                        + ", Entry: ₹" + saved.getEntryPrice()
+                                        + ", Target: ₹" + saved.getTargetPrice()
+                                        + ", StopLoss: ₹" + saved.getStopLoss()
+                                        + ", Quantity: " + saved.getQuantity()
+                                        + ", Confidence: " + saved.getConfidence() + "%")
                         .build();
+
 
         notificationClient
                 .sendNotification(request)
@@ -1554,21 +1561,20 @@ public class PaperTradingService {
 
         if (decision.getReason() == ExitReason.TARGET) {
 
-            trade.setStatus(
-                    SignalStatus.TARGET_HIT);
+            trade.setStatus(SignalStatus.TARGET_HIT);
 
         }
         else if (decision.getReason() == ExitReason.STOP_LOSS) {
 
-            trade.setStatus(
-                    SignalStatus.STOP_LOSS_HIT);
+            trade.setStatus(SignalStatus.STOP_LOSS_HIT);
 
         }
+        else if (decision.getReason() == ExitReason.MARKET_CLOSE) {
+            trade.setStatus(SignalStatus.MARKET_CLOSED);
+            log.info("Trade Closed due to Market Close");
+        }
         else {
-
-            trade.setStatus(
-                    SignalStatus.CLOSED);
-
+            trade.setStatus(SignalStatus.CLOSED);
         }
 
         trade.setExitPrice(tick.getLastTradedPrice());
@@ -1581,18 +1587,68 @@ public class PaperTradingService {
 
         log.info("Profit/Loss : {}", pnl);
 
-        return Mono.fromCallable(() -> {
+        return Mono.fromCallable(() -> repository.save(trade))
+                .subscribeOn(Schedulers.boundedElastic())
 
-                    PaperTrade savedTrade = repository.save(trade);
+                .flatMap(savedTrade ->
 
-                    log.info("Trade Closed Successfully");
-                    log.info("Trade Id : {}", savedTrade.getId());
+                        portfolioClient
 
-                    return savedTrade;
+                                .closePosition(
+                                        savedTrade.getSymbol(),
+                                        savedTrade.getQuantity())
+
+                                .doOnSuccess(v ->
+                                        log.info("Portfolio Updated Successfully : {}",
+                                                savedTrade.getSymbol()))
+
+                                .onErrorResume(ex -> {
+
+                                    log.error("Portfolio Update Failed", ex);
+
+                                    return Mono.empty();
+
+                                })
+
+                                .thenReturn(savedTrade)
+                )
+
+                .flatMap(savedTrade -> {
+
+                    NotificationRequest request =
+                            NotificationRequest.builder()
+                                    .channel(NotificationChannel.SLACK)
+                                    .title("TRADE CLOSED")
+                                    .message(
+                                            "Symbol: " + savedTrade.getSymbol()
+                                                    + ", Status: " + savedTrade.getStatus()
+                                                    + ", Entry: " + savedTrade.getEntryPrice()
+                                                    + ", Exit: " + savedTrade.getExitPrice()
+                                                    + ", PnL: " + savedTrade.getProfitLoss())
+                                    .build();
+
+                    return notificationClient
+
+                            .sendNotification(request)
+
+                            .doOnError(ex ->
+                                    log.error("Failed to send notification", ex))
+
+                            .onErrorResume(ex -> Mono.empty())
+
+                            .then();
 
                 })
-                .subscribeOn(Schedulers.boundedElastic())
-                .then();
+
+                .doOnSuccess(v -> {
+
+                    log.info("==========================================");
+                    log.info("Trade Closed Successfully");
+                    log.info("Symbol : {}", trade.getSymbol());
+                    log.info("==========================================");
+
+                });
+
     }
 
     private Double calculatePnL(PaperTrade trade) {
@@ -1616,7 +1672,9 @@ public class PaperTradingService {
         List<PaperTrade> trades = repository.findByStatusIn(
                         List.of(
                                 SignalStatus.TARGET_HIT,
-                                SignalStatus.STOP_LOSS_HIT
+                                SignalStatus.STOP_LOSS_HIT,
+                                SignalStatus.CLOSED,
+                                SignalStatus.MARKET_CLOSED
                         ))
                 .stream()
                 .sorted(Comparator.comparing(PaperTrade::getExitTime).reversed())

@@ -227,6 +227,81 @@ public final class AiDecisionPrompt {
             Do NOT explain after JSON.
             
             The response MUST strictly follow the JSON schema below.
+            
+            {
+              "decision": {
+                "recommendation": "BUY | SELL | HOLD | EXIT",
+                "tradeAllowed": true,
+                "confidence": 0,
+                "reasons": [
+                  "reason1",
+                  "reason2"
+                ]
+              },
+              "technicalAnalysis": {
+                "summary": "",
+                "strength": "",
+                "weakness": ""
+              },
+              "riskAnalysis": {
+                "riskLevel": "",
+                "riskScore": 0,
+                "message": ""
+              },
+              "newsAnalysis": {
+                "summary": "",
+                "sentiment": "",
+                "score": 0
+              },
+              "portfolioAnalysis": {
+                "totalInvested": 0,
+                "currentValue": 0,
+                "profitLoss": 0,
+                "riskLevel": "",
+                "healthScore": 0,
+                "healthStatus": ""
+              },
+              "executionPlan": {
+                   "entry": 245.35,
+                   "target": 251.20,
+                   "stopLoss": 242.80,
+                   "positionSize": 25,
+                   "holdingPeriod": "Intraday",
+                   "exitStrategy": "Target or Stop Loss"
+               },
+              "aiReasoning": ""
+            }
+            
+            Execution Plan Rules
+            
+            If recommendation is BUY or SELL:
+            
+            entry MUST equal the supplied Current Price.
+            
+            target MUST be calculated using a realistic intraday reward.
+            
+            stopLoss MUST be calculated using a realistic intraday risk.
+            
+            positionSize MUST be greater than zero.
+            
+            holdingPeriod MUST be "Intraday".
+            
+            exitStrategy MUST describe how to exit.
+            
+            Never return null for executionPlan values when recommendation is BUY or SELL.
+            
+            Only recommendation HOLD may return null execution values.
+            
+            The JSON structure is mandatory.
+            
+            Do NOT flatten the response.
+            
+            The recommendation, confidence,
+            tradeAllowed and reasons MUST be inside
+            the "decision" object.
+            
+            Never place them at the root level.
+            
             """;
 
 }

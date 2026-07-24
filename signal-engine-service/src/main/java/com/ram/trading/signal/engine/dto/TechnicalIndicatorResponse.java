@@ -23,5 +23,7 @@ public class TechnicalIndicatorResponse {
 
     private Double macd;
 
+    private Double signalLine;
+
     private Double volumeRatio;
 }

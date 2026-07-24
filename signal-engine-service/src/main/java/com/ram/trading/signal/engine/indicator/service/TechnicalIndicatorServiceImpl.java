@@ -26,35 +26,77 @@ public class TechnicalIndicatorServiceImpl
 
     private final IndicatorService indicatorService;
 
+
     @Override
     public Mono<TechnicalIndicatorResponse> calculate(String symbol) {
 
+        log.info("==================================================");
+        log.info("TECHNICAL INDICATOR CALCULATION STARTED");
+        log.info("Symbol : {}", symbol);
+        log.info("==================================================");
+
         return stockServiceClient
                 .getHistoricalPrices(symbol)
+
+                .doOnNext(price ->
+                        log.info("Historical Candle : Date={}, Close={}",
+                                price.getTradeDate(),
+                                price.getClosePrice()))
+
                 .collectList()
+
                 .flatMap(prices -> {
 
+                    log.info("Historical Candle Count : {}", prices.size());
+
                     if (prices.isEmpty()) {
+
                         log.warn("No historical candles found for {}", symbol);
+
                         return Mono.empty();
                     }
 
                     List<Candle> candles = toCandles(prices);
 
                     try {
-                        return Mono.just(buildResponse(symbol, candles));
+
+                        TechnicalIndicatorResponse response =
+                                buildResponse(symbol, candles);
+
+                        log.info("Technical Indicators Calculated Successfully");
+                        log.info("RSI      : {}", response.getRsi14());
+                        log.info("EMA20    : {}", response.getEma20());
+                        log.info("EMA50    : {}", response.getEma50());
+                        log.info("SMA20    : {}", response.getSma20());
+                        log.info("SMA50    : {}", response.getSma50());
+                        log.info("MACD     : {}", response.getMacd());
+
+                        return Mono.just(response);
 
                     } catch (IllegalArgumentException ex) {
 
-                        log.warn(
-                                "Skipping indicator calculation for {}. {}",
-                                symbol,
-                                ex.getMessage());
+                        log.error("Indicator Calculation Failed", ex);
 
                         return Mono.empty();
                     }
 
-                });
+                })
+
+                .doOnSuccess(response -> {
+
+                    if (response == null) {
+
+                        log.warn("TechnicalIndicatorService returned NULL/EMPTY");
+
+                    } else {
+
+                        log.info("TechnicalIndicatorService completed successfully.");
+                    }
+
+                })
+
+                .doOnTerminate(() ->
+                        log.info("TECHNICAL INDICATOR CALCULATION COMPLETED"));
     }
 
     private List<Candle> toCandles(
@@ -142,10 +184,20 @@ public class TechnicalIndicatorServiceImpl
 
         response.setMacd(macd.getMacd().doubleValue());
 
+        // NEW
+        response.setSignalLine(macd.getSignal().doubleValue());
+
         response.setClosePrice(
                 candles.get(candles.size() - 1)
                         .getClose()
                         .doubleValue());
+
+        log.info(
+                "MACD Debug -> Symbol={}, MACD={}, Signal={}, Histogram={}",
+                symbol,
+                macd.getMacd(),
+                macd.getSignal(),
+                macd.getHistogram());
 
         return response;
     }

@@ -3,12 +3,14 @@ package com.ram.trading.newsanalysis.client;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,26 +31,31 @@ public class GoogleNewsClientImpl implements GoogleNewsClient {
     @Override
     public Mono<List<String>> getLatestHeadlines(String symbol) {
 
-        String url = rssUrl.formatted(symbol);
+        String encodedSymbol =
+                URLEncoder.encode(symbol + " NSE India", StandardCharsets.UTF_8);
 
-        log.info("Fetching Google News RSS for {}", symbol);
+        String url = "https://news.google.com/rss/search?q=" + encodedSymbol
+                + "&hl=en-IN&gl=IN&ceid=IN:en";
 
-        return webClientBuilder.build()
+        log.info("Fetching Google News RSS");
+        log.info("URL : {}", url);
+
+        return webClientBuilder
+                .defaultHeader(HttpHeaders.USER_AGENT,
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
+                .defaultHeader(HttpHeaders.ACCEPT,
+                        "application/rss+xml, application/xml, text/xml")
+                .build()
                 .get()
                 .uri(url)
                 .retrieve()
                 .bodyToMono(String.class)
                 .map(this::parseHeadlines)
                 .doOnSuccess(headlines ->
-                        log.info("Fetched {} headlines for {}",
-                                headlines.size(),
-                                symbol))
+                        log.info("Fetched {} headlines for {}", headlines.size(), symbol))
                 .onErrorResume(ex -> {
                     log.error("Unable to fetch Google News", ex);
-                    return Mono.just(List.of(
-                            "No latest market news available."
-                    ));
-
+                    return Mono.just(List.of("No latest market news available."));
                 });
 
     }

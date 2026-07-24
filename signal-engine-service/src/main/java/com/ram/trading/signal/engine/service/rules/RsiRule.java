@@ -19,6 +19,7 @@ public class RsiRule implements SignalRule {
         if (rsi == null) {
             return RuleResult.builder()
                     .signal(SignalType.NEUTRAL)
+                    .ruleName(getRuleName())
                     .score(0)
                     .reason("RSI not available.")
                     .build();
@@ -28,6 +29,7 @@ public class RsiRule implements SignalRule {
             return RuleResult.builder()
                     .signal(SignalType.BUY)
                     .score(TradingConstants.RSI_SCORE)
+                    .ruleName(getRuleName())
                     .reason("RSI indicates oversold market.")
                     .build();
         }
@@ -35,6 +37,7 @@ public class RsiRule implements SignalRule {
         if (rsi > TradingConstants.RSI_OVERBOUGHT) {
             return RuleResult.builder()
                     .signal(SignalType.SELL)
+                    .ruleName(getRuleName())
                     .score(TradingConstants.RSI_SCORE)
                     .reason("RSI indicates overbought market.")
                     .build();
@@ -42,6 +45,7 @@ public class RsiRule implements SignalRule {
 
         return RuleResult.builder()
                 .signal(SignalType.NEUTRAL)
+                .ruleName(getRuleName())
                 .score(0)
                 .reason("RSI is neutral.")
                 .build();

@@ -12,6 +12,9 @@ public enum ExitReason {
 
     EMERGENCY,
 
-    AI_EXIT
+    AI_EXIT,
+
+    MARKET_CLOSE
+
 
 }

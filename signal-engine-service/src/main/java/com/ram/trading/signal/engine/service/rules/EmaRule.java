@@ -14,6 +14,7 @@ public class EmaRule implements SignalRule {
 
         if (request.getEma20() == null || request.getEma50() == null) {
             return RuleResult.builder()
+                    .ruleName(getRuleName())
                     .signal(SignalType.NEUTRAL)
                     .score(0)
                     .reason("EMA data unavailable.")
@@ -23,6 +24,7 @@ public class EmaRule implements SignalRule {
         if (request.getEma20() > request.getEma50()) {
 
             return RuleResult.builder()
+                    .ruleName(getRuleName())
                     .signal(SignalType.BUY)
                     .score(TradingConstants.EMA_SCORE)
                     .reason("Bullish EMA crossover.")
@@ -32,6 +34,7 @@ public class EmaRule implements SignalRule {
         if (request.getEma20() < request.getEma50()) {
 
             return RuleResult.builder()
+                    .ruleName(getRuleName())
                     .signal(SignalType.SELL)
                     .score(TradingConstants.EMA_SCORE)
                     .reason("Bearish EMA crossover.")
@@ -39,6 +42,7 @@ public class EmaRule implements SignalRule {
         }
 
         return RuleResult.builder()
+                .ruleName(getRuleName())
                 .signal(SignalType.NEUTRAL)
                 .score(0)
                 .reason("EMA trend is neutral.")

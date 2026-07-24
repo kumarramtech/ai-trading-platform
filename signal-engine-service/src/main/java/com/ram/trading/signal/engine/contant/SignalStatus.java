@@ -8,7 +8,9 @@ public enum SignalStatus {
 
     STOP_LOSS_HIT,
 
-    CLOSED
+    CLOSED,
+
+    MARKET_CLOSED
 
 
 }

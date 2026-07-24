@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class EngineeringFilterService {
 
-    private static final int MIN_AI_CONFIDENCE = 75;
+    private static final int MIN_AI_CONFIDENCE = 60;
 
     public boolean isEligibleForAI(
             TradingDecision decision){

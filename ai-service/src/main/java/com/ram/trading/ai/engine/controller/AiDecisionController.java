@@ -20,24 +20,6 @@ public class AiDecisionController {
     public AiDecisionResponse evaluate(
             @RequestBody TradingDecisionRequest request) {
 
-        /*Decision decision = Decision.builder()
-                .tradeAllowed(true)
-                .recommendation(AiRecommendation.BUY)
-                .confidence(90)
-                .decisionStrength("VERY_STRONG")
-                .build();
-
-        ExecutionPlan executionPlan = ExecutionPlan.builder()
-                .entry(2200.0)
-                .target(2230.0)
-                .stopLoss(2185.0)
-                .build();
-
-        return AiDecisionResponse.builder()
-                .decision(decision)
-                .executionPlan(executionPlan)
-                .build();*/
-
         return aiDecisionService.evaluate(request);
     }
 

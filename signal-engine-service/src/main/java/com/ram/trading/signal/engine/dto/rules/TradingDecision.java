@@ -21,4 +21,5 @@ public class TradingDecision {
 
     private List<String> reasons;
 
+    private List<RuleResult> ruleResults;
 }
