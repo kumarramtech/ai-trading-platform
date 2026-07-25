@@ -1,6 +1,9 @@
-package com.ram.trading.ai.engine.serviceimpl;
+package com.ram.trading.ai.engine.service.impl;
 
 
+import com.ram.trading.ai.engine.cache.CacheConstants;
+import com.ram.trading.ai.engine.cache.CacheKeyBuilder;
+import com.ram.trading.ai.engine.cache.RedisCacheService;
 import com.ram.trading.ai.engine.constant.AiRecommendation;
 import com.ram.trading.ai.engine.dto.AiDecisionResponse;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
@@ -13,8 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -26,13 +27,37 @@ public class AiDecisionServiceImpl implements AiDecisionService {
 
     private final AiDecisionResponseParser parser;
 
+    private final RedisCacheService redisCacheService;
+
     @Override
     public AiDecisionResponse evaluate(TradingDecisionRequest request) {
 
         log.info("Generating AI decision for {}",
                 request.getSignalRequest().getSymbol());
 
+        String cacheKey = CacheKeyBuilder.buildAiDecisionKey(request);
+
+        AiDecisionResponse cachedResponse =
+                redisCacheService.get(cacheKey, AiDecisionResponse.class);
+
+        if (cachedResponse != null) {
+
+            log.info("=========================================");
+            log.info("AI CACHE HIT");
+            log.info("KEY : {}", cacheKey);
+            log.info("Returning cached AI Decision");
+            log.info("=========================================");
+
+            return cachedResponse;
+        }
+
         try {
+
+            log.info("=========================================");
+            log.info("AI CACHE MISS");
+            log.info("KEY : {}", cacheKey);
+            log.info("Invoking OpenAI...");
+            log.info("=========================================");
 
             String prompt = promptBuilder.buildPrompt(request);
 
@@ -74,6 +99,11 @@ public class AiDecisionServiceImpl implements AiDecisionService {
                 log.info("Score     : {}", response.getNewsAnalysis().getScore());
                 log.info("================================");
             }
+
+            redisCacheService.put(
+                    cacheKey,
+                    response,
+                    CacheConstants.AI_DECISION_TTL);
 
             return response;
 

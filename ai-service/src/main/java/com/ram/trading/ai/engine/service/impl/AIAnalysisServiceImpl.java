@@ -1,4 +1,4 @@
-package com.ram.trading.ai.engine.serviceimpl;
+package com.ram.trading.ai.engine.service.impl;
 
 import com.ram.trading.ai.engine.constant.PromptConstants;
 import com.ram.trading.ai.engine.dto.*;
