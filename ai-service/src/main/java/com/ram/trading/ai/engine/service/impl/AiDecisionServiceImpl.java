@@ -8,6 +8,7 @@ import com.ram.trading.ai.engine.constant.AiRecommendation;
 import com.ram.trading.ai.engine.dto.AiDecisionResponse;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
 import com.ram.trading.ai.engine.dto.decision.Decision;
+import com.ram.trading.ai.engine.dto.execution.ExecutionPlan;
 import com.ram.trading.ai.engine.parser.AiDecisionResponseParser;
 import com.ram.trading.ai.engine.prompt.AiDecisionPromptBuilder;
 import com.ram.trading.ai.engine.service.AiDecisionService;
@@ -111,11 +112,80 @@ public class AiDecisionServiceImpl implements AiDecisionService {
 
             log.error("AI Decision Failed", ex);
 
-            return buildFallbackResponse();
+            if (ex.getMessage() != null &&
+                    ex.getMessage().contains("429")) {
+
+                log.warn("OpenAI quota exceeded. Using Engineering Decision.");
+
+                return buildFallbackResponse(request);
+            }
+
+            return buildSafeFallbackResponse();
         }
     }
 
-    private AiDecisionResponse buildFallbackResponse() {
+    private AiDecisionResponse buildFallbackResponse(
+            TradingDecisionRequest request) {
+
+        AiDecisionResponse response = new AiDecisionResponse();
+
+        Decision decision = new Decision();
+
+        AiRecommendation recommendation =
+                AiRecommendation.valueOf(
+                        request.getTechnicalDecision().getSignal().name());
+
+        double currentPrice =
+                request.getSignalRequest().getCurrentPrice();
+
+        decision.setRecommendation(recommendation);
+        decision.setTradeAllowed(true);
+        decision.setConfidence(
+                request.getTechnicalDecision().getConfidence());
+        decision.setReason(
+                "OpenAI unavailable. Using Engineering Decision.");
+
+        response.setDecision(decision);
+
+        ExecutionPlan executionPlan = new ExecutionPlan();
+
+        executionPlan.setEntry(currentPrice);
+
+        switch (recommendation) {
+
+            case BUY -> {
+                executionPlan.setTarget(
+                        currentPrice * 1.02);      // +2%
+                executionPlan.setStopLoss(
+                        currentPrice * 0.99);      // -1%
+            }
+
+            case SELL -> {
+                executionPlan.setTarget(
+                        currentPrice * 0.98);      // -2%
+                executionPlan.setStopLoss(
+                        currentPrice * 1.01);      // +1%
+            }
+
+            default -> {
+                executionPlan.setTarget(currentPrice);
+                executionPlan.setStopLoss(currentPrice);
+            }
+        }
+
+        executionPlan.setHoldingPeriod("INTRADAY");
+        executionPlan.setExitStrategy("Engineering Fallback");
+        executionPlan.setPositionSize(1);
+
+        response.setExecutionPlan(executionPlan);
+
+        response.setAiReasoning(
+                "OpenAI unavailable (429). Engineering decision used.");
+
+        return response;
+    }
+
+    private AiDecisionResponse buildSafeFallbackResponse() {
 
         AiDecisionResponse response = new AiDecisionResponse();
 
@@ -124,9 +194,13 @@ public class AiDecisionServiceImpl implements AiDecisionService {
         decision.setRecommendation(AiRecommendation.HOLD);
         decision.setTradeAllowed(false);
         decision.setConfidence(0);
-        decision.setReason("AI Service Unavailable. Using Safe Fallback Decision.");
+        decision.setReason(
+                "Unexpected AI error. Trade blocked as a safety measure.");
 
         response.setDecision(decision);
+
+        response.setAiReasoning(
+                "Safe fallback response generated due to unexpected AI failure.");
 
         return response;
     }

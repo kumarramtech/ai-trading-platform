@@ -18,6 +18,7 @@ public class StrategyStatisticsServiceImpl  implements StrategyStatisticsService
         statistics.setStocksScanned(
                 statistics.getStocksScanned() + 1);
 
+        // Final Signal Statistics
         switch (report.getFinalSignal()) {
 
             case BUY ->
@@ -33,6 +34,58 @@ public class StrategyStatisticsServiceImpl  implements StrategyStatisticsService
                             statistics.getHoldSignals() + 1);
         }
 
+        // EMA Statistics
+        if (report.getEmaSignal() != null) {
+            switch (report.getEmaSignal()) {
+
+                case BUY ->
+                        statistics.setEmaBuy(
+                                statistics.getEmaBuy() + 1);
+
+                case SELL ->
+                        statistics.setEmaSell(
+                                statistics.getEmaSell() + 1);
+
+                default -> {
+                }
+            }
+        }
+
+        // MACD Statistics
+        if (report.getMacdSignal() != null) {
+            switch (report.getMacdSignal()) {
+
+                case BUY ->
+                        statistics.setMacdBuy(
+                                statistics.getMacdBuy() + 1);
+
+                case SELL ->
+                        statistics.setMacdSell(
+                                statistics.getMacdSell() + 1);
+
+                default -> {
+                }
+            }
+        }
+
+        // RSI Statistics
+        if (report.getRsiSignal() != null) {
+            switch (report.getRsiSignal()) {
+
+                case BUY ->
+                        statistics.setRsiBuy(
+                                statistics.getRsiBuy() + 1);
+
+                case SELL ->
+                        statistics.setRsiSell(
+                                statistics.getRsiSell() + 1);
+
+                default -> {
+                }
+            }
+        }
+
+        // Engineering Filter Statistics
         if (Boolean.TRUE.equals(report.isEngineeringFilterPassed())) {
 
             statistics.setEngineeringPassed(
@@ -43,7 +96,6 @@ public class StrategyStatisticsServiceImpl  implements StrategyStatisticsService
             statistics.setEngineeringRejected(
                     statistics.getEngineeringRejected() + 1);
         }
-
     }
 
     @Override

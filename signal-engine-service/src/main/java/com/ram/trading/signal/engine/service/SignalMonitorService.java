@@ -7,6 +7,7 @@ import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.TradingSignalRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -14,6 +15,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SignalMonitorService {
 
     private final TradingSignalRepository repository;
@@ -31,13 +33,20 @@ public class SignalMonitorService {
         for (TradingSignalEntity signal : signals) {
 
             boolean updated = false;
-            StockResponse stockResponse = marketDataProvider.getStockPrice(signal.getSymbol()).block();
+            StockResponse stockResponse = null;
+            try {
+                stockResponse = marketDataProvider.getStockPrice(signal.getSymbol()).block();
+            }
+            catch (Exception ex) {
+                log.error("Unable to fetch price for {}", signal.getSymbol(), ex);
+                continue;
+            }
             if (stockResponse == null) {
                 continue;
             }
             Double currentPrice = stockResponse.getPrice();
 
-            System.out.println(
+            log.info(
                     "Entry=" + signal.getEntryPrice()
                             + ", Target=" + signal.getTargetPrice()
                             + ", StopLoss=" + signal.getStopLoss()
@@ -105,7 +114,7 @@ public class SignalMonitorService {
             }
 
             if (updated) {
-                System.out.println(
+                log.info(
                         "Signal Closed: "
                                 + signal.getSymbol()
                                 + " Status="

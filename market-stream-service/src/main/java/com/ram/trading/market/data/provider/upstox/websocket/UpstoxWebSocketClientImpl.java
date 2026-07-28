@@ -46,9 +46,8 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
                     && !webSocket.isInputClosed()
                     && !webSocket.isOutputClosed()) {
 
-                log.info("=======================================");
                 log.info("Already connected to Upstox Market Feed.");
-                log.info("=======================================");
+
                 return;
             }
 
@@ -63,9 +62,7 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
                 webSocket = null;
             }
 
-            log.info("=======================================");
             log.info("Connecting to Upstox Market Feed...");
-            log.info("=======================================");
 
             FeedAuthorizationResponse response =
                     marketFeedClient.authorizeFeed().block();
@@ -91,9 +88,7 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
                             new UpstoxWebSocketListener(parser))
                     .join();
 
-            log.info("=======================================");
             log.info("WebSocket Connection Established.");
-            log.info("=======================================");
 
             List<String> instrumentKeys =
                     stockInstrumentClient
@@ -170,10 +165,8 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
 
             String json = objectMapper.writeValueAsString(request);
 
-            log.info("=======================================");
             log.info("Sending Subscription Request");
             log.info("{}", json);
-            log.info("=======================================");
 
             ByteBuffer buffer =
                     ByteBuffer.wrap(

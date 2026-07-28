@@ -19,9 +19,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
     @Override
     public void onOpen(WebSocket webSocket) {
 
-        log.info("=======================================");
         log.info("Connected to Upstox Market Feed");
-        log.info("=======================================");
 
         webSocket.request(1);
 
@@ -82,11 +80,9 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
                                       int statusCode,
                                       String reason) {
 
-        log.info("=======================================");
         log.info("WebSocket Closed");
         log.info("Status Code : {}", statusCode);
         log.info("Reason      : {}", reason);
-        log.info("=======================================");
 
         return WebSocket.Listener.super.onClose(webSocket,
                 statusCode,

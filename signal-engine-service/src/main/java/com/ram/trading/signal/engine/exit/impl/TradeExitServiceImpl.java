@@ -9,6 +9,7 @@ import com.ram.trading.signal.engine.exit.ExitOrchestrator;
 import com.ram.trading.signal.engine.exit.TradeExitService;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.service.PaperTradingService;
+import com.ram.trading.signal.engine.service.TrailingStopService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,8 @@ public class TradeExitServiceImpl implements TradeExitService {
     private final PaperTradeRepository paperTradeRepository;
     private final ExitOrchestrator exitOrchestrator;
     private final PaperTradingService paperTradingService;
+
+    private final TrailingStopService trailingStopService;
 
     @Override
     public Mono<Void> evaluateExit(Tick tick) {
@@ -51,31 +54,30 @@ public class TradeExitServiceImpl implements TradeExitService {
         log.info("Stop Loss : {}", trade.getStopLoss());
         log.info("Quantity : {}", trade.getQuantity());
 
-        OpenPosition position = map(trade);
+        return trailingStopService
+                .updateTrailingStop(trade, tick)
 
-        log.info("Calling Exit Orchestrator...");
+                .flatMap(updatedTrade -> {
 
-        ExitDecision decision = exitOrchestrator.evaluate(position, tick);
+                    OpenPosition position = map(updatedTrade);
 
-        log.info("Exit Decision : {}", decision);
+                    ExitDecision decision =
+                            exitOrchestrator.evaluate(position, tick);
 
-        if (!decision.isExit()) {
+                    log.info("Exit Decision : {}", decision);
 
-            log.info("Trade should continue. No Exit.");
+                    if (!decision.isExit()) {
 
-            return Mono.empty();
-        }
+                        log.info("Trade should continue.");
 
-        log.info("==========================================");
-        log.info("EXIT TRIGGERED");
-        log.info("Reason : {}", decision.getReason());
-        log.info("Exit Price : {}", tick.getLastTradedPrice());
-        log.info("==========================================");
+                        return Mono.empty();
+                    }
 
-        return paperTradingService.closeTrade(
-                trade,
-                decision,
-                tick);
+                    return paperTradingService.closeTrade(
+                            updatedTrade,
+                            decision,
+                            tick);
+                });
     }
 
     private OpenPosition map(PaperTrade trade) {
@@ -85,7 +87,7 @@ public class TradeExitServiceImpl implements TradeExitService {
                 .signal(trade.getSignal())
                 .entryPrice(trade.getEntryPrice())
                 .targetPrice(trade.getTargetPrice())
-                .stopLoss(trade.getStopLoss())
+                .stopLoss(trade.getCurrentStopLoss())
                 .quantity(trade.getQuantity())
                 .build();
     }

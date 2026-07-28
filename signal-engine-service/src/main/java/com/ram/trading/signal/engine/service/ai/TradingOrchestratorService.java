@@ -43,10 +43,7 @@ public class TradingOrchestratorService {
     public Mono<AiDecisionResponse> executeTrade(
             SignalGenerationRequest signalRequest) {
 
-        log.info("======================================================");
-        log.info("Starting AI Trading Pipeline for {}",
-                signalRequest.getSymbol());
-        log.info("======================================================");
+        log.info("Starting AI Trading Pipeline for {}", signalRequest.getSymbol());
 
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);

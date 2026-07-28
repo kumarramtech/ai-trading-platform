@@ -35,10 +35,8 @@ public class MarketScannerService {
 
         List<WatchlistStock> stocks = watchlistRepository.findByActiveTrue();
 
-        log.info("==================================================");
         log.info("Total Watchlist Stocks : {}", stocks.size());
         log.info("AI Scan Limit          : {}", maxSymbolsPerScan);
-        log.info("==================================================");
 
         stocks.stream()
                 .limit(maxSymbolsPerScan)
@@ -47,9 +45,7 @@ public class MarketScannerService {
 
     private void scanSymbol(String symbol) {
 
-        log.info("=======================================");
         log.info("Scanning Symbol : {}", symbol);
-        log.info("=======================================");
 
         signalGenerationService
                 .generateSignal(symbol)

@@ -57,6 +57,8 @@ public class PaperTradingService {
 
     private final PortfolioClient portfolioClient;
 
+    private final TrailingStopService trailingStopService;
+
     @Value("${trading.capital-per-trade}")
     private double capitalPerTrade;
 
@@ -68,7 +70,7 @@ public class PaperTradingService {
             TechnicalIndicatorResponse indicatorResponse) {
 
         log.info("=================================");
-        log.info("ENTERED PAPER TRADE SERVICE");
+        log.debug("Entering PaperTradingService");
         log.info("Symbol      : {}", signal.getSymbol());
         log.info("Signal      : {}", signal.getSignal());
         log.info("Entry Price : {}", signal.getEntryPrice());
@@ -80,78 +82,40 @@ public class PaperTradingService {
                             + signal.getSymbol());
         }
 
-        log.info("Signal Generated = {}", signal.getSignal());
+        log.debug("Signal Generated = {}", signal.getSignal());
 
         // Skip HOLD signals immediately
-        if (SignalType.HOLD.name().equals(signal.getSignal())) {
-
-            log.info("HOLD Signal. Trade creation skipped.");
-
+        if (!validateTradeCreation(signal)) {
             return;
         }
 
-        // Prevent duplicate OPEN trades
-        PaperTrade existingTrade =
-                repository
-                        .findTopBySymbolAndStatusOrderByEntryTimeDesc(
-                                signal.getSymbol(),
-                                SignalStatus.OPEN)
-                        .orElse(null);
 
-        if (existingTrade != null) {
+        log.debug("Creating New Paper Trade...");
 
-            log.info("======================================");
-            log.info("Open Trade Already Exists");
-            log.info("Skipping Trade Creation");
-            log.info("Symbol : {}", signal.getSymbol());
-            log.info("Trade Id : {}", existingTrade.getId());
-            log.info("======================================");
+        int quantity = calculateQuantity(signal);
 
-            return;
-        }
-
-        log.info("Creating New Paper Trade...");
-
-        int quantity =
-                (int) (capitalPerTrade
-                        / signal.getEntryPrice());
-
-        log.info("quantity ="+quantity);
         if (quantity <= 0) {
             return;
         }
 
-        double investmentAmount = quantity * signal.getEntryPrice();
-
-        double usedCapital = repository.findByStatus(SignalStatus.OPEN)
-                .stream()
-                .mapToDouble(PaperTrade::getInvestedAmount)
-                .sum();
-
-        double availableCapital = totalCapital - usedCapital;
-
-        log.info("======================================");
-        log.info("Total Capital     : {}", totalCapital);
-        log.info("Used Capital      : {}", usedCapital);
-        log.info("Available Capital : {}", availableCapital);
-        log.info("Required Capital  : {}", investmentAmount);
-        log.info("======================================");
-
-        if (availableCapital < investmentAmount) {
+        if (!hasSufficientCapital(
+                quantity,
+                signal.getEntryPrice())) {
 
             log.warn("======================================");
-            log.warn("Trade Skipped - Insufficient Capital");
+            log.warn("Insufficient Capital");
             log.warn("Symbol : {}", signal.getSymbol());
-            log.warn("Available : {}", availableCapital);
-            log.warn("Required  : {}", investmentAmount);
             log.warn("======================================");
 
             return;
         }
 
-        log.info("Confidence = {}", signal.getConfidence());
+        double investmentAmount =
+                quantity * signal.getEntryPrice();
 
-        log.info(
+        log.debug("Confidence = {}", signal.getConfidence());
+
+        log.debug(
                 "Creating Trade => Entry={}, Target={}, Stop={}",
                 signal.getEntryPrice(),
                 signal.getTargetPrice(),
@@ -239,6 +203,10 @@ public class PaperTradingService {
                         .macd(indicatorResponse.getMacd())
                         .targetPrice(round(signal.getTargetPrice()))
                         .stopLoss(round(signal.getStopLoss()))
+                        .initialStopLoss(round(signal.getStopLoss()))
+                        .currentStopLoss(round(signal.getStopLoss()))
+                        .trailingStep(0)
+                        .lastTrailingUpdate(LocalDateTime.now())
                         .status(SignalStatus.OPEN)
                         .confidence(signal.getConfidence())
                         .entryTime(LocalDateTime.now())
@@ -260,7 +228,7 @@ public class PaperTradingService {
                 })
                 .subscribe();
 
-        log.info(
+        log.debug(
                 "Saved Trade => target={}, stop={}",
                 saved.getTargetPrice(),
                 saved.getStopLoss());
@@ -460,39 +428,44 @@ public class PaperTradingService {
                 .build();
     }
 
-    public void closeTrade(
-            Long signalId,
-            Double exitPrice,
-            SignalStatus status) {
+    public Mono<Void> closeTrade(Long signalId,Double exitPrice,SignalStatus status) {
 
         PaperTrade trade =
-                repository
-                        .findBySignalIdAndStatus(
-                                signalId,
-                                SignalStatus.OPEN)
+                repository.findBySignalIdAndStatus(signalId,SignalStatus.OPEN)
                         .orElse(null);
 
         if (trade == null) {
-            return;
+
+            log.warn("Trade Not Found : {}", signalId);
+
+            return Mono.empty();
+        }
+
+        if (trade.getStatus() != SignalStatus.OPEN) {
+
+            log.warn("==========================================");
+            log.warn("Trade Already Closed");
+            log.warn("Trade Id : {}", trade.getId());
+            log.warn("Status   : {}", trade.getStatus());
+            log.warn("==========================================");
+
+            return Mono.empty();
         }
 
         trade.setExitPrice(exitPrice);
 
         double profitLoss;
 
-        if (SignalType.SELL.name()
-                .equals(trade.getSignal())) {
+        if (SignalType.SELL.name().equalsIgnoreCase(trade.getSignal())) {
 
             profitLoss =
-                    (trade.getEntryPrice()
-                            - exitPrice)
+                    (trade.getEntryPrice() - exitPrice)
                             * trade.getQuantity();
 
         } else {
 
             profitLoss =
-                    (exitPrice
-                            - trade.getEntryPrice())
+                    (exitPrice - trade.getEntryPrice())
                             * trade.getQuantity();
         }
 
@@ -500,56 +473,64 @@ public class PaperTradingService {
 
         trade.setStatus(status);
 
-        trade.setExitTime(
-                LocalDateTime.now());
+        trade.setExitTime(LocalDateTime.now());
 
-        log.info("Closing Trade for signalId="  + signalId);
+        return Mono.fromCallable(() -> repository.save(trade))
+                .subscribeOn(Schedulers.boundedElastic())
 
-        log.info( "Trade Found="  + trade.getId());
+                .flatMap(savedTrade ->
 
-        log.info( "Profit/Loss=" + profitLoss);
+                        portfolioClient
+                                .closePosition(
+                                        savedTrade.getSymbol(),
+                                        savedTrade.getQuantity())
 
-        PaperTrade savedTrade =
-                repository.save(trade);
+                                .doOnSuccess(v ->
+                                        log.info(
+                                                "Portfolio Updated Successfully : {}",
+                                                savedTrade.getSymbol()))
 
-        portfolioClient
-                .closePosition(
-                        savedTrade.getSymbol(),
-                        savedTrade.getQuantity())
-                .doOnSuccess(v ->
-                        log.info("Portfolio Updated Successfully : {}",
-                                savedTrade.getSymbol()))
-                .onErrorResume(ex -> {
-                    log.error("Portfolio Update Failed", ex);
-                    return Mono.empty();
+                                .onErrorResume(ex -> {
+                                    log.error(
+                                            "Portfolio Update Failed",
+                                            ex);
+                                    return Mono.empty();
+                                })
+
+                                .thenReturn(savedTrade)
+                )
+
+                .flatMap(savedTrade -> {
+
+                    NotificationRequest request =
+                            NotificationRequest.builder()
+                                    .channel(NotificationChannel.SLACK)
+                                    .title("TRADE CLOSED")
+                                    .message(
+                                            "Symbol: " + savedTrade.getSymbol()
+                                                    + ", Status: " + savedTrade.getStatus()
+                                                    + ", Entry: " + savedTrade.getEntryPrice()
+                                                    + ", Exit: " + savedTrade.getExitPrice()
+                                                    + ", PnL: " + savedTrade.getProfitLoss())
+                                    .build();
+
+                    return notificationClient
+                            .sendNotification(request)
+                            .doOnError(ex ->
+                                    log.error(
+                                            "Failed to send notification",
+                                            ex))
+                            .onErrorResume(ex -> Mono.empty())
+                            .then();
                 })
-                .subscribe();
 
-        log.info("Trade Closed Successfully");
-        log.info("Trade Id : {}", savedTrade.getId());
+                .doOnSuccess(v ->
 
-        NotificationRequest request =
-                NotificationRequest.builder()
-                        .channel(NotificationChannel.SLACK)
-                        .title("TRADE CLOSED")
-                        .message(
-                                "Symbol: " + trade.getSymbol()
-                                        + ", Status: " + status
-                                        + ", Entry: "
-                                        + trade.getEntryPrice()
-                                        + ", Exit: "
-                                        + exitPrice
-                                        + ", PnL: "
-                                        + profitLoss)
-                        .build();
-
-        notificationClient
-                .sendNotification(request)
-                .doOnError(error ->
-                        log.error(
-                                "Failed to send notification",
-                                error))
-                .subscribe();
+                        log.info(
+                                "Trade Closed | Symbol={} | Status={} | P/L={}",
+                                trade.getSymbol(),
+                                trade.getStatus(),
+                                trade.getProfitLoss()));
     }
 
     public List<PaperTrade> getHistory() {
@@ -1554,20 +1535,16 @@ public class PaperTradingService {
             Tick tick) {
 
         log.info("==========================================");
-        log.info("CLOSING PAPER TRADE");
+        log.info("Trade Closing.......");
         log.info("Symbol : {}", trade.getSymbol());
         log.info("Entry Price : {}", trade.getEntryPrice());
         log.info("Exit Price : {}", tick.getLastTradedPrice());
 
         if (decision.getReason() == ExitReason.TARGET) {
-
             trade.setStatus(SignalStatus.TARGET_HIT);
-
         }
         else if (decision.getReason() == ExitReason.STOP_LOSS) {
-
             trade.setStatus(SignalStatus.STOP_LOSS_HIT);
-
         }
         else if (decision.getReason() == ExitReason.MARKET_CLOSE) {
             trade.setStatus(SignalStatus.MARKET_CLOSED);
@@ -1603,13 +1580,9 @@ public class PaperTradingService {
                                                 savedTrade.getSymbol()))
 
                                 .onErrorResume(ex -> {
-
                                     log.error("Portfolio Update Failed", ex);
-
                                     return Mono.empty();
-
                                 })
-
                                 .thenReturn(savedTrade)
                 )
 
@@ -1642,10 +1615,12 @@ public class PaperTradingService {
 
                 .doOnSuccess(v -> {
 
-                    log.info("==========================================");
-                    log.info("Trade Closed Successfully");
-                    log.info("Symbol : {}", trade.getSymbol());
-                    log.info("==========================================");
+                    log.info(
+                            "Trade Closed | Symbol={} | Status={} | P/L={}",
+                            trade.getSymbol(),
+                            trade.getStatus(),
+                            trade.getProfitLoss()
+                    );
 
                 });
 
@@ -1665,6 +1640,82 @@ public class PaperTradingService {
                 * trade.getQuantity();
     }
 
+    private boolean validateTradeCreation(
+            TradingSignalEntity signal) {
+
+        // Skip HOLD signals
+        if (SignalType.HOLD.name().equalsIgnoreCase(signal.getSignal())) {
+
+            log.info("======================================");
+            log.info("Skipping HOLD Signal");
+            log.info("Symbol : {}", signal.getSymbol());
+            log.info("======================================");
+
+            return false;
+        }
+
+        // Prevent duplicate OPEN trades for the same symbol
+        PaperTrade existingTrade =
+                repository.findTopBySymbolAndStatusOrderByEntryTimeDesc(
+                                signal.getSymbol(),
+                                SignalStatus.OPEN)
+                        .orElse(null);
+
+        if (existingTrade != null) {
+
+            log.info("======================================");
+            log.info("Open Trade Already Exists");
+            log.info("Symbol   : {}", signal.getSymbol());
+            log.info("Trade Id : {}", existingTrade.getId());
+            log.info("======================================");
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private int calculateQuantity(
+            TradingSignalEntity signal) {
+
+        int quantity =
+                (int) (capitalPerTrade
+                        / signal.getEntryPrice());
+
+        log.info("Calculated Quantity : {}",
+                quantity);
+
+        return Math.max(quantity, 0);
+    }
+
+    private boolean hasSufficientCapital(
+            int quantity,
+            double entryPrice) {
+
+        double investmentAmount =
+                quantity * entryPrice;
+
+        double usedCapital =
+                repository.findByStatus(SignalStatus.OPEN)
+                        .stream()
+                        .mapToDouble(
+                                PaperTrade::getInvestedAmount)
+                        .sum();
+
+        double availableCapital =
+                totalCapital - usedCapital;
+
+
+
+        log.info("======================================");
+        log.info("Available Capital : {}",
+                availableCapital);
+        log.info("Required Capital : {}",
+                investmentAmount);
+        log.info("======================================");
+
+        return availableCapital >= investmentAmount;
+    }
 
 
     public ClosedPositionResponse getClosedPositions() {

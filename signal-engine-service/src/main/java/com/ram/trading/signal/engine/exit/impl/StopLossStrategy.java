@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.exit.impl;
 
+import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.market.*;
 import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.exit.ExitType;
@@ -16,14 +17,27 @@ public class StopLossStrategy implements ExitStrategy {
     public ExitDecision evaluate(OpenPosition position,
                                  Tick tick) {
 
-        if (tick.getLastTradedPrice().compareTo(position.getStopLoss()) <= 0) {
+        Double currentPrice = tick.getLastTradedPrice();
+
+        boolean stopLossHit;
+
+        if (SignalType.BUY.name().equalsIgnoreCase(position.getSignal())) {
+
+            stopLossHit = currentPrice <= position.getStopLoss();
+
+        } else {
+
+            stopLossHit = currentPrice >= position.getStopLoss();
+        }
+
+        if (stopLossHit) {
 
             log.info("Stop Loss Triggered for {}", position.getSymbol());
 
             return ExitDecision.builder()
                     .exit(true)
                     .reason(ExitReason.STOP_LOSS)
-                    .exitPrice(tick.getLastTradedPrice())
+                    .exitPrice(currentPrice)
                     .exitType(ExitType.STOP_LOSS)
                     .build();
         }

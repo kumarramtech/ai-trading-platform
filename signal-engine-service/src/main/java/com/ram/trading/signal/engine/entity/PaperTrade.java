@@ -56,4 +56,12 @@ public class PaperTrade {
     private Double targetPrice;
 
     private Double stopLoss;
+
+    private Double initialStopLoss;
+
+    private Double currentStopLoss;
+
+    private Integer trailingStep;
+
+    private LocalDateTime lastTrailingUpdate;
 }
