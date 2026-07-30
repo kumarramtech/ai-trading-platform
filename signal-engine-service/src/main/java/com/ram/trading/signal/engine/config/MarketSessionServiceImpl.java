@@ -16,6 +16,24 @@ public class MarketSessionServiceImpl implements MarketSessionService {
 
     private final MarketSessionProperties properties;
 
+    private ZoneId getZoneId() {
+        return ZoneId.of(properties.getTimezone());
+    }
+
+    private LocalTime now() {
+        return LocalTime.now(getZoneId());
+    }
+
+    private boolean isWeekend() {
+
+        LocalDate today = LocalDate.now(getZoneId());
+
+        DayOfWeek day = today.getDayOfWeek();
+
+        return day == DayOfWeek.SATURDAY
+                || day == DayOfWeek.SUNDAY;
+    }
+
     @Override
     public boolean isMarketOpen() {
 
@@ -23,37 +41,78 @@ public class MarketSessionServiceImpl implements MarketSessionService {
             return true;
         }
 
-        ZoneId zoneId = ZoneId.of(properties.getTimezone());
-
-        LocalDate today = LocalDate.now(zoneId);
-        LocalTime now = LocalTime.now(zoneId);
-
-        DayOfWeek day = today.getDayOfWeek();
-
-        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
+        if (isWeekend()) {
 
             log.info("Market Closed : Weekend");
 
             return false;
         }
 
-        LocalTime open = LocalTime.parse(properties.getOpenTime());
-        LocalTime close = LocalTime.parse(properties.getCloseTime());
+        LocalTime currentTime = now();
 
-        boolean openNow =
-                !now.isBefore(open)
-                        && !now.isAfter(close);
+        LocalTime marketOpen =
+                LocalTime.parse(properties.getOpen());
 
-        if (!openNow) {
+        LocalTime marketEnd =
+                LocalTime.parse(properties.getEnd());
 
-            log.info("Market Closed : Current Time {}", now);
+        boolean marketOpenNow =
+                !currentTime.isBefore(marketOpen)
+                        && currentTime.isBefore(marketEnd);
+
+        if (!marketOpenNow) {
+            log.info("Market Closed : {}", currentTime);
         }
 
-        return openNow;
+        return marketOpenNow;
     }
 
     @Override
     public boolean isTradingAllowed() {
-        return isMarketOpen();
+
+        if (!isMarketOpen()) {
+            return false;
+        }
+
+        LocalTime currentTime = now();
+
+        LocalTime entryCutoff =
+                LocalTime.parse(properties.getEntryCutoff());
+
+        return currentTime.isBefore(entryCutoff);
+    }
+
+    @Override
+    public boolean shouldForceCloseTrades() {
+
+        if (!isMarketOpen()) {
+            return false;
+        }
+
+        LocalTime currentTime = now();
+
+        LocalTime forceClose =
+                LocalTime.parse(properties.getClose());
+
+        LocalTime marketEnd =
+                LocalTime.parse(properties.getEnd());
+
+        return !currentTime.isBefore(forceClose)
+                && currentTime.isBefore(marketEnd);
+    }
+
+    @Override
+    public boolean isMarketClosed() {
+
+        if (isWeekend()) {
+            return true;
+        }
+
+        LocalTime currentTime = now();
+
+        LocalTime marketEnd =
+                LocalTime.parse(properties.getEnd());
+
+        return !currentTime.isBefore(marketEnd);
     }
 }

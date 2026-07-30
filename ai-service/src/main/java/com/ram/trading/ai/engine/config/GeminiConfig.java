@@ -1,4 +1,3 @@
-/*
 package com.ram.trading.ai.engine.config;
 
 import org.springframework.ai.chat.client.ChatClient;
@@ -7,12 +6,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-public class AIConfig {
+public class GeminiConfig {
 
-    @Bean
-    ChatClient chatClient(
-            ChatClient.Builder builder) {
+    @Bean("geminiChatClient")
+    public ChatClient geminiChatClient(GoogleGenAiChatModel chatModel) {
 
-        return builder.build();
+        return ChatClient.builder(chatModel)
+                .build();
     }
-}*/
+
+}

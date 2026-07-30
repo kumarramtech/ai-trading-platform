@@ -9,12 +9,12 @@ import com.ram.trading.ai.engine.dto.AiDecisionResponse;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
 import com.ram.trading.ai.engine.dto.decision.Decision;
 import com.ram.trading.ai.engine.dto.execution.ExecutionPlan;
+import com.ram.trading.ai.engine.gateway.AIGatewayService;
 import com.ram.trading.ai.engine.parser.AiDecisionResponseParser;
 import com.ram.trading.ai.engine.prompt.AiDecisionPromptBuilder;
 import com.ram.trading.ai.engine.service.AiDecisionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AiDecisionServiceImpl implements AiDecisionService {
 
-    private final ChatClient chatClient;
+    private final AIGatewayService aiGatewayService;
 
     private final AiDecisionPromptBuilder promptBuilder;
 
@@ -57,17 +57,15 @@ public class AiDecisionServiceImpl implements AiDecisionService {
             log.info("=========================================");
             log.info("AI CACHE MISS");
             log.info("KEY : {}", cacheKey);
-            log.info("Invoking OpenAI...");
+            log.info("Invoking LLM Gateway...");
             log.info("=========================================");
 
             String prompt = promptBuilder.buildPrompt(request);
 
             log.debug("Prompt Generated Successfully.");
 
-            String aiResponse = chatClient.prompt()
-                    .user(prompt)
-                    .call()
-                    .content();
+            String aiResponse =
+                    aiGatewayService.analyze(prompt);
 
             log.info("AI RAW RESPONSE:\n{}", aiResponse);
 

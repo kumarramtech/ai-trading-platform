@@ -2,10 +2,10 @@ package com.ram.trading.ai.engine.service.impl;
 
 import com.ram.trading.ai.engine.constant.PromptConstants;
 import com.ram.trading.ai.engine.dto.*;
+import com.ram.trading.ai.engine.gateway.AIGatewayService;
 import com.ram.trading.ai.engine.service.AIAnalysisService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -17,7 +17,7 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
 
 
 
-    private final ChatClient chatClient;
+    private final AIGatewayService aiGatewayService;
     @Override
     public SignalExplanationResponse explainSignal(
             SignalExplanationRequest request) {
@@ -34,11 +34,7 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                                 request.getMacd());
 
 
-        String explanation =
-                chatClient.prompt()
-                        .user(prompt)
-                        .call()
-                        .content();
+        String explanation = aiGatewayService.analyze(prompt);
 
         return SignalExplanationResponse.builder()
                 .symbol(request.getSymbol())
@@ -67,11 +63,7 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                                 request.getEma50(),
                                 request.getMacd());
 
-        String review =
-                chatClient.prompt()
-                        .user(prompt)
-                        .call()
-                        .content();
+        String review = aiGatewayService.analyze(prompt);
 
         return TradeReviewResponse.builder()
                 .tradeId(request.getTradeId())
@@ -124,11 +116,7 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
         }
 
         String prompt = PromptConstants.STRATEGY_RESPONSE_PROMPT.formatted(tradeData);
-        String review =
-                chatClient.prompt()
-                        .user(prompt)
-                        .call()
-                        .content();
+        String review =aiGatewayService.analyze(prompt);
 
         return StrategyReviewResponse.builder()
                 .totalTrades(trades.size())
@@ -153,11 +141,7 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                         request.getEma50(),
                         request.getMacd());
 
-        String analysis =
-                chatClient.prompt()
-                        .user(prompt)
-                        .call()
-                        .content();
+        String analysis =aiGatewayService.analyze(prompt);
 
         String riskLevel =
                 request.getConfidence() >= 70

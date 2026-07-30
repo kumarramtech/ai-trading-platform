@@ -6,6 +6,7 @@ import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.repo.TradingSignalRepository;
+import com.ram.trading.signal.engine.util.TradingSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,8 +25,17 @@ public class SignalMonitorService {
 
     private final PaperTradingService paperTradingService;
 
+    private final TradingSessionService tradingSessionService;
+
 
     public void checkOpenSignals() {
+
+        if (!tradingSessionService.isMarketOpen()) {
+
+            log.debug("Market closed. Skipping signal monitoring.");
+
+            return;
+        }
 
         List<TradingSignalEntity> signals =
                 repository.findByStatus(SignalStatus.OPEN);

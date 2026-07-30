@@ -7,6 +7,7 @@ import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.rules.RuleResult;
 import com.ram.trading.signal.engine.service.EngineeringFilterService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingDecisionMapper;
+import com.ram.trading.signal.engine.service.context.TradingContext;
 import com.ram.trading.signal.engine.service.context.TradingContextService;
 import com.ram.trading.signal.engine.service.rules.TradingDecisionEngine;
 import lombok.RequiredArgsConstructor;
@@ -40,8 +41,8 @@ public class TradingOrchestratorService {
 
     private final StrategyStatisticsService strategyStatisticsService;
 
-    public Mono<AiDecisionResponse> executeTrade(
-            SignalGenerationRequest signalRequest) {
+    public Mono<AiDecisionResponse> executeTrade(SignalGenerationRequest signalRequest,
+            TradingContext tradingContext) {
 
         log.info("Starting AI Trading Pipeline for {}", signalRequest.getSymbol());
 
@@ -120,23 +121,13 @@ public class TradingOrchestratorService {
             return Mono.empty();
         }
 
-        return tradingContextService
-                .buildTradingContext(signalRequest.getSymbol())
-                .flatMap(context -> {
+        TradingDecisionRequest aiRequest =
+                tradingDecisionMapper.map(
+                        signalRequest,
+                        technicalDecision,
+                        tradingContext);
 
-                    log.info("Trading Context Built Successfully");
-
-                    TradingDecisionRequest aiRequest =
-                            tradingDecisionMapper.map(
-                                    signalRequest,
-                                    technicalDecision,
-                                    context);
-
-                    log.info("AI Request Created");
-
-                    return callAI(aiRequest);
-
-                });
+        return callAI(aiRequest);
 
     }
 

@@ -6,12 +6,12 @@ scrape_configs:
   - job_name: 'broker-auth-service'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['host.docker.internal:8081']
+      - targets: ['host.docker.internal:9090']
 
   - job_name: 'stock-service'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['host.docker.internal:8082']
+      - targets: ['host.docker.internal:8081']
 
   - job_name: 'portfolio-service'
     metrics_path: /actuator/prometheus
@@ -26,7 +26,7 @@ scrape_configs:
   - job_name: 'signal-engine-service'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['host.docker.internal:8085']
+      - targets: ['host.docker.internal:8082']
 
   - job_name: 'ai-service'
     metrics_path: /actuator/prometheus
@@ -41,7 +41,7 @@ scrape_configs:
   - job_name: 'market-stream-service'
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ['host.docker.internal:8088']
+      - targets: ['host.docker.internal:8089']
 
   - job_name: 'api-gateway'
     metrics_path: /actuator/prometheus

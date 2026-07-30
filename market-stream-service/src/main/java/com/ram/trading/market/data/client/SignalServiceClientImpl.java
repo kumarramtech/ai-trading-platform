@@ -27,7 +27,7 @@ public class SignalServiceClientImpl implements SignalServiceClient {
                 .retrieve()
                 .bodyToMono(Void.class)
                 .doOnSuccess(response ->
-                        log.info("Tick sent to Signal Service : {}",
+                        log.debug("Tick sent to Signal Service : {}",
                                 tick.getSymbol()))
                 .doOnError(error ->
                         log.error("Unable to send Tick", error))

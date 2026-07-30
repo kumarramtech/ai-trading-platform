@@ -5,4 +5,8 @@ public interface MarketSessionService {
     boolean isMarketOpen();
 
     boolean isTradingAllowed();
+
+    boolean shouldForceCloseTrades();
+
+    boolean isMarketClosed();
 }

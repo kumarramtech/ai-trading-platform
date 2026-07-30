@@ -4,12 +4,12 @@ import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.NotificationClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.client.interfac.PortfolioClient;
+import com.ram.trading.signal.engine.config.MarketSessionService;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.dto.ai.portfolio.OpenPositionContextResponse;
 import com.ram.trading.signal.engine.dto.market.ExitReason;
-import com.ram.trading.signal.engine.dto.market.OpenPosition;
 import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
 import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
@@ -23,6 +23,7 @@ import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import com.ram.trading.signal.engine.util.TradeUtil;
+import com.ram.trading.signal.engine.util.TradingSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -57,7 +58,8 @@ public class PaperTradingService {
 
     private final PortfolioClient portfolioClient;
 
-    private final TrailingStopService trailingStopService;
+    private final TradingSessionService tradingSessionService;
+
 
     @Value("${trading.capital-per-trade}")
     private double capitalPerTrade;
@@ -68,6 +70,18 @@ public class PaperTradingService {
     public void createTrade(
             TradingSignalEntity signal,
             TechnicalIndicatorResponse indicatorResponse) {
+
+        if (!tradingSessionService.canCreateTrade()) {
+            log.info("Trading session closed for new entries.");
+            return;
+        }
+
+        if (!tradingSessionService.canCreateTrade()) {
+
+            log.info("Trading session closed for new entries.");
+
+            return;
+        }
 
         log.info("=================================");
         log.debug("Entering PaperTradingService");
@@ -255,6 +269,47 @@ public class PaperTradingService {
                 .subscribe();
     }
 
+    public Mono<Void> closePreviousDayTrades() {
+
+        log.info("======================================");
+        log.info("Checking Previous Day Open Trades");
+        log.info("======================================");
+
+        return Flux.fromIterable(repository.findByStatus(SignalStatus.OPEN))
+
+                .filter(trade ->
+                        !trade.getEntryTime()
+                                .toLocalDate()
+                                .equals(LocalDate.now()))
+
+                .flatMap(trade -> {
+
+                    log.info("Closing Previous Day Trade : {}",
+                            trade.getSymbol());
+
+                    trade.setStatus(SignalStatus.MARKET_CLOSED);
+                    trade.setExitTime(LocalDateTime.now());
+
+                    // If no market price is available,
+                    // close at entry price.
+                    trade.setExitPrice(trade.getEntryPrice());
+                    trade.setProfitLoss(0.0);
+
+                    return Mono.fromCallable(() ->
+                                    repository.save(trade))
+                            .subscribeOn(Schedulers.boundedElastic());
+
+                })
+
+                .then()
+
+                .doOnSuccess(v ->
+                        log.info("Previous Day Trade Cleanup Completed"))
+
+                .doOnError(ex ->
+                        log.error("Previous Day Trade Cleanup Failed", ex));
+    }
+
 
     public PaperTrade createPaperTrade(CreatePaperTradeRequest request) {
 
@@ -272,7 +327,7 @@ public class PaperTradingService {
                 .macd(request.getMacd())
                 .rsi(request.getRsi())
                 .status(SignalStatus.OPEN)
-                .entryTime(java.time.LocalDateTime.now())
+                .entryTime(LocalDateTime.now())
                 .build();
 
         return repository.save(trade);
@@ -1644,11 +1699,14 @@ public class PaperTradingService {
             TradingSignalEntity signal) {
 
         // Skip HOLD signals
-        if (SignalType.HOLD.name().equalsIgnoreCase(signal.getSignal())) {
+        // Allow only BUY and SELL signals
+        if (!SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())
+                && !SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
 
             log.info("======================================");
-            log.info("Skipping HOLD Signal");
+            log.info("Skipping Non-Tradable Signal");
             log.info("Symbol : {}", signal.getSymbol());
+            log.info("Signal : {}", signal.getSignal());
             log.info("======================================");
 
             return false;

@@ -8,14 +8,18 @@ import org.springframework.stereotype.Component;
 @Getter
 @Setter
 @Component
-@ConfigurationProperties(prefix = "market")
+@ConfigurationProperties(prefix = "trading.market")
 public class MarketSessionProperties {
 
-    private boolean enabled;
+    private boolean enabled = true;
 
-    private String timezone;
+    private String timezone = "Asia/Kolkata";
 
-    private String openTime;
+    private String open;
 
-    private String closeTime;
+    private String entryCutoff;
+
+    private String close;
+
+    private String end;
 }

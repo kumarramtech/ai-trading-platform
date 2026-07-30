@@ -59,7 +59,7 @@ public class UpstoxMessageParser {
 
                 String symbol =
                         instrumentLookupService.getTradingSymbol(instrumentKey);
-                log.info("Tick Received -> Symbol: {}, Price: {}",
+                log.debug("Tick Received -> Symbol: {}, Price: {}",
                         symbol,
                         lastPrice);
 
@@ -77,7 +77,7 @@ public class UpstoxMessageParser {
                         .changePercentage(changePercentage)
                         .build();
 
-                log.info(
+                log.debug(
                         "LIVE TICK -> Symbol={}, Price={}, Change={}%, Time={}",
                         symbol,
                         tick.getLastTradedPrice(),

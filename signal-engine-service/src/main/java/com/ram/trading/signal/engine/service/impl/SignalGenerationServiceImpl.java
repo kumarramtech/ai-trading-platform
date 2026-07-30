@@ -9,7 +9,6 @@ import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
 import com.ram.trading.signal.engine.exit.TradeExitService;
-import com.ram.trading.signal.engine.risk.RiskViolation;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
@@ -29,8 +28,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
-
-import java.util.stream.Collectors;
+import reactor.core.scheduler.Schedulers;
 
 @Service
 @RequiredArgsConstructor
@@ -89,20 +87,19 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     SignalGenerationRequest request =
                             buildSignalRequest(stock, indicator);
 
-                    log.info("Technical Indicators Loaded");
-                    log.info("RSI      : {}", indicator.getRsi14());
-                    log.info("EMA20    : {}", indicator.getEma20());
-                    log.info("EMA50    : {}", indicator.getEma50());
-                    log.info("SMA20    : {}", indicator.getSma20());
-                    log.info("SMA50    : {}", indicator.getSma50());
-                    log.info("MACD     : {}", indicator.getMacd());
+                    log.debug("Technical Indicators Loaded");
+                    log.debug("RSI      : {}", indicator.getRsi14());
+                    log.debug("EMA20    : {}", indicator.getEma20());
+                    log.debug("EMA50    : {}", indicator.getEma50());
+                    log.debug("SMA20    : {}", indicator.getSma20());
+                    log.debug("SMA50    : {}", indicator.getSma50());
+                    log.debug("MACD     : {}", indicator.getMacd());
 
                     return tradingContextService
                             .buildTradingContext(symbol)
                             .flatMap(context ->
                                     generateTradingSignal(
-                                            request,
-                                            context));
+                                            request,context,indicator));
                 })
 
                 .doOnSuccess(signal -> {
@@ -143,13 +140,13 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                                 .flatMap(indicator -> {
 
-                                    log.info("Technical Indicators Loaded");
-                                    log.info("RSI      : {}", indicator.getRsi14());
-                                    log.info("EMA20    : {}", indicator.getEma20());
-                                    log.info("EMA50    : {}", indicator.getEma50());
-                                    log.info("SMA20    : {}", indicator.getSma20());
-                                    log.info("SMA50    : {}", indicator.getSma50());
-                                    log.info("MACD     : {}", indicator.getMacd());
+                                    log.debug("Technical Indicators Loaded");
+                                    log.debug("RSI      : {}", indicator.getRsi14());
+                                    log.debug("EMA20    : {}", indicator.getEma20());
+                                    log.debug("EMA50    : {}", indicator.getEma50());
+                                    log.debug("SMA20    : {}", indicator.getSma20());
+                                    log.debug("SMA50    : {}", indicator.getSma50());
+                                    log.debug("MACD     : {}", indicator.getMacd());
 
                                     SignalGenerationRequest request =
                                             buildSignalRequest(
@@ -160,9 +157,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                             .buildTradingContext(
                                                     tick.getSymbol())
                                             .flatMap(context ->
-                                                    generateTradingSignal(
-                                                            request,
-                                                            context));
+                                                    generateTradingSignal(request,context,indicator));
                                 })
                 )
 
@@ -185,23 +180,24 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private Mono<TradingSignal> generateTradingSignal(
             SignalGenerationRequest request,
-            TradingContext context) {
+            TradingContext context,
+            TechnicalIndicatorResponse indicator) {
 
-        log.info("======================================================");
-        log.info("Trading Decision Pipeline Started");
+        log.debug("======================================================");
+        log.debug("Trading Decision Pipeline Started");
         log.info("Symbol : {}", request.getSymbol());
-        log.info("======================================================");
+        log.debug("======================================================");
 
         logTradingContext(context);
 
         return tradingOrchestratorService
-                .executeTrade(request)
+                .executeTrade(request, context)
 
                 .flatMap(aiResponse -> {
 
-                    log.info("******** AI RESPONSE RECEIVED ********");
-                    log.info("Trade Allowed : {}", aiResponse.getDecision().getTradeAllowed());
-                    log.info("Recommendation : {}", aiResponse.getDecision().getRecommendation());
+                    log.debug("******** AI RESPONSE RECEIVED ********");
+                    log.debug("Trade Allowed : {}", aiResponse.getDecision().getTradeAllowed());
+                    log.debug("Recommendation : {}", aiResponse.getDecision().getRecommendation());
                     logAiDecision(aiResponse);
 
                     RiskEvaluation evaluation =
@@ -213,21 +209,21 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                     try {
 
-                        log.info("STEP-1 Before Risk Guard");
+                        log.debug("STEP-1 Before Risk Guard");
 
                         RiskGuardResult result =
                                 riskGuardService.evaluate(evaluation);
 
-                        log.info("STEP-2 Risk Guard Completed");
+                        log.debug("STEP-2 Risk Guard Completed");
 
                         logRiskEvaluation(result);
 
-                        log.info("STEP-3 Before Mapper");
+                        log.debug("STEP-3 Before Mapper");
 
                         TradingSignal signal =
                                 tradingSignalMapper.map(aiResponse, request);
 
-                        log.info("STEP-4 Mapper Completed");
+                        log.debug("STEP-4 Mapper Completed");
 
                         if (!result.isApproved()) {
                             signal.setSignal(SignalType.HOLD.name());
@@ -235,9 +231,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                             return Mono.just(signal);
                         }
 
-                        log.info("STEP-5 Before Post Process");
+                        log.debug("STEP-5 Before Post Process");
 
-                        return postProcessSignal(signal);
+                        return postProcessSignal(signal, indicator);
 
                     } catch (Exception ex) {
 
@@ -256,7 +252,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 signal.getSignal());
                     }
 
-                    log.info("Trading Decision Pipeline Completed");
+                    log.debug("Trading Decision Pipeline Completed");
                 })
 
                 .doOnError(error ->
@@ -266,10 +262,10 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private void logTradingContext(TradingContext context) {
 
-        log.info("========== Trading Context ==========");
+        log.debug("========== Trading Context ==========");
 
-        log.info("News      : {}", context.getNewsSummary());
-        log.info("Sector    : {}", context.getSectorSummary());
+        log.debug("News      : {}", context.getNewsSummary());
+        log.debug("Sector    : {}", context.getSectorSummary());
 
         PortfolioContextResponse portfolio =
                 context.getPortfolioContext();
@@ -277,74 +273,74 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         if (portfolio != null) {
 
             if (portfolio.getSummary() != null) {
-                log.info("Portfolio Summary : {}",
+                log.debug("Portfolio Summary : {}",
                         portfolio.getSummary());
             }
 
             if (portfolio.getRecommendations() != null) {
-                log.info("Portfolio Recommendations : {}",
+                log.debug("Portfolio Recommendations : {}",
                         portfolio.getRecommendations());
             }
 
             if (portfolio.getRisk() != null) {
-                log.info("Portfolio Risk : {}",
+                log.debug("Portfolio Risk : {}",
                         portfolio.getRisk().getRiskLevel());
             }
 
             if (portfolio.getHealth() != null) {
-                log.info("Portfolio Health : {}",
+                log.debug("Portfolio Health : {}",
                         portfolio.getHealth().getStatus());
             }
 
         } else {
 
-            log.info("Portfolio Context : Not Available");
+            log.debug("Portfolio Context : Not Available");
         }
 
-        log.info("News Score : {}",
+        log.debug("News Score : {}",
                 context.getNewsScore());
 
-        log.info("News Sentiment : {}",
+        log.debug("News Sentiment : {}",
                 context.getNewsSentiment());
 
         if (context.getOpenPositionContext() != null) {
 
-            log.info("Open Position Exists : {}",
+            log.debug("Open Position Exists : {}",
                     context.getOpenPositionContext().isPositionExists());
 
             if (context.getOpenPositionContext().isPositionExists()) {
 
-                log.info("Open Position Signal : {}",
+                log.debug("Open Position Signal : {}",
                         context.getOpenPositionContext().getSignal());
 
-                log.info("Current PnL : {}",
+                log.debug("Current PnL : {}",
                         context.getOpenPositionContext().getCurrentPnL());
             }
 
         } else {
 
-            log.info("Open Position Context : Not Available");
+            log.debug("Open Position Context : Not Available");
         }
 
-        log.info("====================================");
+        log.debug("====================================");
     }
 
     private void logAiDecision(AiDecisionResponse aiResponse) {
 
-        log.info("========== AI RESPONSE ==========");
+        log.debug("========== AI RESPONSE ==========");
 
         if (aiResponse.getDecision() != null) {
 
-            log.info("Trade Allowed      : {}",
+            log.debug("Trade Allowed      : {}",
                     aiResponse.getDecision().getTradeAllowed());
 
-            log.info("Recommendation     : {}",
+            log.debug("Recommendation     : {}",
                     aiResponse.getDecision().getRecommendation());
 
-            log.info("Confidence         : {}",
+            log.debug("Confidence         : {}",
                     aiResponse.getDecision().getConfidence());
 
-            log.info("Decision Strength  : {}",
+            log.debug("Decision Strength  : {}",
                     aiResponse.getDecision().getDecisionStrength());
 
         } else {
@@ -352,33 +348,33 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             log.warn("Decision : NULL");
         }
 
-        log.info("AI Reasoning       : {}",
+        log.debug("AI Reasoning       : {}",
                 aiResponse.getAiReasoning());
 
-        log.info("Technical Analysis : {}",
+        log.debug("Technical Analysis : {}",
                 aiResponse.getTechnicalAnalysis());
 
-        log.info("Risk Analysis      : {}",
+        log.debug("Risk Analysis      : {}",
                 aiResponse.getRiskAnalysis());
 
-        log.info("News Analysis      : {}",
+        log.debug("News Analysis      : {}",
                 aiResponse.getNewsAnalysis());
 
-        log.info("Portfolio Analysis : {}",
+        log.debug("Portfolio Analysis : {}",
                 aiResponse.getPortfolioAnalysis());
 
-        log.info("Execution Plan     : {}",
+        log.debug("Execution Plan     : {}",
                 aiResponse.getExecutionPlan());
 
-        log.info("=================================");
+        log.debug("=================================");
     }
 
     private void logRiskEvaluation(
             RiskGuardResult result) {
 
-        log.info("========== RISK GUARD ==========");
+        log.debug("========== RISK GUARD ==========");
 
-        log.info("Approved : {}",
+        log.debug("Approved : {}",
                 result.isApproved());
 
         if (!result.isApproved()) {
@@ -390,99 +386,65 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     v.getReason()));
         }
 
-        log.info("================================");
+        log.debug("================================");
     }
 
-    private Mono<TradingSignal> postProcessSignal(TradingSignal signal) {
+    private Mono<TradingSignal> postProcessSignal(
+            TradingSignal signal,
+            TechnicalIndicatorResponse indicator) {
 
         log.info("========== POST PROCESSING ==========");
 
         if (SignalType.HOLD.name().equals(signal.getSignal())) {
-
             log.info("Signal is HOLD. Nothing to persist.");
-
             return Mono.just(signal);
         }
 
         log.info("Saving Trading Signal...");
 
-        TradingSignalEntity entity = tradingSignalService.save(signal);
+        return Mono.fromCallable(() -> tradingSignalService.save(signal))
+                .subscribeOn(Schedulers.boundedElastic())
 
-        log.info("Trading Signal Saved : {}", entity.getId());
+                .flatMap(entity -> {
 
-        try {
+                    log.info("Trading Signal Saved : {}", entity.getId());
 
-            log.info("Saving Opportunity...");
+                    return Mono.fromRunnable(() -> {
 
-            opportunityService.save(signal, entity.getId());
+                                log.info("Saving Opportunity...");
 
-            log.info("Opportunity Saved Successfully.");
+                                opportunityService.save(
+                                        signal,
+                                        entity.getId());
 
-        } catch (Exception ex) {
+                                log.info("Opportunity Saved Successfully.");
 
-            log.error("Unable to save Opportunity", ex);
-        }
-
-        log.info("Calling TechnicalIndicatorService for Paper Trade...");
-
-        return technicalIndicatorService
-
-                .calculate(signal.getSymbol())
-
-                .doOnSubscribe(subscription ->
-                        log.info("Subscribed to TechnicalIndicatorService"))
-
-                .doOnSuccess(indicator -> {
-
-                    if (indicator == null) {
-                        log.warn("TechnicalIndicatorService returned NULL");
-                    } else {
-                        log.info("TechnicalIndicatorService returned indicator successfully.");
-                    }
+                            })
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .thenReturn(entity);
 
                 })
 
-                .doOnError(ex ->
-                        log.error("TechnicalIndicatorService Error", ex))
+                .flatMap(entity ->
 
-                .flatMap(indicator -> {
+                        Mono.fromRunnable(() -> {
 
-                    log.info("Inside flatMap()");
-                    log.info("About to call PaperTradingService.createTrade()");
+                                    log.info("Creating Paper Trade...");
 
-                    try {
+                                    paperTradingService.createTrade(
+                                            entity,
+                                            indicator);
 
-                        paperTradingService.createTrade(entity, indicator);
-
-                        log.info("Returned Successfully from createTrade()");
-
-                    } catch (Exception ex) {
-
-                        log.error("Paper Trade Creation Failed", ex);
-                    }
-
-                    return Mono.just(signal);
-
-                })
-
-                .switchIfEmpty(
-
-                        Mono.fromSupplier(() -> {
-
-                            log.warn("TechnicalIndicatorService returned EMPTY.");
-                            log.warn("createTrade() was NOT called.");
-
-                            return signal;
-
-                        })
-
+                                })
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .thenReturn(signal)
                 )
 
                 .doOnSuccess(s ->
-                        log.info("POST PROCESSING COMPLETED"))
+                        log.info("Post Processing Completed Successfully."))
 
-                .doOnTerminate(() ->
-                        log.info("========== POST PROCESSING FINISHED =========="));
+                .doOnError(ex ->
+                        log.error("Post Processing Failed", ex));
     }
 
 
