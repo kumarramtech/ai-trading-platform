@@ -126,6 +126,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         log.info("Symbol : {}", tick.getSymbol());
         log.info("LTP    : {}", tick.getLastTradedPrice());
 
+        final long start = System.currentTimeMillis();
+
         return tradeExitService
                 .evaluateExit(tick)
 
@@ -154,10 +156,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                                     indicator);
 
                                     return tradingContextService
-                                            .buildTradingContext(
-                                                    tick.getSymbol())
+                                            .buildTradingContext(tick.getSymbol())
                                             .flatMap(context ->
-                                                    generateTradingSignal(request,context,indicator));
+                                                    generateTradingSignal(
+                                                            request,
+                                                            context,
+                                                            indicator));
                                 })
                 )
 
@@ -175,7 +179,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .doOnError(error ->
                         log.error("Live Signal Generation Failed for {}",
                                 tick.getSymbol(),
-                                error));
+                                error))
+
+                .doFinally(signalType ->
+                        log.info("TOTAL Live Signal Processing Time for {} : {} ms",
+                                tick.getSymbol(),
+                                System.currentTimeMillis() - start));
     }
 
     private Mono<TradingSignal> generateTradingSignal(

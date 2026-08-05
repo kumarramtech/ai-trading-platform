@@ -121,34 +121,9 @@ public class PortfolioService {
 
     public PortfolioRisk getRiskAnalysis() {
 
-        List<PortfolioAllocation> allocations =
-                getAllocation();
+        List<PortfolioAllocation> allocations = getAllocation();
 
-        for (PortfolioAllocation allocation : allocations) {
-
-            if (allocation.getAllocationPercentage() > 50) {
-
-                return new PortfolioRisk(
-                        RiskLevel.HIGH,
-                        allocation.getSymbol()
-                                + " allocation exceeds 50%"
-                );
-            }
-
-            if (allocation.getAllocationPercentage() > 30) {
-
-                return new PortfolioRisk(
-                        RiskLevel.MEDIUM,
-                        allocation.getSymbol()
-                                + " allocation exceeds 30%"
-                );
-            }
-        }
-
-        return new PortfolioRisk(
-                RiskLevel.LOW,
-                "Portfolio is well diversified"
-        );
+        return calculateRisk(allocations);
     }
 
     public PortfolioDashboard getDashboard() {
@@ -168,100 +143,54 @@ public class PortfolioService {
     }
 
     public List<PortfolioRecommendation> getRecommendation() {
-        List<PortfolioAllocation> allocations =
-                getAllocation();
 
-        List<PortfolioRecommendation> recommendations = new ArrayList<>();
-        for(PortfolioAllocation allocation: allocations){
-            if(allocation.getAllocationPercentage()>50.0){
-                recommendations.add(
-                        new PortfolioRecommendation(
-                                allocation.getSymbol(),
-                                RecommendationActionEnum.REDUCE,
-                                "Allocation exceeds 50%"
-                        )
-                );
-            } else if (allocation.getAllocationPercentage()<10.0) {
-                recommendations.add(
-                        new PortfolioRecommendation(
-                                allocation.getSymbol(),
-                                RecommendationActionEnum.INCREASE,
-                                "Allocation below 10%"
-                        )
-                );
-            }else{
-                recommendations.add(
-                        new PortfolioRecommendation(
-                                allocation.getSymbol(),
-                                RecommendationActionEnum.HOLD,
-                                "Allocation is balanced"
-                        )
-                );
-            }
-        }
-        return recommendations;
+        List<PortfolioAllocation> allocations = getAllocation();
+
+        return calculateRecommendation(allocations);
     }
 
     public PortfolioHealth getHealthScore() {
 
-        int score = 100;
-
-        PortfolioRisk risk = getRiskAnalysis();
-
         PortfolioSummary summary = getSummary();
 
-        if (risk.getRiskLevel() == RiskLevel.HIGH) {
-            score -= 30;
-        } else if (risk.getRiskLevel() == RiskLevel.MEDIUM) {
-            score -= 15;
-        }
+        List<PortfolioAllocation> allocations = getAllocation();
 
-        if (summary.getTotalProfitLoss() < 0) {
-            score -= 20;
-        }
+        PortfolioRisk risk = calculateRisk(allocations);
 
-        boolean diversified =
-                getAllocation().stream()
-                        .noneMatch(a ->
-                                a.getAllocationPercentage() > 50);
-
-        if (diversified) {
-            score += 10;
-        }
-
-        score = Math.max(0, Math.min(score, 100));
-
-        PortfolioHealthStatus status;
-
-        if (score >= 80) {
-            status = PortfolioHealthStatus.EXCELLENT;
-        } else if (score >= 60) {
-            status = PortfolioHealthStatus.GOOD;
-        } else if (score >= 40) {
-            status = PortfolioHealthStatus.AVERAGE;
-        } else {
-            status = PortfolioHealthStatus.POOR;
-        }
-
-        return new PortfolioHealth(score, status);
+        return calculateHealth(summary, risk, allocations);
     }
 
     public PortfolioContextResponse getContext() {
 
+        PortfolioSnapshot snapshot =
+                buildSnapshot();
+
+        PortfolioSummary summary =
+                getSummary(snapshot);
+
+        List<PortfolioAllocation> allocations =
+                getAllocation(snapshot);
+
+        PortfolioRisk risk =
+                calculateRisk(allocations);
+
+        PortfolioHealth health =
+                calculateHealth(
+                        summary,
+                        risk,
+                        allocations);
+
+        List<PortfolioRecommendation> recommendations =
+                calculateRecommendation(
+                        allocations);
+
         return PortfolioContextResponse.builder()
-
-                .summary(getSummary())
-
-                .risk(getRiskAnalysis())
-
-                .health(getHealthScore())
-
-                .allocations(getAllocation())
-
-                .recommendations(getRecommendation())
-
+                .summary(summary)
+                .risk(risk)
+                .health(health)
+                .allocations(allocations)
+                .recommendations(recommendations)
                 .build();
-
     }
 
     public Portfolio openPosition(
@@ -324,5 +253,221 @@ public class PortfolioService {
 
         portfolio.setQuantity(remaining);
         return portfolioRepository.save(portfolio);
+    }
+
+
+    private PortfolioSnapshot buildSnapshot() {
+
+        List<Portfolio> portfolios = portfolioRepository.findAll();
+
+        Map<String, StockResponse> stockPrices = new HashMap<>();
+
+        for (Portfolio portfolio : portfolios) {
+
+            StockResponse stockResponse =
+                    stockServiceClient
+                            .getStockPrice(portfolio.getSymbol())
+                            .block();
+
+            if (stockResponse != null) {
+                stockPrices.put(
+                        portfolio.getSymbol(),
+                        stockResponse);
+            }
+        }
+
+        return PortfolioSnapshot.builder()
+                .portfolios(portfolios)
+                .stockPrices(stockPrices)
+                .build();
+    }
+
+    private PortfolioSummary getSummary(
+            PortfolioSnapshot snapshot) {
+
+        double totalInvested = 0.0;
+
+        double currentValue = 0.0;
+
+        for (Portfolio portfolio : snapshot.getPortfolios()) {
+
+            StockResponse stockPrice =
+                    snapshot.getStockPrices()
+                            .get(portfolio.getSymbol());
+
+            if (stockPrice == null) {
+                continue;
+            }
+
+            totalInvested +=
+                    portfolio.getQuantity()
+                            * portfolio.getAveragePrice();
+
+            currentValue +=
+                    portfolio.getQuantity()
+                            * stockPrice.getPrice();
+        }
+
+        return new PortfolioSummary(
+                totalInvested,
+                currentValue,
+                currentValue - totalInvested);
+    }
+
+    private List<PortfolioAllocation> getAllocation(
+            PortfolioSnapshot snapshot) {
+
+        double totalPortfolioValue = 0.0;
+
+        Map<String, Double> stockValues =
+                new HashMap<>();
+
+        for (Portfolio portfolio : snapshot.getPortfolios()) {
+
+            StockResponse stock =
+                    snapshot.getStockPrices()
+                            .get(portfolio.getSymbol());
+
+            if (stock == null) {
+                continue;
+            }
+
+            double currentValue =
+                    portfolio.getQuantity()
+                            * stock.getPrice();
+
+            stockValues.put(
+                    portfolio.getSymbol(),
+                    currentValue);
+
+            totalPortfolioValue += currentValue;
+        }
+
+        List<PortfolioAllocation> allocations =
+                new ArrayList<>();
+
+        if (totalPortfolioValue == 0) {
+            return allocations;
+        }
+
+        for (Map.Entry<String, Double> entry
+                : stockValues.entrySet()) {
+
+            double allocationPercentage =
+                    (entry.getValue() / totalPortfolioValue) * 100;
+
+            allocationPercentage =
+                    Math.round(allocationPercentage * 100.0) / 100.0;
+
+            allocations.add(
+                    new PortfolioAllocation(
+                            entry.getKey(),
+                            entry.getValue(),
+                            allocationPercentage));
+        }
+
+        return allocations;
+    }
+
+    private PortfolioHealth calculateHealth(
+            PortfolioSummary summary,
+            PortfolioRisk risk,
+            List<PortfolioAllocation> allocations) {
+
+        int score = 100;
+
+        if (risk.getRiskLevel() == RiskLevel.HIGH) {
+            score -= 30;
+        } else if (risk.getRiskLevel() == RiskLevel.MEDIUM) {
+            score -= 15;
+        }
+
+        if (summary.getTotalProfitLoss() < 0) {
+            score -= 20;
+        }
+
+        boolean diversified =
+                allocations.stream()
+                        .noneMatch(a -> a.getAllocationPercentage() > 50);
+
+        if (diversified) {
+            score += 10;
+        }
+
+        score = Math.max(0, Math.min(score, 100));
+
+        PortfolioHealthStatus status;
+
+        if (score >= 80) {
+            status = PortfolioHealthStatus.EXCELLENT;
+        } else if (score >= 60) {
+            status = PortfolioHealthStatus.GOOD;
+        } else if (score >= 40) {
+            status = PortfolioHealthStatus.AVERAGE;
+        } else {
+            status = PortfolioHealthStatus.POOR;
+        }
+
+        return new PortfolioHealth(score, status);
+    }
+
+
+    private PortfolioRisk calculateRisk(List<PortfolioAllocation> allocations) {
+
+        for (PortfolioAllocation allocation : allocations) {
+
+            if (allocation.getAllocationPercentage() > 50) {
+                return new PortfolioRisk(
+                        RiskLevel.HIGH,
+                        allocation.getSymbol() + " allocation exceeds 50%");
+            }
+
+            if (allocation.getAllocationPercentage() > 30) {
+                return new PortfolioRisk(
+                        RiskLevel.MEDIUM,
+                        allocation.getSymbol() + " allocation exceeds 30%");
+            }
+        }
+
+        return new PortfolioRisk(
+                RiskLevel.LOW,
+                "Portfolio is well diversified");
+    }
+
+    private List<PortfolioRecommendation> calculateRecommendation(
+            List<PortfolioAllocation> allocations) {
+
+        List<PortfolioRecommendation> recommendations =
+                new ArrayList<>();
+
+        for (PortfolioAllocation allocation : allocations) {
+
+            if (allocation.getAllocationPercentage() > 50.0) {
+
+                recommendations.add(
+                        new PortfolioRecommendation(
+                                allocation.getSymbol(),
+                                RecommendationActionEnum.REDUCE,
+                                "Allocation exceeds 50%"));
+
+            } else if (allocation.getAllocationPercentage() < 10.0) {
+
+                recommendations.add(
+                        new PortfolioRecommendation(
+                                allocation.getSymbol(),
+                                RecommendationActionEnum.INCREASE,
+                                "Allocation below 10%"));
+
+            } else {
+
+                recommendations.add(
+                        new PortfolioRecommendation(
+                                allocation.getSymbol(),
+                                RecommendationActionEnum.HOLD,
+                                "Allocation is balanced"));
+            }
+        }
+
+        return recommendations;
     }
 }

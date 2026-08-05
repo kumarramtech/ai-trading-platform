@@ -11,14 +11,19 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class PortfolioClientImpl implements PortfolioClient {
 
-    private final WebClient.Builder webClientBuilder;
+    private final WebClient client;
 
-    @Value("${portfolio.service.url}")
-    private String portfolioUrl;
+    public PortfolioClientImpl(
+            WebClient.Builder builder,
+            @Value("${portfolio.service.url}") String portfolioUrl) {
+
+        this.client = builder
+                .baseUrl(portfolioUrl)
+                .build();
+    }
 
     @Override
     public Mono<Void> openPosition(
@@ -32,9 +37,7 @@ public class PortfolioClientImpl implements PortfolioClient {
                         .entryPrice(entryPrice)
                         .build();
 
-        return webClientBuilder
-                .baseUrl(portfolioUrl)
-                .build()
+        return client
                 .post()
                 .uri("/portfolio/open-position")
                 .bodyValue(request)
@@ -42,13 +45,9 @@ public class PortfolioClientImpl implements PortfolioClient {
                 .toBodilessEntity()
                 .then()
                 .doOnSuccess(v ->
-                        log.info(
-                                "Portfolio updated for {}",
-                                symbol))
+                        log.info("Portfolio updated for {}", symbol))
                 .doOnError(ex ->
-                        log.error(
-                                "Portfolio update failed",
-                                ex));
+                        log.error("Portfolio update failed", ex));
     }
 
     @Override
@@ -62,9 +61,7 @@ public class PortfolioClientImpl implements PortfolioClient {
                         .quantity(quantity)
                         .build();
 
-        return webClientBuilder
-                .baseUrl(portfolioUrl)
-                .build()
+        return client
                 .post()
                 .uri("/portfolio/close-position")
                 .bodyValue(request)
@@ -72,12 +69,8 @@ public class PortfolioClientImpl implements PortfolioClient {
                 .toBodilessEntity()
                 .then()
                 .doOnSuccess(v ->
-                        log.info(
-                                "Portfolio closed for {}",
-                                symbol))
+                        log.info("Portfolio closed for {}", symbol))
                 .doOnError(ex ->
-                        log.error(
-                                "Portfolio close failed",
-                                ex));
+                        log.error("Portfolio close failed", ex));
     }
 }

@@ -37,17 +37,12 @@ public class TechnicalIndicatorServiceImpl
 
         return stockServiceClient
                 .getHistoricalPrices(symbol)
-
-                .doOnNext(price ->
-                        log.info("Historical Candle : Date={}, Close={}",
-                                price.getTradeDate(),
-                                price.getClosePrice()))
-
                 .collectList()
+                .doOnNext(prices ->
+                        log.info("Loaded {} historical candles for {}",
+                                prices.size(), symbol))
 
                 .flatMap(prices -> {
-
-                    log.info("Historical Candle Count : {}", prices.size());
 
                     if (prices.isEmpty()) {
 

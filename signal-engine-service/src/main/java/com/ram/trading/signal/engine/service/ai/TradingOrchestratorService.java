@@ -41,22 +41,38 @@ public class TradingOrchestratorService {
 
     private final StrategyStatisticsService strategyStatisticsService;
 
-    public Mono<AiDecisionResponse> executeTrade(SignalGenerationRequest signalRequest,
+    public Mono<AiDecisionResponse> executeTrade(
+            SignalGenerationRequest signalRequest,
             TradingContext tradingContext) {
 
-        log.info("Starting AI Trading Pipeline for {}", signalRequest.getSymbol());
+        final long totalStart = System.currentTimeMillis();
+
+        log.info("====================================================");
+        log.info("AI Trading Pipeline Started : {}", signalRequest.getSymbol());
+        log.info("====================================================");
+
+        long technicalStart = System.currentTimeMillis();
 
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
+
+        log.info("Technical Decision Time [{}] : {} ms",
+                signalRequest.getSymbol(),
+                System.currentTimeMillis() - technicalStart);
 
         log.info("Technical Decision Generated");
         log.info("Symbol      : {}", signalRequest.getSymbol());
         log.info("Signal      : {}", technicalDecision.getSignal());
         log.info("Confidence  : {}", technicalDecision.getConfidence());
-        log.info("Reasons     : {}", technicalDecision.getReasons());
+
+        long engineeringStart = System.currentTimeMillis();
 
         boolean eligible =
                 engineeringFilterService.isEligibleForAI(technicalDecision);
+
+        log.info("Engineering Filter Time [{}] : {} ms",
+                signalRequest.getSymbol(),
+                System.currentTimeMillis() - engineeringStart);
 
         SignalType emaSignal =
                 getRuleSignal(technicalDecision, "EMA");
@@ -71,55 +87,48 @@ public class TradingOrchestratorService {
                 TradingAuditReport.builder()
                         .symbol(signalRequest.getSymbol())
                         .currentPrice(signalRequest.getCurrentPrice())
-
                         .ema20(signalRequest.getEma20())
                         .ema50(signalRequest.getEma50())
-
                         .sma20(signalRequest.getSma20())
                         .sma50(signalRequest.getSma50())
-
                         .macd(signalRequest.getMacd())
                         .signalLine(signalRequest.getSignalLine())
-
                         .rsi(signalRequest.getRsi())
-
                         .emaSignal(emaSignal)
-
                         .macdSignal(macdSignal)
-
                         .rsiSignal(rsiSignal)
-
                         .finalSignal(technicalDecision.getSignal())
-
                         .confidence(technicalDecision.getConfidence())
-
                         .engineeringFilterPassed(eligible)
-
                         .rejectionReason(
                                 eligible
                                         ? "PASSED"
                                         : "Engineering Filter Rejected")
-
                         .scanTime(LocalDateTime.now())
-
                         .build();
+
+        long auditStart = System.currentTimeMillis();
 
         tradingAuditService.audit(auditReport);
 
         strategyStatisticsService.recordAudit(auditReport);
 
-        log.info("Engineering Filter Result");
-        log.info("Eligible For AI : {}", eligible);
+        log.info("Audit Time [{}] : {} ms",
+                signalRequest.getSymbol(),
+                System.currentTimeMillis() - auditStart);
 
         if (!eligible) {
 
-            log.info("Engineering Filter Rejected {}",
-                    signalRequest.getSymbol());
-
             strategyStatisticsService.printStatistics();
+
+            log.info("TOTAL AI Pipeline Time [{}] : {} ms",
+                    signalRequest.getSymbol(),
+                    System.currentTimeMillis() - totalStart);
 
             return Mono.empty();
         }
+
+        long mapperStart = System.currentTimeMillis();
 
         TradingDecisionRequest aiRequest =
                 tradingDecisionMapper.map(
@@ -127,8 +136,21 @@ public class TradingOrchestratorService {
                         technicalDecision,
                         tradingContext);
 
-        return callAI(aiRequest);
+        log.info("AI Request Mapping Time [{}] : {} ms",
+                signalRequest.getSymbol(),
+                System.currentTimeMillis() - mapperStart);
 
+        long aiStart = System.currentTimeMillis();
+
+        return callAI(aiRequest)
+                .doOnSuccess(response ->
+                        log.info("AI Service Time [{}] : {} ms",
+                                signalRequest.getSymbol(),
+                                System.currentTimeMillis() - aiStart))
+                .doFinally(signalType ->
+                        log.info("TOTAL AI Pipeline Time [{}] : {} ms",
+                                signalRequest.getSymbol(),
+                                System.currentTimeMillis() - totalStart));
     }
 
     private TradingDecision generateTechnicalDecision(

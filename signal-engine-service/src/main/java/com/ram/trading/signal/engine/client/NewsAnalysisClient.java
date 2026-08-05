@@ -2,27 +2,31 @@ package com.ram.trading.signal.engine.client;
 
 import com.ram.trading.signal.engine.dto.request.NewsAnalysisRequest;
 import com.ram.trading.signal.engine.dto.response.NewsAnalysisResponse;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 @Component
-@RequiredArgsConstructor
 public class NewsAnalysisClient {
 
-    private final WebClient.Builder webClientBuilder;
+    private final WebClient client;
 
-    @Value("${news.service.base-url}")
-    private String baseUrl;
+    public NewsAnalysisClient(
+            WebClient.Builder builder,
+            @Value("${news.service.base-url}") String baseUrl) {
+
+        this.client = builder
+                .baseUrl(baseUrl)
+                .build();
+    }
 
     public Mono<NewsAnalysisResponse> analyze(
             NewsAnalysisRequest request) {
 
-        return webClientBuilder.build()
+        return client
                 .post()
-                .uri(baseUrl + "/news/analyze")
+                .uri("/news/analyze")
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(NewsAnalysisResponse.class);

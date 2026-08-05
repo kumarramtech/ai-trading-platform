@@ -1,25 +1,31 @@
 package com.ram.trading.signal.engine.client;
 
-import com.ram.trading.signal.engine.config.WebClientConfig;
 import com.ram.trading.signal.engine.dto.response.MarketSentimentResponse;
-import lombok.NoArgsConstructor;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 @Component
-@RequiredArgsConstructor
 public class MarketSentimentClient {
 
-    private final WebClient.Builder builder;
+    private final WebClient client;
 
-    public Mono<MarketSentimentResponse>
-            getSentiment(String symbol) {
+    public MarketSentimentClient(
+            WebClient.Builder builder,
+            @Value("${market.sentiment.service.url}") String marketSentimentUrl) {
 
-        return builder.build().get()
-                .uri("http://localhost:8086/market/sentiment/{symbol}",
-                        symbol)
+        this.client = builder
+                .baseUrl(marketSentimentUrl)
+                .build();
+    }
+
+    public Mono<MarketSentimentResponse> getSentiment(
+            String symbol) {
+
+        return client
+                .get()
+                .uri("/market/sentiment/{symbol}", symbol)
                 .retrieve()
                 .bodyToMono(MarketSentimentResponse.class);
     }

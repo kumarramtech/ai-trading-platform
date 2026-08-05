@@ -26,12 +26,24 @@ public class TradingContextServiceImpl implements TradingContextService {
     @Override
     public Mono<TradingContext> buildTradingContext(String symbol) {
 
+        final long start = System.currentTimeMillis();
+
+        log.info("====================================================");
+        log.info("Trading Context Started : {}", symbol);
+        log.info("====================================================");
+
         NewsAnalysisRequest request = NewsAnalysisRequest.builder()
                 .symbol(symbol)
                 .build();
 
+        final long newsStart = System.currentTimeMillis();
+
         Mono<NewsAnalysisResponse> newsMono =
                 newsAnalysisClient.analyze(request)
+                        .doOnSuccess(response ->
+                                log.info("News Context Time [{}] : {} ms",
+                                        symbol,
+                                        System.currentTimeMillis() - newsStart))
                         .onErrorResume(ex -> {
                             log.warn("Unable to fetch News Context. Continuing with default values.", ex);
 
@@ -43,8 +55,14 @@ public class TradingContextServiceImpl implements TradingContextService {
                                             .build());
                         });
 
+        final long portfolioStart = System.currentTimeMillis();
+
         Mono<PortfolioContextResponse> portfolioMono =
                 portfolioContextClient.getPortfolioContext()
+                        .doOnSuccess(response ->
+                                log.info("Portfolio Context Time [{}] : {} ms",
+                                        symbol,
+                                        System.currentTimeMillis() - portfolioStart))
                         .onErrorResume(ex -> {
                             log.warn("Unable to fetch Portfolio Context. Continuing with default values.", ex);
 
@@ -53,8 +71,14 @@ public class TradingContextServiceImpl implements TradingContextService {
                                             .build());
                         });
 
+        final long openPositionStart = System.currentTimeMillis();
+
         Mono<OpenPositionContextResponse> openPositionMono =
                 openPositionContextClient.getOpenPositionContext(symbol)
+                        .doOnSuccess(response ->
+                                log.info("Open Position Context Time [{}] : {} ms",
+                                        symbol,
+                                        System.currentTimeMillis() - openPositionStart))
                         .onErrorResume(ex -> {
                             log.warn("Unable to fetch Open Position Context. Continuing with default values.", ex);
 
@@ -83,7 +107,11 @@ public class TradingContextServiceImpl implements TradingContextService {
                             .sectorSummary("Sector context not integrated.")
                             .riskSummary("Risk context not integrated.")
                             .build();
-                });
+                })
+                .doFinally(signalType ->
+                        log.info("TOTAL Trading Context Time [{}] : {} ms",
+                                symbol,
+                                System.currentTimeMillis() - start));
     }
 
 }

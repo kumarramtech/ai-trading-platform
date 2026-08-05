@@ -34,7 +34,14 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                                 request.getMacd());
 
 
-        String explanation = aiGatewayService.analyze(prompt);
+        String explanation = executeAiOrFallback(
+                prompt,
+                """
+                Technical explanation generated because all AI providers are unavailable.
+        
+                Signal is based on RSI, EMA and MACD analysis.
+                Please follow standard risk management.
+                """);
 
         return SignalExplanationResponse.builder()
                 .symbol(request.getSymbol())
@@ -63,7 +70,9 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                                 request.getEma50(),
                                 request.getMacd());
 
-        String review = aiGatewayService.analyze(prompt);
+        String review = executeAiOrFallback(
+                prompt,
+                "Trade review unavailable. AI providers are currently unavailable.");
 
         return TradeReviewResponse.builder()
                 .tradeId(request.getTradeId())
@@ -116,7 +125,9 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
         }
 
         String prompt = PromptConstants.STRATEGY_RESPONSE_PROMPT.formatted(tradeData);
-        String review =aiGatewayService.analyze(prompt);
+        String review = executeAiOrFallback(
+                prompt,
+                "Strategy review unavailable. AI providers are currently unavailable.");
 
         return StrategyReviewResponse.builder()
                 .totalTrades(trades.size())
@@ -141,7 +152,9 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                         request.getEma50(),
                         request.getMacd());
 
-        String analysis =aiGatewayService.analyze(prompt);
+        String analysis = executeAiOrFallback(
+                prompt,
+                "Risk analysis generated using technical indicators only.");
 
         String riskLevel =
                 request.getConfidence() >= 70
@@ -155,5 +168,25 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                 .riskLevel(riskLevel)
                 .analysis(analysis)
                 .build();
+    }
+
+    private String executeAiOrFallback(
+            String prompt,
+            String fallbackMessage) {
+
+        try {
+
+            return aiGatewayService.analyze(prompt);
+
+        } catch (Exception ex) {
+
+            log.warn(
+                    "AI unavailable. Using fallback response. Reason: {}",
+                    ex.getMessage()
+            );
+            log.debug("AI provider failure", ex);
+
+            return fallbackMessage;
+        }
     }
 }

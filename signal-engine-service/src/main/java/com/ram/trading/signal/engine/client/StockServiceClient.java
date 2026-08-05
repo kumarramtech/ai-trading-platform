@@ -14,19 +14,23 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDate;
 
 @Service
-@RequiredArgsConstructor
 public class StockServiceClient implements MarketDataProvider {
 
-    private final WebClient.Builder webClientBuilder;
-    @Value("${stock.service.url}")
-    private String stockServiceUrl;
+    private final WebClient client;
+
+    public StockServiceClient(
+            WebClient.Builder builder,
+            @Value("${stock.service.url}") String stockServiceUrl) {
+
+        this.client = builder
+                .baseUrl(stockServiceUrl)
+                .build();
+    }
 
     @Override
     public Mono<StockResponse> getStockPrice(String symbol) {
 
-        return webClientBuilder
-                .baseUrl(stockServiceUrl)
-                .build()
+        return client
                 .get()
                 .uri("/stocks/{symbol}", symbol)
                 .retrieve()
@@ -35,9 +39,7 @@ public class StockServiceClient implements MarketDataProvider {
 
     public Flux<StockResponse> getAllStocks() {
 
-        return webClientBuilder
-                .baseUrl(stockServiceUrl)
-                .build()
+        return client
                 .get()
                 .uri("/stocks/allstocks")
                 .retrieve()
@@ -48,9 +50,10 @@ public class StockServiceClient implements MarketDataProvider {
             String symbol,
             String interval,
             LocalDate from,
-            LocalDate to){
+            LocalDate to) {
 
-        return webClientBuilder.baseUrl(stockServiceUrl).build().get()
+        return client
+                .get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/api/v1/stocks/{symbol}/history")
                         .queryParam("interval", interval)
@@ -64,13 +67,10 @@ public class StockServiceClient implements MarketDataProvider {
     public Flux<HistoricalPriceResponse> getHistoricalPrices(
             String symbol) {
 
-        return webClientBuilder
-                .baseUrl(stockServiceUrl)
-                .build()
+        return client
                 .get()
                 .uri("/api/v1/history/{symbol}", symbol)
                 .retrieve()
                 .bodyToFlux(HistoricalPriceResponse.class);
-
     }
 }

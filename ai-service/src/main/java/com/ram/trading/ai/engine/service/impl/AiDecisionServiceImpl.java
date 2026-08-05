@@ -57,47 +57,20 @@ public class AiDecisionServiceImpl implements AiDecisionService {
             log.info("=========================================");
             log.info("AI CACHE MISS");
             log.info("KEY : {}", cacheKey);
-            log.info("Invoking LLM Gateway...");
+            log.info("Invoking AI Gateway...");
             log.info("=========================================");
 
             String prompt = promptBuilder.buildPrompt(request);
-
-            log.debug("Prompt Generated Successfully.");
 
             String aiResponse =
                     aiGatewayService.analyze(prompt);
 
             log.info("AI RAW RESPONSE:\n{}", aiResponse);
 
-            AiDecisionResponse response = parser.parse(aiResponse);
-
-            log.info("========== EXECUTION PLAN ==========");
-            if (response.getExecutionPlan() != null) {
-                log.info("Entry      : {}", response.getExecutionPlan().getEntry());
-                log.info("Target     : {}", response.getExecutionPlan().getTarget());
-                log.info("Stop Loss  : {}", response.getExecutionPlan().getStopLoss());
-                log.info("Position   : {}", response.getExecutionPlan().getPositionSize());
-                log.info("Holding    : {}", response.getExecutionPlan().getHoldingPeriod());
-                log.info("Exit       : {}", response.getExecutionPlan().getExitStrategy());
-            } else {
-                log.info("Execution Plan is NULL");
-            }
-            log.info("===================================");
+            AiDecisionResponse response =
+                    parser.parse(aiResponse);
 
             log.info("Parsed Response : {}", response);
-            log.info("Decision Object : {}", response.getDecision());
-
-            log.info("AI Decision_Recommendation : {}",
-                    response.getDecision().getRecommendation());
-
-            if (response.getNewsAnalysis() != null) {
-
-                log.info("========== Parsed News ==========");
-                log.info("Summary   : {}", response.getNewsAnalysis().getSummary());
-                log.info("Sentiment : {}", response.getNewsAnalysis().getSentiment());
-                log.info("Score     : {}", response.getNewsAnalysis().getScore());
-                log.info("================================");
-            }
 
             redisCacheService.put(
                     cacheKey,
@@ -108,82 +81,101 @@ public class AiDecisionServiceImpl implements AiDecisionService {
 
         } catch (Exception ex) {
 
-            log.error("AI Decision Failed", ex);
+            log.error("=========================================");
+            log.error("AI Provider Unavailable.");
+            log.error("Using Engineering Decision.");
+            log.error("=========================================", ex);
 
-            if (ex.getMessage() != null &&
-                    ex.getMessage().contains("429")) {
-
-                log.warn("OpenAI quota exceeded. Using Engineering Decision.");
-
-                return buildFallbackResponse(request);
-            }
-
-            return buildSafeFallbackResponse();
+            return buildFallbackResponse(request);
         }
     }
 
     private AiDecisionResponse buildFallbackResponse(
             TradingDecisionRequest request) {
 
-        AiDecisionResponse response = new AiDecisionResponse();
+        AiDecisionResponse response =
+                new AiDecisionResponse();
 
-        Decision decision = new Decision();
+        Decision decision =
+                new Decision();
 
         AiRecommendation recommendation =
                 AiRecommendation.valueOf(
-                        request.getTechnicalDecision().getSignal().name());
+                        request.getTechnicalDecision()
+                                .getSignal()
+                                .name());
 
         double currentPrice =
-                request.getSignalRequest().getCurrentPrice();
+                request.getSignalRequest()
+                        .getCurrentPrice();
 
         decision.setRecommendation(recommendation);
-        decision.setTradeAllowed(true);
+
+        decision.setTradeAllowed(
+                recommendation != AiRecommendation.HOLD);
+
         decision.setConfidence(
-                request.getTechnicalDecision().getConfidence());
+                request.getTechnicalDecision()
+                        .getConfidence());
+
         decision.setReason(
-                "OpenAI unavailable. Using Engineering Decision.");
+                "AI unavailable. Technical analysis used.");
 
         response.setDecision(decision);
 
-        ExecutionPlan executionPlan = new ExecutionPlan();
+        ExecutionPlan executionPlan =
+                new ExecutionPlan();
 
         executionPlan.setEntry(currentPrice);
 
         switch (recommendation) {
 
             case BUY -> {
+
                 executionPlan.setTarget(
-                        currentPrice * 1.02);      // +2%
+                        currentPrice * 1.02);
+
                 executionPlan.setStopLoss(
-                        currentPrice * 0.99);      // -1%
+                        currentPrice * 0.99);
             }
 
             case SELL -> {
+
                 executionPlan.setTarget(
-                        currentPrice * 0.98);      // -2%
+                        currentPrice * 0.98);
+
                 executionPlan.setStopLoss(
-                        currentPrice * 1.01);      // +1%
+                        currentPrice * 1.01);
             }
 
             default -> {
+
                 executionPlan.setTarget(currentPrice);
+
                 executionPlan.setStopLoss(currentPrice);
             }
         }
 
         executionPlan.setHoldingPeriod("INTRADAY");
-        executionPlan.setExitStrategy("Engineering Fallback");
-        executionPlan.setPositionSize(1);
+
+        executionPlan.setExitStrategy(
+                "Technical Strategy");
+
+        /*
+         * Keep Position Size as 0.
+         * Risk Management Service will decide.
+         */
+        executionPlan.setPositionSize(0);
 
         response.setExecutionPlan(executionPlan);
 
         response.setAiReasoning(
-                "OpenAI unavailable (429). Engineering decision used.");
+                "AI providers unavailable. Engineering decision applied.");
 
         return response;
     }
 
-    private AiDecisionResponse buildSafeFallbackResponse() {
+    /*private AiDecisionResponse buildSafeFallbackResponse() {
 
         AiDecisionResponse response = new AiDecisionResponse();
 
@@ -201,5 +193,5 @@ public class AiDecisionServiceImpl implements AiDecisionService {
                 "Safe fallback response generated due to unexpected AI failure.");
 
         return response;
-    }
+    }*/
 }

@@ -13,23 +13,25 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class AIServiceClient {
 
-    @Value("${ai.service.url}")
-    private String aiServiceUrl;
+    private final WebClient client;
 
-    private final WebClient.Builder builder;
+    public AIServiceClient(
+            WebClient.Builder builder,
+            @Value("${ai.service.url}") String aiServiceUrl) {
 
-    private WebClient client() {
-        return builder.baseUrl(aiServiceUrl).build();
+        this.client = builder
+                .baseUrl(aiServiceUrl)
+                .build();
     }
+
 
     public Mono<SignalExplanationResponse> explainSignal(
             SignalExplanationRequest request) {
 
-        return client()
+        return client
                 .post()
                 .uri("/ai/explain-signal")
                 .bodyValue(request)
@@ -40,7 +42,7 @@ public class AIServiceClient {
     public Mono<TradeReviewResponse> reviewTrade(
             TradeReviewRequest request) {
 
-        return client()
+        return client
                 .post()
                 .uri("/ai/review-trade")
                 .bodyValue(request)
@@ -51,7 +53,7 @@ public class AIServiceClient {
     public Mono<StrategyReviewResponse> reviewStrategy(
             List<TradeReviewRequest> request) {
 
-        return  client()
+        return client
                 .post()
                 .uri("/ai/strategy-review")
                 .bodyValue(request)
@@ -62,7 +64,7 @@ public class AIServiceClient {
     public Mono<RiskAnalysisResponse> analyzeRisk(
             RiskAnalysisRequest request) {
 
-        return client()
+        return client
                 .post()
                 .uri("/ai/risk-analysis")
                 .bodyValue(request)
@@ -79,7 +81,7 @@ public class AIServiceClient {
 
         log.info("Preparing AI Decision Request for {}", symbol);
 
-        return client()
+        return client
                 .post()
                 .uri("/ai/trading-decision")
                 .bodyValue(request)
