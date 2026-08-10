@@ -27,7 +27,7 @@ public class RiskManagementService {
 
     private static final int MAX_OPEN_TRADES = 20;
 
-    private static final int MAX_CONSECUTIVE_LOSSES = 3;
+    private static final int MAX_CONSECUTIVE_LOSSES = 100;
 
     public RiskCheckResponse validateTrade() {
 

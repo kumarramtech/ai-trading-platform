@@ -4,6 +4,8 @@ import com.ram.trading.ai.engine.dto.portfolio.OpenPositionContextResponse;
 import com.ram.trading.ai.engine.dto.portfolio.PortfolioContextResponse;
 import lombok.*;
 
+import java.util.List;
+
 
 @Builder
 @Getter
@@ -16,12 +18,14 @@ public class TradingDecisionRequest {
 
     private TradingDecision technicalDecision;
 
-    private String newsSummary;
+    //private String newsSummary;
 
     private String sectorSummary;
 
     private PortfolioContextResponse portfolioContext;;
 
     private OpenPositionContextResponse openPositionContext;
+
+    private List<NewsArticle> news;
 
 }

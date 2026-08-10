@@ -9,6 +9,7 @@ import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -37,6 +38,27 @@ public class TradingSignalService {
 
             return repository.save(entity);
         }
+
+    public Mono<Void> closeSignal(Long signalId,
+                                  Double exitPrice,
+                                  Double profitLoss,
+                                  SignalStatus status) {
+
+        return Mono.fromRunnable(() -> {
+
+            TradingSignalEntity signal = repository.findById(signalId)
+                    .orElseThrow(() ->
+                            new RuntimeException("Trading Signal Not Found"));
+
+            signal.setExitPrice(exitPrice);
+            signal.setProfitLoss(profitLoss);
+            signal.setStatus(status);
+            signal.setExitTime(LocalDateTime.now());
+
+            repository.save(signal);
+
+        }).subscribeOn(Schedulers.boundedElastic()).then();
+    }
 
     private Double round(Double value) {
 

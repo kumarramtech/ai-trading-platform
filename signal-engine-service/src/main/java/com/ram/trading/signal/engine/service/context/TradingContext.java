@@ -1,10 +1,13 @@
 package com.ram.trading.signal.engine.service.context;
 
+import com.ram.trading.signal.engine.dto.ai.NewsArticle;
 import com.ram.trading.signal.engine.dto.ai.portfolio.OpenPositionContextResponse;
 import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
+
+import java.util.List;
 
 @Getter
 @Setter
@@ -27,4 +30,5 @@ public class TradingContext {
 
     private OpenPositionContextResponse openPositionContext;
 
+    private List<NewsArticle> news;
 }

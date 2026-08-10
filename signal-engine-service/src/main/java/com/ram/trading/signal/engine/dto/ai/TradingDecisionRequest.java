@@ -6,6 +6,8 @@ import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
 import lombok.*;
 
+import java.util.List;
+
 @Builder
 @Getter
 @Setter
@@ -17,7 +19,7 @@ public class TradingDecisionRequest {
 
     private TradingDecision technicalDecision;
 
-    private String newsSummary;
+/*    private String newsSummary;*/
 
     private String sectorSummary;
 
@@ -28,5 +30,9 @@ public class TradingDecisionRequest {
     private Integer newsScore;
 
     private OpenPositionContextResponse openPositionContext;
+
+    private List<NewsArticle> news;
+
+
 
 }

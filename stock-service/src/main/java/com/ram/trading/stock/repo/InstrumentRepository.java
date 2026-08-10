@@ -6,6 +6,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -50,5 +51,21 @@ public interface InstrumentRepository
        ORDER BY i.tradingSymbol
        """)
     List<InstrumentSubscriptionResponse> findSubscriptionInstruments();
+
+    @Query("""
+   SELECT new com.ram.trading.stock.dto.InstrumentSubscriptionResponse(
+        i.tradingSymbol,
+        i.instrumentKey
+   )
+   FROM Instrument i
+   WHERE i.isActive = true
+     AND i.exchange = 'NSE'
+     AND i.segment = 'NSE_EQ'
+     AND i.instrumentType = 'EQ'
+     AND i.tradingSymbol IN :symbols
+   ORDER BY i.tradingSymbol
+   """)
+    List<InstrumentSubscriptionResponse> findSubscriptionInstruments(
+            @Param("symbols") List<String> symbols);
 
 }

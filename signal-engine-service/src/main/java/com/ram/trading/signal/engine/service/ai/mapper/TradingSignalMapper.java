@@ -3,7 +3,6 @@ package com.ram.trading.signal.engine.service.ai.mapper;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
-import com.ram.trading.signal.engine.dto.ai.technical.TechnicalAnalysis;
 import com.ram.trading.signal.engine.dto.portfolio.RiskLevel;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -19,10 +18,13 @@ public class TradingSignalMapper {
 
         TradingSignal signal = TradingSignal.builder()
                 .symbol(request.getSymbol())
+
                 .signal(mapSignal(aiResponse))
-                .confidence(aiResponse.getDecision() != null
-                        ? aiResponse.getDecision().getConfidence()
-                        : 0)
+
+                .confidence(
+                        aiResponse.getDecision() != null
+                                ? aiResponse.getDecision().getConfidence()
+                                : 0)
 
                 .entryPrice(
                         aiResponse.getExecutionPlan() != null
@@ -60,7 +62,8 @@ public class TradingSignalMapper {
                         aiResponse.getExecutionPlan() == null
                                 || aiResponse.getExecutionPlan().getPositionSize() == null
                                 ? null
-                                : String.valueOf(aiResponse.getExecutionPlan().getPositionSize()))
+                                : String.valueOf(
+                                aiResponse.getExecutionPlan().getPositionSize()))
 
                 .exitStrategy(
                         aiResponse.getExecutionPlan() == null
@@ -82,42 +85,23 @@ public class TradingSignalMapper {
                                 ? null
                                 : aiResponse.getNewsAnalysis().getScore())
 
+                // IMPORTANT:
+                // Technical indicators are calculated by our Signal Engine.
+                // Never take these values from the AI response.
+                .rsi(request.getRsi())
+                .ema20(request.getEma20())
+                .ema50(request.getEma50())
+                .macd(request.getMacd())
+
                 .build();
 
-        TechnicalAnalysis technical = aiResponse.getTechnicalAnalysis();
-
-        if (technical != null) {
-
-            // RSI
-            if (technical.getRsi() != null) {
-                signal.setRsi(technical.getRsi().getValue());
-            } else {
-                signal.setRsi(request.getRsi());
-            }
-
-            // EMA
-            if (technical.getEma() != null) {
-                signal.setEma20(technical.getEma().getEma20());
-                signal.setEma50(technical.getEma().getEma50());
-            } else {
-                signal.setEma20(request.getEma20());
-                signal.setEma50(request.getEma50());
-            }
-
-            // MACD
-            if (technical.getMacd() != null) {
-                signal.setMacd(technical.getMacd().getValue());
-            } else {
-                signal.setMacd(request.getMacd());
-            }
-
-        } else {
-
-            signal.setRsi(request.getRsi());
-            signal.setEma20(request.getEma20());
-            signal.setEma50(request.getEma50());
-            signal.setMacd(request.getMacd());
-        }
+        log.info(
+                "Using Engineering Technical Indicators | Symbol={} RSI={} EMA20={} EMA50={} MACD={}",
+                request.getSymbol(),
+                request.getRsi(),
+                request.getEma20(),
+                request.getEma50(),
+                request.getMacd());
 
         validateExecutionPlan(signal);
 

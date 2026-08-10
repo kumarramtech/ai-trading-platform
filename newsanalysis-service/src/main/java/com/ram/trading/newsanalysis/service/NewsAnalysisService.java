@@ -1,14 +1,12 @@
 package com.ram.trading.newsanalysis.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ram.trading.newsanalysis.client.AIClient;
 import com.ram.trading.newsanalysis.dto.NewsAnalysisResponse;
+import com.ram.trading.newsanalysis.dto.NewsArticle;
 import com.ram.trading.newsanalysis.parser.NewsAnalysisResponseParser;
 import com.ram.trading.newsanalysis.prompt.NewsAnalysisPromptBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -24,8 +22,6 @@ public class NewsAnalysisService {
     private final NewsCollectionService newsCollectionService;
 
     private final NewsAnalysisPromptBuilder promptBuilder;
-
-    private final ObjectMapper objectMapper;
 
     private final NewsAnalysisResponseParser parser;
 
@@ -48,6 +44,27 @@ public class NewsAnalysisService {
                                             aiResponse));
                 });
 
+    }
+
+    public Mono<List<NewsArticle>> getLatestNews(String symbol) {
+
+        log.info("Fetching latest news for {}", symbol);
+
+        return newsCollectionService
+                .collectNews(symbol)
+                .doOnSuccess(headlines ->
+                        log.info("Collected {} headlines for {}",
+                                headlines != null ? headlines.size() : 0,
+                                symbol))
+                .onErrorResume(ex -> {
+
+                    log.warn(
+                            "Unable to fetch latest news for {}. Returning empty news list.",
+                            symbol,
+                            ex);
+
+                    return Mono.just(List.of());
+                });
     }
 
 }

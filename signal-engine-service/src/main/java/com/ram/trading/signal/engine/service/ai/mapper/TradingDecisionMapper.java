@@ -22,7 +22,8 @@ public class TradingDecisionMapper {
         // Handle missing TradingContext safely
         if (context == null) {
 
-            log.warn("TradingContext is null for {}. Building AI request without market context.",
+            log.warn(
+                    "TradingContext is null for {}. Building AI request without market context.",
                     signalRequest.getSymbol());
 
             return TradingDecisionRequest.builder()
@@ -34,9 +35,7 @@ public class TradingDecisionMapper {
         return TradingDecisionRequest.builder()
                 .signalRequest(signalRequest)
                 .technicalDecision(technicalDecision)
-                .newsSummary(context.getNewsSummary())
-                .newsSentiment(context.getNewsSentiment())
-                .newsScore(context.getNewsScore())
+                .news(context.getNews())
                 .sectorSummary(context.getSectorSummary())
                 .portfolioContext(context.getPortfolioContext())
                 .openPositionContext(context.getOpenPositionContext())

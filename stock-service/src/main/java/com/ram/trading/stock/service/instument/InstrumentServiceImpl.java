@@ -101,4 +101,15 @@ public class InstrumentServiceImpl implements InstrumentService {
         return repository.findSubscriptionInstruments();
     }
 
+    @Override
+    public List<InstrumentSubscriptionResponse> getSubscriptionInstruments(
+            List<String> symbols) {
+
+        if (symbols == null || symbols.isEmpty()) {
+            return List.of();
+        }
+
+        return repository.findSubscriptionInstruments(symbols);
+    }
+
 }

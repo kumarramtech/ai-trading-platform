@@ -2,12 +2,14 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
 public class EngineeringFilterService {
 
-    private static final int MIN_AI_CONFIDENCE = 60;
+    @Value("${trading.engineering.min-ai-confidence:60}")
+    private int minAiConfidence;
 
     public boolean isEligibleForAI(
             TradingDecision decision){
@@ -26,6 +28,6 @@ public class EngineeringFilterService {
         }
 
         return decision.getConfidence() != null
-                && decision.getConfidence() >= MIN_AI_CONFIDENCE;
+                && decision.getConfidence() >= minAiConfidence;
     }
 }

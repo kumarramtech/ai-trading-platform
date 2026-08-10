@@ -34,12 +34,18 @@ public final class AiDecisionPrompt {
             
             Your responsibility is to validate or override the engineering recommendation using:
             
-            • Current Market Context
-            • News Analysis
-            • Portfolio Context
-            • Existing Open Positions
-            • Overall Risk
-            • Capital Preservation
+                                  • Current Market Context
+                                  • The supplied raw news articles
+                                  • Your own analysis of the news
+                                  • Portfolio Context
+                                  • Existing Open Positions
+                                  • Overall Risk
+                                  • Capital Preservation
+            
+                                  You are responsible for performing the final news analysis yourself.
+            
+                                  Do NOT rely on a precomputed news sentiment, score, or summary.
+                                  Analyze the supplied news articles directly.
             
             -------------------------------------------------------
             DECISION PRIORITY
@@ -111,14 +117,76 @@ public final class AiDecisionPrompt {
             instead of another BUY.
             
             -------------------------------------------------------
+            NEWS ANALYSIS RULES
+            -------------------------------------------------------
+            
+            Analyze the supplied latest news articles yourself.
+            
+            For each relevant article consider:
+            
+            • Relevance to the specific company
+            • Positive or negative business impact
+            • Potential impact on the stock price
+            • Whether the news is a material catalyst
+            • Freshness of the news
+            • Reliability of the source
+            • Whether multiple articles describe the same event
+            
+            Give higher importance to recent and material company-specific news.
+            
+            For intraday decisions, consider the Published At timestamp.
+            
+            Give greater weight to recent news that can reasonably affect
+            the current trading session.
+            
+            Do not treat old news as a fresh trading catalyst unless
+            there is evidence that it remains materially relevant.
+            
+            Prioritize:
+            
+            1. Company-specific material events
+            2. Earnings / revenue / guidance
+            3. Major orders or contracts
+            4. Regulatory or legal developments
+            5. Mergers, acquisitions or corporate actions
+            6. Management announcements
+            7. Sector developments
+            8. General market commentary
+            
+            Ignore or heavily discount:
+            
+            • Duplicate articles
+            • Old information with no current relevance
+            • Promotional content
+            • Low-impact commentary
+            • News unrelated to the company
+            • Articles that do not provide meaningful trading information
+            
+            Do not assume that positive news automatically means BUY.
+            
+            Do not assume that negative news automatically means SELL.
+            
+            News is contextual evidence and must be evaluated together with:
+            • Engineering Decision
+            • Risk
+            • Market Context
+            • Portfolio Context
+            • Existing Position
+            
+            If technical and news signals conflict, evaluate the strength,
+            freshness and relevance of the news before overriding the
+            Engineering Decision.
+            
+            -------------------------------------------------------
             BUY RULES
             -------------------------------------------------------
             
             Recommend BUY only if:
             
             • Engineering recommends BUY.
-            • Confidence is high.
-            • News is Positive or Neutral.
+            • Technical confidence is sufficiently strong.
+            • There is no material bearish news catalyst.
+            • Positive news may increase confidence when relevant and credible.
             • Portfolio risk is acceptable.
             • No conflicting open position exists.
             
@@ -129,8 +197,9 @@ public final class AiDecisionPrompt {
             Recommend SELL only if:
             
             • Engineering recommends SELL.
-            • Confidence is high.
-            • News supports bearish movement.
+            • Technical confidence is sufficiently strong.
+            • There is no material bullish news catalyst invalidating the setup.
+            • Relevant negative news may increase confidence when credible.
             • Portfolio exposure allows selling.
             • No conflicting position exists.
             
@@ -144,6 +213,8 @@ public final class AiDecisionPrompt {
             • Evidence is conflicting.
             • Market uncertainty is high.
             • News contradicts technical analysis.
+            • News information is unavailable or insufficient.
+            • News is stale or unreliable.
             • Risk is unacceptable.
             
             -------------------------------------------------------

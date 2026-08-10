@@ -1,7 +1,9 @@
 package com.ram.trading.newsanalysis.service;
 
+import com.ram.trading.newsanalysis.client.GoogleNewsClient;
 import com.ram.trading.newsanalysis.client.NewsApiClient;
 import com.ram.trading.newsanalysis.dto.ExchangeConstants;
+import com.ram.trading.newsanalysis.dto.NewsArticle;
 import com.ram.trading.newsanalysis.repo.InstrumentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,41 +21,58 @@ public class NewsCollectionServiceImpl implements NewsCollectionService {
 
     private final NewsApiClient newsApiClient;
     private final InstrumentRepository instrumentRepository;
+    private final GoogleNewsClient googleNewsClient;
 
     @Override
-    public Mono<List<String>> collectNews(String symbol) {
+    public Mono<List<NewsArticle>> collectNews(String symbol) {
 
         return Mono.fromCallable(() ->
                         instrumentRepository
                                 .findByTradingSymbolAndExchangeAndIsActive(
                                         symbol,
                                         ExchangeConstants.NSE,
-                                        true))
+                                        true
+                                )
+                )
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(optionalInstrument -> {
 
                     if (optionalInstrument.isEmpty()) {
 
-                        log.warn("Instrument not found for {}", symbol);
+                        log.warn(
+                                "Instrument not found for {}",
+                                symbol
+                        );
 
                         return Mono.just(List.of());
                     }
 
-                    Instrument instrument = optionalInstrument.get();
+                    Instrument instrument =
+                            optionalInstrument.get();
 
-                    String companyName = instrument.getCompanyName();
+                    String companyName =
+                            instrument.getCompanyName();
 
-                    if (companyName == null || companyName.isBlank()) {
+                    if (companyName == null ||
+                            companyName.isBlank()) {
 
-                        log.warn("Company name missing for symbol [{}]. Falling back to symbol.", symbol);
+                        log.warn(
+                                "Company name missing for symbol [{}]. " +
+                                        "Using symbol for Google News lookup.",
+                                symbol
+                        );
 
                         companyName = symbol;
                     }
 
-                    log.info("Resolved Symbol [{}] -> [{}]", symbol, companyName);
+                    log.info(
+                            "Resolved Symbol [{}] -> [{}]",
+                            symbol,
+                            companyName
+                    );
 
-                    return newsApiClient.getLatestHeadlines(companyName);
-
+                    return googleNewsClient
+                            .getLatestHeadlines(symbol);
                 });
     }
 }

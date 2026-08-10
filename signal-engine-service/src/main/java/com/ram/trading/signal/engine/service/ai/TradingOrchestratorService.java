@@ -142,6 +142,13 @@ public class TradingOrchestratorService {
 
         long aiStart = System.currentTimeMillis();
 
+        log.info("========== AI REQUEST TECHNICAL DATA ==========");
+        log.info("RSI    : {}", aiRequest.getSignalRequest().getRsi());
+        log.info("EMA20  : {}", aiRequest.getSignalRequest().getEma20());
+        log.info("EMA50  : {}", aiRequest.getSignalRequest().getEma50());
+        log.info("MACD   : {}", aiRequest.getSignalRequest().getMacd());
+        log.info("===============================================");
+
         return callAI(aiRequest)
                 .doOnSuccess(response ->
                         log.info("AI Service Time [{}] : {} ms",

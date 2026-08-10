@@ -33,4 +33,7 @@ public interface InstrumentService {
 
     List<InstrumentSubscriptionResponse> getSubscriptionInstruments();
 
+    List<InstrumentSubscriptionResponse> getSubscriptionInstruments(
+            List<String> symbols);
+
 }

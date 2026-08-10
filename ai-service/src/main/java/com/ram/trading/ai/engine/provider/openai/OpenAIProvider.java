@@ -34,19 +34,24 @@ public class OpenAIProvider implements LLMProvider {
         return priority;
     }
 
+    @Value("${ai.provider.openai.enabled:true}")
+    private boolean enabled;
+
     @Override
     public boolean isAvailable() {
-        return true;
+        return enabled;
     }
 
     @Override
     public String analyze(String prompt) {
 
+        long start = System.currentTimeMillis();
         try {
 
-            log.info("=========================================");
-            log.info("Calling {}", getProviderName());
-            log.info("=========================================");
+            log.info("Calling Provider={} Enabled={} Priority={}",
+                    getProviderName(),
+                    enabled,
+                    priority);
 
             String response = chatClient
                     .prompt()
@@ -54,21 +59,26 @@ public class OpenAIProvider implements LLMProvider {
                     .call()
                     .content();
 
-            log.info("{} Response Received Successfully",
-                    getProviderName());
+            long elapsed = System.currentTimeMillis() - start;
+
+            log.info("{} completed successfully in {} ms",
+                    getProviderName(),
+                    elapsed);
 
             return response;
 
         } catch (Exception ex) {
 
-            log.error("{} Failed",
+            long elapsed = System.currentTimeMillis() - start;
+
+            log.error("{} failed after {} ms",
                     getProviderName(),
+                    elapsed,
                     ex);
 
             throw new LLMProviderException(
                     getProviderName() + " Failed",
                     ex);
-
         }
 
     }

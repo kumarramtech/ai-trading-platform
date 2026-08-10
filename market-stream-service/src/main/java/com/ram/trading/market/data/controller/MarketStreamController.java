@@ -9,10 +9,8 @@ import com.ram.trading.market.data.service.MarketStreamService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -54,4 +52,16 @@ public class MarketStreamController {
         return ResponseEntity.ok(marketStreamService.getHealth());
     }
 
+    @PostMapping("/test-price")
+    public Mono<String> setTestPrice(
+            @RequestBody LivePrice livePrice) {
+
+        livePriceCache.update(livePrice);
+
+        return Mono.just(
+                "Test price updated: "
+                        + livePrice.getSymbol()
+                        + " -> "
+                        + livePrice.getPrice());
+    }
 }

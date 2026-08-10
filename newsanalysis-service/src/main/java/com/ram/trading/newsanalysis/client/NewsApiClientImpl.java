@@ -2,6 +2,7 @@ package com.ram.trading.newsanalysis.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ram.trading.newsanalysis.dto.NewsArticle;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,18 +32,25 @@ public class NewsApiClientImpl implements NewsApiClient {
     private String apiKey;
 
     @Override
-    public Mono<List<String>> getLatestHeadlines(String companyName) {
+    public Mono<List<NewsArticle>> getLatestHeadlines(
+            String symbol,
+            String companyName) {
 
-        String encodedCompany =
-                URLEncoder.encode(companyName, StandardCharsets.UTF_8);
+        String encodedSymbol =
+                URLEncoder.encode(symbol, StandardCharsets.UTF_8);
 
         String url = String.format(
                 "%s?ticker=%s&limit=5&apiKey=%s",
                 baseUrl,
-                companyName,
-                apiKey);
+                encodedSymbol,
+                apiKey
+        );
 
-        log.info("Searching news for {}", companyName);
+        log.info(
+                "Searching news for symbol [{}] company [{}]",
+                symbol,
+                companyName
+        );
 
         return webClientBuilder.build()
                 .get()
@@ -50,24 +58,31 @@ public class NewsApiClientImpl implements NewsApiClient {
                 .header(HttpHeaders.ACCEPT, "application/json")
                 .retrieve()
                 .bodyToMono(String.class)
-                .doOnNext(json -> log.info("NewsAPI Response : {}", json))
+                .doOnNext(json ->
+                        log.info("NewsAPI Response : {}", json))
                 .map(this::parseNews)
-                .doOnSuccess(headlines ->
-                        log.info("Fetched {} headlines",
-                                headlines.size()))
+                .doOnSuccess(newsArticles ->
+                        log.info(
+                                "Fetched {} news articles for symbol [{}]",
+                                newsArticles.size(),
+                                symbol
+                        ))
                 .onErrorResume(ex -> {
 
-                    log.error("Unable to fetch NewsAPI", ex);
+                    log.error(
+                            "Unable to fetch NewsAPI for symbol [{}] company [{}]. Continuing without news.",
+                            symbol,
+                            companyName,
+                            ex
+                    );
 
-                    return Mono.just(List.of(
-                            "No latest market news available."
-                    ));
+                    return Mono.just(List.of());
                 });
     }
 
-    private List<String> parseNews(String json) {
+    private List<NewsArticle> parseNews(String json) {
 
-        List<String> headlines = new ArrayList<>();
+        List<NewsArticle> newsArticles = new ArrayList<>();
 
         try {
 
@@ -75,22 +90,50 @@ public class NewsApiClientImpl implements NewsApiClient {
 
             JsonNode articles = root.path("results");
 
+            if (!articles.isArray()) {
+                log.warn("No news results found in NewsAPI response");
+                return newsArticles;
+            }
+
             for (JsonNode article : articles) {
 
-                headlines.add(
-                        article.path("title").asText());
+                JsonNode publisher = article.path("publisher");
 
-                if (headlines.size() >= 5) {
+                List<String> tickers = new ArrayList<>();
+
+                JsonNode tickerNode = article.path("tickers");
+
+                if (tickerNode.isArray()) {
+
+                    for (JsonNode ticker : tickerNode) {
+                        tickers.add(ticker.asText());
+                    }
+                }
+
+                NewsArticle newsArticle = NewsArticle.builder()
+                        .title(article.path("title").asText(""))
+                        .description(article.path("description").asText(""))
+                        .publishedAt(article.path("published_utc").asText(""))
+                        .source(publisher.path("name").asText(""))
+                        .url(article.path("article_url").asText(""))
+                        .tickers(tickers)
+                        .build();
+
+                newsArticles.add(newsArticle);
+
+                if (newsArticles.size() >= 5) {
                     break;
                 }
             }
 
         } catch (Exception ex) {
 
-            log.error("Unable to parse NewsAPI response", ex);
-
+            log.error(
+                    "Unable to parse NewsAPI response",
+                    ex
+            );
         }
 
-        return headlines;
+        return newsArticles;
     }
 }

@@ -4,7 +4,6 @@ import com.ram.trading.signal.engine.client.AIServiceClient;
 import com.ram.trading.signal.engine.client.NotificationClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.client.interfac.PortfolioClient;
-import com.ram.trading.signal.engine.config.MarketSessionService;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.*;
@@ -60,6 +59,8 @@ public class PaperTradingService {
 
     private final TradingSessionService tradingSessionService;
 
+    private final TradingSignalService tradingSignalService;
+
 
     @Value("${trading.capital-per-trade}")
     private double capitalPerTrade;
@@ -73,13 +74,6 @@ public class PaperTradingService {
 
         if (!tradingSessionService.canCreateTrade()) {
             log.info("Trading session closed for new entries.");
-            return;
-        }
-
-        if (!tradingSessionService.canCreateTrade()) {
-
-            log.info("Trading session closed for new entries.");
-
             return;
         }
 
@@ -294,6 +288,7 @@ public class PaperTradingService {
                     // close at entry price.
                     trade.setExitPrice(trade.getEntryPrice());
                     trade.setProfitLoss(0.0);
+
 
                     return Mono.fromCallable(() ->
                                     repository.save(trade))
@@ -554,6 +549,7 @@ public class PaperTradingService {
 
                                 .thenReturn(savedTrade)
                 )
+
 
                 .flatMap(savedTrade -> {
 
@@ -1591,29 +1587,33 @@ public class PaperTradingService {
 
         log.info("==========================================");
         log.info("Trade Closing.......");
-        log.info("Symbol : {}", trade.getSymbol());
+        log.info("Symbol      : {}", trade.getSymbol());
         log.info("Entry Price : {}", trade.getEntryPrice());
-        log.info("Exit Price : {}", tick.getLastTradedPrice());
+        log.info("Exit Price  : {}", tick.getLastTradedPrice());
 
         if (decision.getReason() == ExitReason.TARGET) {
+
             trade.setStatus(SignalStatus.TARGET_HIT);
-        }
-        else if (decision.getReason() == ExitReason.STOP_LOSS) {
+
+        } else if (decision.getReason() == ExitReason.STOP_LOSS) {
+
             trade.setStatus(SignalStatus.STOP_LOSS_HIT);
-        }
-        else if (decision.getReason() == ExitReason.MARKET_CLOSE) {
+
+        } else if (decision.getReason() == ExitReason.MARKET_CLOSE) {
+
             trade.setStatus(SignalStatus.MARKET_CLOSED);
+
             log.info("Trade Closed due to Market Close");
-        }
-        else {
+
+        } else {
+
             trade.setStatus(SignalStatus.CLOSED);
         }
 
-        trade.setExitPrice(tick.getLastTradedPrice());
-
+        trade.setExitPrice(round(tick.getLastTradedPrice()));
         trade.setExitTime(LocalDateTime.now());
 
-        Double pnl = calculatePnL(trade);
+        Double pnl = round(calculatePnL(trade));
 
         trade.setProfitLoss(pnl);
 
@@ -1622,25 +1622,54 @@ public class PaperTradingService {
         return Mono.fromCallable(() -> repository.save(trade))
                 .subscribeOn(Schedulers.boundedElastic())
 
+                // Update Portfolio
                 .flatMap(savedTrade ->
 
                         portfolioClient
-
                                 .closePosition(
                                         savedTrade.getSymbol(),
                                         savedTrade.getQuantity())
 
                                 .doOnSuccess(v ->
-                                        log.info("Portfolio Updated Successfully : {}",
+                                        log.info(
+                                                "Portfolio Updated Successfully : {}",
                                                 savedTrade.getSymbol()))
 
                                 .onErrorResume(ex -> {
-                                    log.error("Portfolio Update Failed", ex);
+
+                                    log.error(
+                                            "Portfolio Update Failed",
+                                            ex);
+
                                     return Mono.empty();
+
                                 })
+
                                 .thenReturn(savedTrade)
                 )
 
+                // Update Trading Signal
+                .flatMap(savedTrade ->
+
+                        tradingSignalService
+                                .closeSignal(
+                                        savedTrade.getSignalId(),
+                                        savedTrade.getExitPrice(),
+                                        savedTrade.getProfitLoss(),
+                                        savedTrade.getStatus())
+
+                                .doOnSuccess(v ->
+                                        log.info("Trading Signal Updated"))
+
+                                .onErrorResume(ex -> {
+                                    log.error("Trading Signal Update Failed", ex);
+                                    return Mono.empty();
+                                })
+
+                                .thenReturn(savedTrade)
+                )
+
+                // Send Notification
                 .flatMap(savedTrade -> {
 
                     NotificationRequest request =
@@ -1650,9 +1679,9 @@ public class PaperTradingService {
                                     .message(
                                             "Symbol: " + savedTrade.getSymbol()
                                                     + ", Status: " + savedTrade.getStatus()
-                                                    + ", Entry: " + savedTrade.getEntryPrice()
-                                                    + ", Exit: " + savedTrade.getExitPrice()
-                                                    + ", PnL: " + savedTrade.getProfitLoss())
+                                                    + ", Entry: ₹" + savedTrade.getEntryPrice()
+                                                    + ", Exit: ₹" + savedTrade.getExitPrice()
+                                                    + ", PnL: ₹" + savedTrade.getProfitLoss())
                                     .build();
 
                     return notificationClient
@@ -1660,22 +1689,23 @@ public class PaperTradingService {
                             .sendNotification(request)
 
                             .doOnError(ex ->
-                                    log.error("Failed to send notification", ex))
+                                    log.error(
+                                            "Failed to send notification",
+                                            ex))
 
                             .onErrorResume(ex -> Mono.empty())
 
                             .then();
-
                 })
 
                 .doOnSuccess(v -> {
 
-                    log.info(
-                            "Trade Closed | Symbol={} | Status={} | P/L={}",
-                            trade.getSymbol(),
-                            trade.getStatus(),
-                            trade.getProfitLoss()
-                    );
+                    log.info("==========================================");
+                    log.info("Trade Closed Successfully");
+                    log.info("Symbol : {}", trade.getSymbol());
+                    log.info("Status : {}", trade.getStatus());
+                    log.info("PnL    : {}", trade.getProfitLoss());
+                    log.info("==========================================");
 
                 });
 
