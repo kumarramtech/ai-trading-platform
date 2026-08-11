@@ -11,6 +11,7 @@ import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
@@ -200,7 +201,10 @@ public class PortfolioService {
                 portfolioRepository
                         .findBySymbol(request.getSymbol())
                         .orElse(null);
-        log.info("Opening Portfolio Position : {}", request.getSymbol());
+
+        log.info(
+                "Opening Portfolio Position : {}",
+                request.getSymbol());
 
         if (portfolio == null) {
 
@@ -209,49 +213,78 @@ public class PortfolioService {
             portfolio.setSymbol(request.getSymbol());
             portfolio.setQuantity(request.getQuantity());
             portfolio.setAveragePrice(request.getEntryPrice());
+            portfolio.setCreatedAt(LocalDateTime.now());
+
+            log.info(
+                    "Creating NEW Portfolio Position | Symbol={} | CreatedAt={}",
+                    request.getSymbol(),
+                    portfolio.getCreatedAt());
 
             return portfolioRepository.save(portfolio);
         }
 
         int newQuantity =
-                portfolio.getQuantity() + request.getQuantity();
+                portfolio.getQuantity()
+                        + request.getQuantity();
 
         double investedValue =
-                (portfolio.getQuantity() * portfolio.getAveragePrice())
+                (portfolio.getQuantity()
+                        * portfolio.getAveragePrice())
                         +
-                        (request.getQuantity() * request.getEntryPrice());
+                        (request.getQuantity()
+                                * request.getEntryPrice());
 
         portfolio.setQuantity(newQuantity);
 
         double averagePrice =
-                Math.round((investedValue / newQuantity) * 100.0) / 100.0;
+                Math.round(
+                        (investedValue / newQuantity) * 100.0)
+                        / 100.0;
 
         portfolio.setAveragePrice(averagePrice);
+
+        log.info(
+                "Updating EXISTING Portfolio Position | Symbol={} | CreatedAt={} | Quantity={}",
+                portfolio.getSymbol(),
+                portfolio.getCreatedAt(),
+                newQuantity);
 
         return portfolioRepository.save(portfolio);
     }
 
-    public Portfolio closePosition(ClosePositionRequest request) {
+    public Portfolio closePosition(
+            ClosePositionRequest request) {
 
         Optional<Portfolio> optional =
-                portfolioRepository.findBySymbol(request.getSymbol());
+                portfolioRepository.findBySymbol(
+                        request.getSymbol());
 
-        log.info("Closing Portfolio Position : {}", request.getSymbol());
+        log.info(
+                "Closing Portfolio Position : {}",
+                request.getSymbol());
+
         if (optional.isEmpty()) {
+
             throw new IllegalArgumentException(
                     "Portfolio not found for symbol : "
                             + request.getSymbol());
         }
 
         Portfolio portfolio = optional.get();
-        int remaining = portfolio.getQuantity() - request.getQuantity();
+
+        int remaining =
+                portfolio.getQuantity()
+                        - request.getQuantity();
 
         if (remaining <= 0) {
+
             portfolioRepository.delete(portfolio);
+
             return portfolio;
         }
 
         portfolio.setQuantity(remaining);
+
         return portfolioRepository.save(portfolio);
     }
 
@@ -264,15 +297,27 @@ public class PortfolioService {
 
         for (Portfolio portfolio : portfolios) {
 
-            StockResponse stockResponse =
-                    stockServiceClient
-                            .getStockPrice(portfolio.getSymbol())
-                            .block();
+            String symbol = portfolio.getSymbol();
 
-            if (stockResponse != null) {
-                stockPrices.put(
-                        portfolio.getSymbol(),
-                        stockResponse);
+            if (stockPrices.containsKey(symbol)) {
+                continue;
+            }
+
+            try {
+                StockResponse stockResponse =
+                        stockServiceClient
+                                .getStockPrice(symbol)
+                                .block();
+
+                if (stockResponse != null) {
+                    stockPrices.put(symbol, stockResponse);
+                }
+
+            } catch (Exception ex) {
+                log.warn(
+                        "Unable to fetch current price for portfolio symbol : {}",
+                        symbol,
+                        ex);
             }
         }
 

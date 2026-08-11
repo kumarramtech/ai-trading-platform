@@ -8,19 +8,39 @@ public final class CacheKeyBuilder {
 
     private CacheKeyBuilder(){}
 
-    public static String buildAiDecisionKey(TradingDecisionRequest request) {
+    public static String buildAiDecisionKey(
+            TradingDecisionRequest request) {
 
-        SignalGenerationRequest signal = request.getSignalRequest();
-        TradingDecision decision = request.getTechnicalDecision();
+        SignalGenerationRequest signal =
+                request.getSignalRequest();
 
-        return String.join(":",
+        TradingDecision decision =
+                request.getTechnicalDecision();
+
+        return String.join(
+                ":",
                 CacheConstants.AI_DECISION,
                 signal.getSymbol(),
                 decision.getSignal().name(),
                 decision.getConfidenceLevel().name(),
-                String.valueOf(signal.getRsi().intValue()),
-                String.valueOf(signal.getCurrentPrice().intValue())
+                format(signal.getRsi()),
+                format(signal.getEma20()),
+                format(signal.getEma50()),
+                format(signal.getMacd()),
+                format(signal.getCurrentPrice())
         );
+    }
+
+    private static String format(Double value) {
+
+        if (value == null) {
+            return "NA";
+        }
+
+        return String.format(
+                java.util.Locale.US,
+                "%.4f",
+                value);
     }
 
 }

@@ -3,7 +3,14 @@ package com.ram.trading.signal.engine.client;
 import com.ram.trading.signal.engine.dto.*;
 import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.ai.TradingDecisionRequest;
-import lombok.RequiredArgsConstructor;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import reactor.netty.http.client.HttpClient;
+
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -22,7 +29,27 @@ public class AIServiceClient {
             WebClient.Builder builder,
             @Value("${ai.service.url}") String aiServiceUrl) {
 
+        HttpClient httpClient = HttpClient.create()
+                .option(
+                        ChannelOption.CONNECT_TIMEOUT_MILLIS,
+                        3000)
+                .responseTimeout(
+                        Duration.ofSeconds(15))
+                .doOnConnected(connection ->
+                        connection
+                                .addHandlerLast(
+                                        new ReadTimeoutHandler(
+                                                15,
+                                                TimeUnit.SECONDS))
+                                .addHandlerLast(
+                                        new WriteTimeoutHandler(
+                                                15,
+                                                TimeUnit.SECONDS)));
+
         this.client = builder
+                .clientConnector(
+                        new ReactorClientHttpConnector(
+                                httpClient))
                 .baseUrl(aiServiceUrl)
                 .build();
     }
@@ -75,11 +102,17 @@ public class AIServiceClient {
     public Mono<AiDecisionResponse> evaluate(
             TradingDecisionRequest request) {
 
-        String symbol = request.getSignalRequest() != null
-                ? request.getSignalRequest().getSymbol()
-                : "UNKNOWN";
+        String symbol =
+                request.getSignalRequest() != null
+                        ? request.getSignalRequest().getSymbol()
+                        : "UNKNOWN";
 
-        log.info("Preparing AI Decision Request for {}", symbol);
+        long start =
+                System.currentTimeMillis();
+
+        log.info(
+                "Calling AI Decision Service for {}",
+                symbol);
 
         return client
                 .post()
@@ -87,14 +120,34 @@ public class AIServiceClient {
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(AiDecisionResponse.class)
-                .doOnSubscribe(subscription ->
-                        log.info("Calling AI Decision Service for {}", symbol))
-                .doOnSuccess(response ->
-                        log.info("AI Decision Received for {} : Decision={}, Confidence={}",
-                                symbol,
-                                response.getDecision(),
-                                response.getDecision().getConfidence()))
-                .doOnError(error ->
-                        log.error("AI Decision Failed for {}", symbol, error));
+
+                .doOnSuccess(response -> {
+
+                    long elapsed =
+                            System.currentTimeMillis()
+                                    - start;
+
+                    log.info(
+                            "AI Decision Received for {} in {} ms : Decision={}, Confidence={}",
+                            symbol,
+                            elapsed,
+                            response.getDecision(),
+                            response.getDecision() != null
+                                    ? response.getDecision().getConfidence()
+                                    : null);
+                })
+
+                .doOnError(error -> {
+
+                    long elapsed =
+                            System.currentTimeMillis()
+                                    - start;
+
+                    log.error(
+                            "AI Decision Failed for {} after {} ms",
+                            symbol,
+                            elapsed,
+                            error);
+                });
     }
 }

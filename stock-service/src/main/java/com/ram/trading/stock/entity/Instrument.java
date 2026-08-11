@@ -74,9 +74,22 @@ public class Instrument {
     @Column(name = "is_active")
     private Boolean isActive;
 
+    @Column(name = "mtf_enabled")
+    private Boolean mtfEnabled;
+
+    @Column(name = "mtf_bracket", precision = 10, scale = 4)
+    private BigDecimal mtfBracket;
+
+    @Column(name = "intraday_margin", precision = 10, scale = 4)
+    private BigDecimal intradayMargin;
+
+    @Column(name = "intraday_leverage", precision = 10, scale = 4)
+    private BigDecimal intradayLeverage;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
 }

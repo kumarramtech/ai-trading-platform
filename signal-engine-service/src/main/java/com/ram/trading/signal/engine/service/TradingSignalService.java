@@ -21,28 +21,35 @@ import java.util.List;
 public class TradingSignalService {
     
         private final TradingSignalRepository repository;
-    
-        public TradingSignalEntity save(TradingSignal signal){
-            TradingSignalEntity entity = TradingSignalEntity.builder()
-                    .symbol(signal.getSymbol())
-                    .signal(signal.getSignal())
-                    .entryPrice(round(signal.getEntryPrice()))
-                    .targetPrice(round(signal.getTargetPrice()))
-                    .stopLoss(round(signal.getStopLoss()))
-                    .confidence(signal.getConfidence())
-                    .reason(signal.getReason())
-                    .signalTime(LocalDateTime.now())
-                    .status(SignalStatus.OPEN)
-                    .createdAt(LocalDateTime.now())
-                    .build();
 
-            return repository.save(entity);
-        }
+    public TradingSignalEntity save(TradingSignal signal) {
+
+        TradingSignalEntity entity = TradingSignalEntity.builder()
+                .symbol(signal.getSymbol())
+                .signal(signal.getSignal())
+                .entryPrice(round(signal.getEntryPrice()))
+                .targetPrice(round(signal.getTargetPrice()))
+                .stopLoss(round(signal.getStopLoss()))
+                .confidence(signal.getConfidence())
+                .reason(signal.getReason())
+
+                // Engineering technical indicators
+                .rsi(round(signal.getRsi()))
+                .ema20(round(signal.getEma20()))
+                .ema50(round(signal.getEma50()))
+                .macd(round(signal.getMacd()))
+
+                .signalTime(LocalDateTime.now())
+                .status(SignalStatus.OPEN)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        return repository.save(entity);
+    }
 
     public Mono<Void> closeSignal(Long signalId,
                                   Double exitPrice,
-                                  Double profitLoss,
-                                  SignalStatus status) {
+                                  Double profitLoss) {
 
         return Mono.fromRunnable(() -> {
 
@@ -52,7 +59,7 @@ public class TradingSignalService {
 
             signal.setExitPrice(exitPrice);
             signal.setProfitLoss(profitLoss);
-            signal.setStatus(status);
+            signal.setStatus(SignalStatus.CLOSED);
             signal.setExitTime(LocalDateTime.now());
 
             repository.save(signal);

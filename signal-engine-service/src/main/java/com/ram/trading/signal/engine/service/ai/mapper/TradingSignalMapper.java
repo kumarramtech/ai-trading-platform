@@ -16,6 +16,11 @@ public class TradingSignalMapper {
             AiDecisionResponse aiResponse,
             SignalGenerationRequest request) {
 
+        log.info(
+                "EXECUTION PRICE SOURCE | Symbol={} | MarketPrice={}",
+                request.getSymbol(),
+                request.getCurrentPrice());
+
         TradingSignal signal = TradingSignal.builder()
                 .symbol(request.getSymbol())
 
@@ -26,18 +31,19 @@ public class TradingSignalMapper {
                                 ? aiResponse.getDecision().getConfidence()
                                 : 0)
 
-                .entryPrice(
-                        aiResponse.getExecutionPlan() != null
-                                && aiResponse.getExecutionPlan().getEntry() != null
-                                ? aiResponse.getExecutionPlan().getEntry()
-                                : request.getCurrentPrice())
+                // IMPORTANT:
+                // Actual execution entry price must ALWAYS come
+                // from the current market price, NOT from AI.
+                .entryPrice(request.getCurrentPrice())
 
+                // AI can suggest the target price.
                 .targetPrice(
                         aiResponse.getExecutionPlan() != null
                                 && aiResponse.getExecutionPlan().getTarget() != null
                                 ? aiResponse.getExecutionPlan().getTarget()
                                 : request.getCurrentPrice())
 
+                // AI can suggest the stop loss.
                 .stopLoss(
                         aiResponse.getExecutionPlan() != null
                                 && aiResponse.getExecutionPlan().getStopLoss() != null
@@ -106,10 +112,13 @@ public class TradingSignalMapper {
         validateExecutionPlan(signal);
 
         log.info(
-                "Mapped AI Response -> TradingSignal | Symbol={} Signal={} Confidence={}",
+                "Mapped AI Response -> TradingSignal | Symbol={} Signal={} Confidence={} Entry={} Target={} StopLoss={}",
                 signal.getSymbol(),
                 signal.getSignal(),
-                signal.getConfidence());
+                signal.getConfidence(),
+                signal.getEntryPrice(),
+                signal.getTargetPrice(),
+                signal.getStopLoss());
 
         return signal;
     }

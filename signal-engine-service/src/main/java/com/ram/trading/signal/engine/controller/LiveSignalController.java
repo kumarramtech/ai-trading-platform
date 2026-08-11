@@ -29,12 +29,18 @@ public class LiveSignalController {
         return signalGenerationService.generateSignal(tick)
                 .doOnSuccess(signal -> {
                     long elapsed = System.currentTimeMillis() - start;
-                    log.info("LIVE REQUEST COMPLETED : {} in {} ms", tick.getSymbol(), elapsed);
+                    log.info(
+                            "LIVE REQUEST COMPLETED : {} in {} ms",
+                            tick.getSymbol(),
+                            elapsed);
                 })
                 .doOnError(ex -> {
                     long elapsed = System.currentTimeMillis() - start;
-                    log.error("LIVE REQUEST FAILED : {} after {} ms", tick.getSymbol(), elapsed, ex);
-                })
-                .onErrorResume(ex -> Mono.empty());
+                    log.error(
+                            "LIVE REQUEST FAILED : {} after {} ms",
+                            tick.getSymbol(),
+                            elapsed,
+                            ex);
+                });
     }
 }

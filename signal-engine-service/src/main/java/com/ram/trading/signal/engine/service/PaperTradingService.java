@@ -68,79 +68,203 @@ public class PaperTradingService {
     @Value("${trading.total-capital}")
     private double totalCapital;
 
-    public void createTrade(
+    @Value("${trading.min-available-capital:1000}")
+    private double minAvailableCapital;
+
+    public synchronized void createTrade(
             TradingSignalEntity signal,
             TechnicalIndicatorResponse indicatorResponse) {
 
+        /*
+         * ============================================================
+         * STEP 1 : TRADING SESSION CHECK
+         * ============================================================
+         */
         if (!tradingSessionService.canCreateTrade()) {
-            log.info("Trading session closed for new entries.");
+
+            log.info(
+                    "Trading session closed for new entries. Symbol={}",
+                    signal.getSymbol());
+
             return;
         }
 
         log.info("=================================");
-        log.debug("Entering PaperTradingService");
+        log.info("PAPER TRADE CREATION STARTED");
         log.info("Symbol      : {}", signal.getSymbol());
         log.info("Signal      : {}", signal.getSignal());
         log.info("Entry Price : {}", signal.getEntryPrice());
         log.info("=================================");
 
+        /*
+         * ============================================================
+         * STEP 2 : BASIC VALIDATION
+         * ============================================================
+         */
         if (indicatorResponse == null) {
-            throw new RuntimeException(
+
+            throw new IllegalArgumentException(
                     "Technical indicators not found for "
                             + signal.getSymbol());
         }
 
-        log.debug("Signal Generated = {}", signal.getSignal());
+        /*
+         * ============================================================
+         * STEP 3 : ONLY BUY / SELL CAN CREATE A TRADE
+         * ============================================================
+         *
+         * IMPORTANT:
+         *
+         * We intentionally perform this lightweight validation BEFORE
+         * querying OPEN trades.
+         */
+        if (!SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())
+                && !SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
 
-        // Skip HOLD signals immediately
-        if (!validateTradeCreation(signal)) {
+            log.info(
+                    "Skipping Non-Tradable Signal | Symbol={} | Signal={}",
+                    signal.getSymbol(),
+                    signal.getSignal());
+
             return;
         }
 
+        /*
+         * ============================================================
+         * STEP 4 : VALIDATE ENTRY PRICE
+         * ============================================================
+         */
+        if (signal.getEntryPrice() <= 0) {
 
-        log.debug("Creating New Paper Trade...");
+            log.warn(
+                    "Invalid Entry Price | Symbol={} | EntryPrice={}",
+                    signal.getSymbol(),
+                    signal.getEntryPrice());
 
+            return;
+        }
+
+        /*
+         * ============================================================
+         * STEP 5 : CALCULATE QUANTITY
+         * ============================================================
+         */
         int quantity = calculateQuantity(signal);
 
         if (quantity <= 0) {
-            return;
-        }
 
-        if (!hasSufficientCapital(
-                quantity,
-                signal.getEntryPrice())) {
-
-            log.warn("======================================");
-            log.warn("Insufficient Capital");
-            log.warn("Symbol : {}", signal.getSymbol());
-            log.warn("======================================");
+            log.info(
+                    "Calculated quantity is zero. "
+                            + "Skipping trade | Symbol={} | EntryPrice={}",
+                    signal.getSymbol(),
+                    signal.getEntryPrice());
 
             return;
         }
+
+        /*
+         * ============================================================
+         * STEP 6 : CALCULATE CURRENT AVAILABLE CAPITAL
+         * ============================================================
+         */
+        double availableCapital =
+                getAvailableCapital();
 
         double investmentAmount =
                 quantity * signal.getEntryPrice();
 
-        log.debug("Confidence = {}", signal.getConfidence());
+        log.info("======================================");
+        log.info("CAPITAL CHECK");
+        log.info("Total Capital       : {}", totalCapital);
+        log.info("Used Capital        : {}",
+                totalCapital - availableCapital);
+        log.info("Available Capital   : {}", availableCapital);
+        log.info("Required Capital    : {}", investmentAmount);
+        log.info("Minimum Capital     : {}", minAvailableCapital);
+        log.info("======================================");
 
+        /*
+         * ============================================================
+         * STEP 7 : MINIMUM AVAILABLE CAPITAL GUARD
+         * ============================================================
+         *
+         * If available capital falls below our safety threshold,
+         * DO NOT perform the duplicate OPEN-trade lookup.
+         *
+         * This stops creation of NEW trades.
+         *
+         * Existing OPEN trades continue to be monitored by the
+         * existing exit/position monitoring flow.
+         */
+        if (availableCapital < minAvailableCapital) {
+
+            log.warn("======================================");
+            log.warn("NEW TRADE CREATION STOPPED");
+            log.warn("Symbol              : {}", signal.getSymbol());
+            log.warn("Available Capital   : {}", availableCapital);
+            log.warn("Minimum Required    : {}", minAvailableCapital);
+            log.warn("Existing open trades will continue to be monitored.");
+            log.warn("======================================");
+
+            return;
+        }
+
+        /*
+         * ============================================================
+         * STEP 8 : PREVENT DUPLICATE OPEN TRADE
+         * ============================================================
+         *
+         * This is deliberately AFTER the minimum-capital guard.
+         *
+         * Therefore when capital is too low, we never execute this
+         * database lookup.
+         */
+        if (!validateTradeCreation(signal)) {
+            return;
+        }
+
+        /*
+         * ============================================================
+         * STEP 9 : FINAL CAPITAL CHECK
+         * ============================================================
+         *
+         * Keep this second check because we need to verify that the
+         * actual required investment fits inside available capital.
+         *
+         * Since createTrade() is synchronized, another createTrade()
+         * call from this JVM cannot modify the capital between the
+         * previous check and this point.
+         */
+        if (availableCapital < investmentAmount) {
+
+            log.warn("======================================");
+            log.warn("INSUFFICIENT CAPITAL FOR TRADE");
+            log.warn("Symbol              : {}", signal.getSymbol());
+            log.warn("Available Capital   : {}", availableCapital);
+            log.warn("Required Capital    : {}", investmentAmount);
+            log.warn("======================================");
+
+            return;
+        }
+
+        /*
+         * ============================================================
+         * STEP 10 : BUSINESS VALIDATION
+         * ============================================================
+         */
         log.debug(
                 "Creating Trade => Entry={}, Target={}, Stop={}",
                 signal.getEntryPrice(),
                 signal.getTargetPrice(),
                 signal.getStopLoss());
 
-// ======================================================
-// BUSINESS VALIDATION
-// ======================================================
-
-        if ("BUY".equalsIgnoreCase(signal.getSignal())) {
+        if (SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())) {
 
             if (signal.getTargetPrice() <= signal.getEntryPrice()) {
 
                 log.error(
-                        "Invalid Trade Generated by AI. Symbol={}, Signal={}, Entry={}, Target={}, Stop={}",
+                        "Invalid BUY Trade. Symbol={}, Entry={}, Target={}, Stop={}",
                         signal.getSymbol(),
-                        signal.getSignal(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
@@ -152,9 +276,8 @@ public class PaperTradingService {
             if (signal.getStopLoss() >= signal.getEntryPrice()) {
 
                 log.error(
-                        "Invalid Trade Generated by AI. Symbol={}, Signal={}, Entry={}, Target={}, Stop={}",
+                        "Invalid BUY Trade. Symbol={}, Entry={}, Target={}, Stop={}",
                         signal.getSymbol(),
-                        signal.getSignal(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
@@ -162,16 +285,15 @@ public class PaperTradingService {
                 throw new IllegalStateException(
                         "Invalid BUY Trade : Stop Loss must be less than Entry Price.");
             }
-
         }
-        else if ("SELL".equalsIgnoreCase(signal.getSignal())) {
+
+        else if (SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
 
             if (signal.getTargetPrice() >= signal.getEntryPrice()) {
 
                 log.error(
-                        "Invalid Trade Generated by AI. Symbol={}, Signal={}, Entry={}, Target={}, Stop={}",
+                        "Invalid SELL Trade. Symbol={}, Entry={}, Target={}, Stop={}",
                         signal.getSymbol(),
-                        signal.getSignal(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
@@ -182,65 +304,121 @@ public class PaperTradingService {
 
             if (signal.getStopLoss() <= signal.getEntryPrice()) {
 
-                log.error("Invalid Trade Generated by AI. Symbol={}, Signal={}, Entry={}, Target={}, Stop={}",
+                log.error(
+                        "Invalid SELL Trade. Symbol={}, Entry={}, Target={}, Stop={}",
                         signal.getSymbol(),
-                        signal.getSignal(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
 
-                throw new IllegalStateException("Invalid SELL Trade : Stop Loss must be greater than Entry Price.");
+                throw new IllegalStateException(
+                        "Invalid SELL Trade : Stop Loss must be greater than Entry Price.");
             }
         }
 
-// ======================================================
-// CREATE PAPER TRADE
-// ======================================================
-
+        /*
+         * ============================================================
+         * STEP 11 : CREATE PAPER TRADE
+         * ============================================================
+         */
         PaperTrade trade =
                 PaperTrade.builder()
                         .symbol(signal.getSymbol())
                         .signalId(signal.getId())
                         .signal(signal.getSignal())
+
+                        // Actual market entry price.
                         .entryPrice(round(signal.getEntryPrice()))
+
                         .quantity(quantity)
+
                         .investedAmount(investmentAmount)
+
                         .rsi(indicatorResponse.getRsi14())
                         .ema20(indicatorResponse.getEma20())
                         .ema50(indicatorResponse.getEma50())
                         .macd(indicatorResponse.getMacd())
-                        .targetPrice(round(signal.getTargetPrice()))
-                        .stopLoss(round(signal.getStopLoss()))
-                        .initialStopLoss(round(signal.getStopLoss()))
-                        .currentStopLoss(round(signal.getStopLoss()))
+
+                        .targetPrice(
+                                round(signal.getTargetPrice()))
+
+                        .stopLoss(
+                                round(signal.getStopLoss()))
+
+                        .initialStopLoss(
+                                round(signal.getStopLoss()))
+
+                        .currentStopLoss(
+                                round(signal.getStopLoss()))
+
                         .trailingStep(0)
-                        .lastTrailingUpdate(LocalDateTime.now())
+
+                        .lastTrailingUpdate(
+                                LocalDateTime.now())
+
                         .status(SignalStatus.OPEN)
+
                         .confidence(signal.getConfidence())
+
                         .entryTime(LocalDateTime.now())
+
                         .build();
+
+        /*
+         * ============================================================
+         * STEP 12 : SAVE TRADE
+         * ============================================================
+         */
         PaperTrade saved =
                 repository.save(trade);
 
+        log.info("======================================");
+        log.info("PAPER TRADE CREATED SUCCESSFULLY");
+        log.info("Trade ID            : {}", saved.getId());
+        log.info("Symbol              : {}", saved.getSymbol());
+        log.info("Signal              : {}", saved.getSignal());
+        log.info("Entry Price         : {}", saved.getEntryPrice());
+        log.info("Quantity            : {}", saved.getQuantity());
+        log.info("Invested Amount     : {}", saved.getInvestedAmount());
+        log.info("Available Capital Before Trade : {}",
+                availableCapital);
+        log.info("Available Capital After Trade  : {}",
+                availableCapital - investmentAmount);
+        log.info("======================================");
+
+        /*
+         * ============================================================
+         * STEP 13 : UPDATE PORTFOLIO
+         * ============================================================
+         */
         portfolioClient
                 .openPosition(
                         saved.getSymbol(),
                         saved.getQuantity(),
                         saved.getEntryPrice())
+
                 .doOnSuccess(v ->
-                        log.info("Portfolio Updated Successfully : {}",
+                        log.info(
+                                "Portfolio Updated Successfully : {}",
                                 saved.getSymbol()))
+
                 .onErrorResume(ex -> {
-                    log.error("Portfolio Update Failed", ex);
+
+                    log.error(
+                            "Portfolio Update Failed for {}",
+                            saved.getSymbol(),
+                            ex);
+
                     return Mono.empty();
                 })
+
                 .subscribe();
 
-        log.debug(
-                "Saved Trade => target={}, stop={}",
-                saved.getTargetPrice(),
-                saved.getStopLoss());
-
+        /*
+         * ============================================================
+         * STEP 14 : NOTIFICATION
+         * ============================================================
+         */
         NotificationRequest request =
                 NotificationRequest.builder()
                         .channel(NotificationChannel.SLACK)
@@ -252,14 +430,17 @@ public class PaperTradingService {
                                         + ", Target: ₹" + saved.getTargetPrice()
                                         + ", StopLoss: ₹" + saved.getStopLoss()
                                         + ", Quantity: " + saved.getQuantity()
-                                        + ", Confidence: " + saved.getConfidence() + "%")
+                                        + ", Confidence: "
+                                        + saved.getConfidence()
+                                        + "%")
                         .build();
-
 
         notificationClient
                 .sendNotification(request)
                 .doOnError(e ->
-                        log.error("Slack Notification Failed", e))
+                        log.error(
+                                "Slack Notification Failed",
+                                e))
                 .subscribe();
     }
 
@@ -1655,8 +1836,7 @@ public class PaperTradingService {
                                 .closeSignal(
                                         savedTrade.getSignalId(),
                                         savedTrade.getExitPrice(),
-                                        savedTrade.getProfitLoss(),
-                                        savedTrade.getStatus())
+                                        savedTrade.getProfitLoss())
 
                                 .doOnSuccess(v ->
                                         log.info("Trading Signal Updated"))
@@ -1728,8 +1908,7 @@ public class PaperTradingService {
     private boolean validateTradeCreation(
             TradingSignalEntity signal) {
 
-        // Skip HOLD signals
-        // Allow only BUY and SELL signals
+        // Only BUY and SELL signals can create trades
         if (!SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())
                 && !SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
 
@@ -1742,25 +1921,44 @@ public class PaperTradingService {
             return false;
         }
 
-        // Prevent duplicate OPEN trades for the same symbol
+        String symbol = signal.getSymbol().trim().toUpperCase();
+
         PaperTrade existingTrade =
                 repository.findTopBySymbolAndStatusOrderByEntryTimeDesc(
-                                signal.getSymbol(),
+                                symbol,
                                 SignalStatus.OPEN)
                         .orElse(null);
 
         if (existingTrade != null) {
 
             log.info("======================================");
-            log.info("Open Trade Already Exists");
-            log.info("Symbol   : {}", signal.getSymbol());
+            log.info("OPEN TRADE ALREADY EXISTS");
+            log.info("Symbol   : {}", symbol);
             log.info("Trade Id : {}", existingTrade.getId());
             log.info("======================================");
 
             return false;
         }
 
+        log.info(
+                "No OPEN paper trade found for symbol={}",
+                symbol);
+
         return true;
+    }
+
+    private double getAvailableCapital() {
+
+        double usedCapital =
+                repository.findByStatus(SignalStatus.OPEN)
+                        .stream()
+                        .mapToDouble(PaperTrade::getInvestedAmount)
+                        .sum();
+
+        double availableCapital =
+                totalCapital - usedCapital;
+
+        return Math.max(availableCapital, 0.0);
     }
 
     private int calculateQuantity(
@@ -1776,34 +1974,6 @@ public class PaperTradingService {
         return Math.max(quantity, 0);
     }
 
-    private boolean hasSufficientCapital(
-            int quantity,
-            double entryPrice) {
-
-        double investmentAmount =
-                quantity * entryPrice;
-
-        double usedCapital =
-                repository.findByStatus(SignalStatus.OPEN)
-                        .stream()
-                        .mapToDouble(
-                                PaperTrade::getInvestedAmount)
-                        .sum();
-
-        double availableCapital =
-                totalCapital - usedCapital;
-
-
-
-        log.info("======================================");
-        log.info("Available Capital : {}",
-                availableCapital);
-        log.info("Required Capital : {}",
-                investmentAmount);
-        log.info("======================================");
-
-        return availableCapital >= investmentAmount;
-    }
 
 
     public ClosedPositionResponse getClosedPositions() {

@@ -8,7 +8,7 @@ public final class CacheConstants {
 
     public static final String AI_DECISION = "AI_DECISION";
 
-    public static final Duration AI_DECISION_TTL = Duration.ofMinutes(5);
+    public static final Duration AI_DECISION_TTL = Duration.ofSeconds(30);
 
     public static final Duration NEWS_TTL = Duration.ofMinutes(10);
 

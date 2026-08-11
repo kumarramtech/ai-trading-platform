@@ -54,6 +54,10 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
                         .expiry(getDate(node, "expiry"))
                         .strikePrice(getDecimal(node, "strike_price"))
                         .optionType(getText(node, "option_type"))
+                        .mtfEnabled(getBoolean(node, "mtf_enabled"))
+                        .mtfBracket(getDecimal(node, "mtf_bracket"))
+                        .intradayMargin(getDecimal(node, "intraday_margin"))
+                        .intradayLeverage(getDecimal(node, "intraday_leverage"))
                         .isActive(true)
                         .build();
                 instruments.add(instrument);
@@ -64,6 +68,16 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
         return instruments;
     }
 
+    private Boolean getBoolean(JsonNode node, String field) {
+
+        JsonNode value = node.get(field);
+
+        if (value == null || value.isNull()) {
+            return false;
+        }
+
+        return value.asBoolean();
+    }
 
     private String getText(JsonNode node, String field) {
         JsonNode value = node.get(field);

@@ -22,6 +22,8 @@ public interface PaperTradeRepository
             Long signalId,
             SignalStatus status);
 
+    Optional<PaperTrade> findFirstBySymbolAndStatus(String symbol,SignalStatus status);
+
     List<PaperTrade> findAllByOrderByEntryTimeDesc();
     List<PaperTrade> findTop20ByStatusNotOrderByIdDesc(SignalStatus status);
     long countByStatus(SignalStatus status);

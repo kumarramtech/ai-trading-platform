@@ -5,6 +5,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "portfolio")
 @Data
@@ -22,4 +24,7 @@ public class Portfolio {
 
     @Column(name = "average_price")
     private Double averagePrice;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 }

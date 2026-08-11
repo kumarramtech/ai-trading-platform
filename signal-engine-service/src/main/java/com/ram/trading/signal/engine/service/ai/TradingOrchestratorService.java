@@ -4,6 +4,7 @@ import com.ram.trading.signal.engine.audit.dto.TradingAuditReport;
 import com.ram.trading.signal.engine.audit.service.StrategyStatisticsService;
 import com.ram.trading.signal.engine.audit.service.TradingAuditService;
 import com.ram.trading.signal.engine.contant.SignalType;
+import com.ram.trading.signal.engine.dto.ai.decision.TradingPipelineResult;
 import com.ram.trading.signal.engine.dto.rules.RuleResult;
 import com.ram.trading.signal.engine.service.EngineeringFilterService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingDecisionMapper;
@@ -41,123 +42,221 @@ public class TradingOrchestratorService {
 
     private final StrategyStatisticsService strategyStatisticsService;
 
-    public Mono<AiDecisionResponse> executeTrade(
-            SignalGenerationRequest signalRequest,
-            TradingContext tradingContext) {
+    public Mono<TradingPipelineResult> executeTrade(
+            SignalGenerationRequest signalRequest) {
 
         final long totalStart = System.currentTimeMillis();
 
         log.info("====================================================");
-        log.info("AI Trading Pipeline Started : {}", signalRequest.getSymbol());
+        log.info(
+                "AI Trading Pipeline Started : {}",
+                signalRequest.getSymbol());
         log.info("====================================================");
+
+        /*
+         * ============================================================
+         * STEP 1 : TECHNICAL DECISION
+         * ============================================================
+         *
+         * This is intentionally executed BEFORE TradingContext.
+         *
+         * TradingContext contains expensive downstream calls such as:
+         * - News
+         * - Portfolio
+         * - Open Position
+         *
+         * We must not execute those for symbols that fail
+         * the Engineering Filter.
+         */
 
         long technicalStart = System.currentTimeMillis();
 
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
 
-        log.info("Technical Decision Time [{}] : {} ms",
+        log.info(
+                "Technical Decision Time [{}] : {} ms",
                 signalRequest.getSymbol(),
                 System.currentTimeMillis() - technicalStart);
 
         log.info("Technical Decision Generated");
-        log.info("Symbol      : {}", signalRequest.getSymbol());
-        log.info("Signal      : {}", technicalDecision.getSignal());
-        log.info("Confidence  : {}", technicalDecision.getConfidence());
+        log.info(
+                "Symbol      : {}",
+                signalRequest.getSymbol());
 
-        long engineeringStart = System.currentTimeMillis();
+        log.info(
+                "Signal      : {}",
+                technicalDecision.getSignal());
+
+        log.info(
+                "Confidence  : {}",
+                technicalDecision.getConfidence());
+
+        /*
+         * ============================================================
+         * STEP 2 : ENGINEERING FILTER
+         * ============================================================
+         */
+
+        long engineeringStart =
+                System.currentTimeMillis();
 
         boolean eligible =
-                engineeringFilterService.isEligibleForAI(technicalDecision);
+                engineeringFilterService
+                        .isEligibleForAI(technicalDecision);
 
-        log.info("Engineering Filter Time [{}] : {} ms",
+        log.info(
+                "Engineering Filter Time [{}] : {} ms",
                 signalRequest.getSymbol(),
-                System.currentTimeMillis() - engineeringStart);
+                System.currentTimeMillis()
+                        - engineeringStart);
+
+        /*
+         * ============================================================
+         * STEP 3 : AUDIT
+         * ============================================================
+         */
 
         SignalType emaSignal =
-                getRuleSignal(technicalDecision, "EMA");
+                getRuleSignal(
+                        technicalDecision,
+                        "EMA");
 
         SignalType macdSignal =
-                getRuleSignal(technicalDecision, "MACD");
+                getRuleSignal(
+                        technicalDecision,
+                        "MACD");
 
         SignalType rsiSignal =
-                getRuleSignal(technicalDecision, "RSI");
+                getRuleSignal(
+                        technicalDecision,
+                        "RSI");
 
         TradingAuditReport auditReport =
                 TradingAuditReport.builder()
-                        .symbol(signalRequest.getSymbol())
-                        .currentPrice(signalRequest.getCurrentPrice())
-                        .ema20(signalRequest.getEma20())
-                        .ema50(signalRequest.getEma50())
-                        .sma20(signalRequest.getSma20())
-                        .sma50(signalRequest.getSma50())
-                        .macd(signalRequest.getMacd())
-                        .signalLine(signalRequest.getSignalLine())
-                        .rsi(signalRequest.getRsi())
-                        .emaSignal(emaSignal)
-                        .macdSignal(macdSignal)
-                        .rsiSignal(rsiSignal)
-                        .finalSignal(technicalDecision.getSignal())
-                        .confidence(technicalDecision.getConfidence())
-                        .engineeringFilterPassed(eligible)
+                        .symbol(
+                                signalRequest.getSymbol())
+                        .currentPrice(
+                                signalRequest.getCurrentPrice())
+                        .ema20(
+                                signalRequest.getEma20())
+                        .ema50(
+                                signalRequest.getEma50())
+                        .sma20(
+                                signalRequest.getSma20())
+                        .sma50(
+                                signalRequest.getSma50())
+                        .macd(
+                                signalRequest.getMacd())
+                        .signalLine(
+                                signalRequest.getSignalLine())
+                        .rsi(
+                                signalRequest.getRsi())
+                        .emaSignal(
+                                emaSignal)
+                        .macdSignal(
+                                macdSignal)
+                        .rsiSignal(
+                                rsiSignal)
+                        .finalSignal(
+                                technicalDecision.getSignal())
+                        .confidence(
+                                technicalDecision.getConfidence())
+                        .engineeringFilterPassed(
+                                eligible)
                         .rejectionReason(
                                 eligible
                                         ? "PASSED"
                                         : "Engineering Filter Rejected")
-                        .scanTime(LocalDateTime.now())
+                        .scanTime(
+                                LocalDateTime.now())
                         .build();
 
-        long auditStart = System.currentTimeMillis();
+        long auditStart =
+                System.currentTimeMillis();
 
-        tradingAuditService.audit(auditReport);
+        tradingAuditService.audit(
+                auditReport);
 
-        strategyStatisticsService.recordAudit(auditReport);
+        strategyStatisticsService.recordAudit(
+                auditReport);
 
-        log.info("Audit Time [{}] : {} ms",
+        log.info(
+                "Audit Time [{}] : {} ms",
                 signalRequest.getSymbol(),
-                System.currentTimeMillis() - auditStart);
+                System.currentTimeMillis()
+                        - auditStart);
+
+        /*
+         * ============================================================
+         * STEP 4 : ENGINEERING REJECTION
+         * ============================================================
+         *
+         * VERY IMPORTANT:
+         *
+         * If rejected, we return immediately.
+         *
+         * NO:
+         * - Trading Context
+         * - News
+         * - Portfolio
+         * - Open Position
+         * - AI
+         *
+         * should execute.
+         */
 
         if (!eligible) {
 
-            strategyStatisticsService.printStatistics();
+            log.info(
+                    "Engineering Filter Rejected {}",
+                    signalRequest.getSymbol());
 
-            log.info("TOTAL AI Pipeline Time [{}] : {} ms",
+            strategyStatisticsService
+                    .printStatistics();
+
+            log.info(
+                    "TOTAL AI Pipeline Time [{}] : {} ms",
                     signalRequest.getSymbol(),
-                    System.currentTimeMillis() - totalStart);
+                    System.currentTimeMillis()
+                            - totalStart);
 
             return Mono.empty();
         }
 
-        long mapperStart = System.currentTimeMillis();
+        /*
+         * ============================================================
+         * STEP 5 : BUILD TRADING CONTEXT
+         * ============================================================
+         *
+         * ONLY eligible symbols reach this point.
+         */
 
-        TradingDecisionRequest aiRequest =
-                tradingDecisionMapper.map(
-                        signalRequest,
-                        technicalDecision,
-                        tradingContext);
+        long contextStart =
+                System.currentTimeMillis();
 
-        log.info("AI Request Mapping Time [{}] : {} ms",
-                signalRequest.getSymbol(),
-                System.currentTimeMillis() - mapperStart);
+        log.info(
+                "Building Trading Context for [{}]",
+                signalRequest.getSymbol());
 
-        long aiStart = System.currentTimeMillis();
+        return tradingContextService
+                .buildTradingContext(signalRequest.getSymbol())
+                .flatMap(context -> {
 
-        log.info("========== AI REQUEST TECHNICAL DATA ==========");
-        log.info("RSI    : {}", aiRequest.getSignalRequest().getRsi());
-        log.info("EMA20  : {}", aiRequest.getSignalRequest().getEma20());
-        log.info("EMA50  : {}", aiRequest.getSignalRequest().getEma50());
-        log.info("MACD   : {}", aiRequest.getSignalRequest().getMacd());
-        log.info("===============================================");
+                    TradingDecisionRequest aiRequest =
+                            tradingDecisionMapper.map(
+                                    signalRequest,
+                                    technicalDecision,
+                                    context);
 
-        return callAI(aiRequest)
-                .doOnSuccess(response ->
-                        log.info("AI Service Time [{}] : {} ms",
-                                signalRequest.getSymbol(),
-                                System.currentTimeMillis() - aiStart))
-                .doFinally(signalType ->
-                        log.info("TOTAL AI Pipeline Time [{}] : {} ms",
-                                signalRequest.getSymbol(),
-                                System.currentTimeMillis() - totalStart));
+                    return callAI(aiRequest)
+                            .map(aiResponse ->
+                                    TradingPipelineResult.builder()
+                                            .technicalDecision(technicalDecision)
+                                            .tradingContext(context)
+                                            .aiDecision(aiResponse)
+                                            .build());
+                });
     }
 
     private TradingDecision generateTechnicalDecision(
