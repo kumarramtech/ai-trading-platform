@@ -1,10 +1,10 @@
-package com.ram.trading.auth.service;
+package com.ram.trading.margin;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class BrokerAuthServiceApplicationTests {
+class BalanceMarginServiceApplicationTests {
 
 	@Test
 	void contextLoads() {

@@ -133,7 +133,9 @@ public class TradingSignalMapper {
 
     private void validateExecutionPlan(TradingSignal signal) {
 
-        if (SignalType.HOLD.name().equalsIgnoreCase(signal.getSignal())) {
+        if (SignalType.HOLD.name()
+                .equalsIgnoreCase(signal.getSignal())) {
+
             return;
         }
 
@@ -141,42 +143,83 @@ public class TradingSignalMapper {
                 signal.getTargetPrice() == null ||
                 signal.getStopLoss() == null) {
 
-            log.error("Entry      : {}", signal.getEntryPrice());
-            log.error("Target     : {}", signal.getTargetPrice());
-            log.error("Stop Loss  : {}", signal.getStopLoss());
+            log.error(
+                    "Invalid execution plan with null values | Symbol={} | Entry={} | Target={} | StopLoss={}",
+                    signal.getSymbol(),
+                    signal.getEntryPrice(),
+                    signal.getTargetPrice(),
+                    signal.getStopLoss()
+            );
 
-            throw new IllegalStateException(
-                    "AI Execution Plan contains null values.");
+            applySafeExecutionPlan(signal);
+
+            return;
         }
 
-        if ("BUY".equalsIgnoreCase(signal.getSignal())) {
+        boolean invalid = false;
 
-            if (signal.getTargetPrice() <= signal.getEntryPrice()) {
-                throw new IllegalStateException(
-                        "Invalid BUY Execution Plan from AI.");
-            }
+        if (SignalType.BUY.name()
+                .equalsIgnoreCase(signal.getSignal())) {
 
-            if (signal.getStopLoss() >= signal.getEntryPrice()) {
-                throw new IllegalStateException(
-                        "Invalid BUY Stop Loss from AI.");
-            }
+            invalid =
+                    signal.getTargetPrice() <= signal.getEntryPrice()
+                            || signal.getStopLoss() >= signal.getEntryPrice();
 
-        } else if ("SELL".equalsIgnoreCase(signal.getSignal())) {
+        } else if (SignalType.SELL.name()
+                .equalsIgnoreCase(signal.getSignal())) {
 
-            if (signal.getTargetPrice() >= signal.getEntryPrice()) {
-                throw new IllegalStateException(
-                        "Invalid SELL Execution Plan from AI.");
-            }
+            invalid =
+                    signal.getTargetPrice() >= signal.getEntryPrice()
+                            || signal.getStopLoss() <= signal.getEntryPrice();
+        }
 
-            if (signal.getStopLoss() <= signal.getEntryPrice()) {
-                throw new IllegalStateException(
-                        "Invalid SELL Stop Loss from AI.");
-            }
+        if (invalid) {
+
+            log.warn(
+                    "Invalid AI Execution Plan detected | Symbol={} | Signal={} | Entry={} | Target={} | StopLoss={} | Applying fallback",
+                    signal.getSymbol(),
+                    signal.getSignal(),
+                    signal.getEntryPrice(),
+                    signal.getTargetPrice(),
+                    signal.getStopLoss()
+            );
+
+            applySafeExecutionPlan(signal);
+
+        } else {
+
+            log.info(
+                    "AI Execution Plan Validated Successfully | Symbol={}",
+                    signal.getSymbol()
+            );
+        }
+    }
+
+    private void applySafeExecutionPlan(TradingSignal signal) {
+
+        double entryPrice = signal.getEntryPrice();
+
+        if (SignalType.BUY.name()
+                .equalsIgnoreCase(signal.getSignal())) {
+
+            signal.setTargetPrice(entryPrice * 1.02);
+            signal.setStopLoss(entryPrice * 0.99);
+
+        } else if (SignalType.SELL.name()
+                .equalsIgnoreCase(signal.getSignal())) {
+
+            signal.setTargetPrice(entryPrice * 0.98);
+            signal.setStopLoss(entryPrice * 1.01);
         }
 
         log.info(
-                "AI Execution Plan Validated Successfully for {}",
-                signal.getSymbol());
+                "Fallback Execution Plan Applied | Symbol={} | Signal={} | Entry={} | Target={} | StopLoss={}",
+                signal.getSymbol(),
+                signal.getSignal(),
+                signal.getEntryPrice(),
+                signal.getTargetPrice(),
+                signal.getStopLoss()
+        );
     }
 
 }

@@ -7,6 +7,7 @@ import com.ram.trading.signal.engine.repo.TradingSignalRepository;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -18,6 +19,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TradingSignalService {
     
         private final TradingSignalRepository repository;
@@ -47,22 +49,35 @@ public class TradingSignalService {
         return repository.save(entity);
     }
 
-    public Mono<Void> closeSignal(Long signalId,
-                                  Double exitPrice,
-                                  Double profitLoss) {
+    public Mono<Void> closeSignal(
+            Long signalId,
+            Double exitPrice,
+            Double profitLoss,
+            SignalStatus status,
+            LocalDateTime exitTime) {
 
         return Mono.fromRunnable(() -> {
 
-            TradingSignalEntity signal = repository.findById(signalId)
-                    .orElseThrow(() ->
-                            new RuntimeException("Trading Signal Not Found"));
+            TradingSignalEntity signal =
+                    repository.findById(signalId)
+                            .orElseThrow(() ->
+                                    new RuntimeException(
+                                            "Trading Signal Not Found: " + signalId));
 
             signal.setExitPrice(exitPrice);
             signal.setProfitLoss(profitLoss);
-            signal.setStatus(SignalStatus.CLOSED);
-            signal.setExitTime(LocalDateTime.now());
+            signal.setStatus(status);
+            signal.setExitTime(exitTime);
 
             repository.save(signal);
+
+            log.info(
+                    "Trading Signal Closed | SignalId={} | Status={} | ExitPrice={} | PnL={} | ExitTime={}",
+                    signalId,
+                    status,
+                    exitPrice,
+                    profitLoss,
+                    exitTime);
 
         }).subscribeOn(Schedulers.boundedElastic()).then();
     }

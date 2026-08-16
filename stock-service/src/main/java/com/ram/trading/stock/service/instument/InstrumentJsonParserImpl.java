@@ -26,7 +26,7 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
 
     private final ObjectMapper objectMapper;
 
-    @Override
+    /*@Override
     public List<Instrument> parse(InputStream inputStream) throws IOException {
         log.info("[InstrumentParser] JSON parsing started.");
         List<Instrument> instruments = new ArrayList<>();
@@ -65,6 +65,82 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
         }
         log.info("[InstrumentParser] Parsed {} instruments.",
                 instruments.size());
+        return instruments;
+    }*/
+
+    @Override
+    public List<Instrument> parse(InputStream inputStream) throws IOException {
+
+        log.info("[InstrumentParser] JSON parsing started.");
+
+        List<Instrument> instruments = new ArrayList<>();
+
+        JsonFactory factory = objectMapper.getFactory();
+
+        try (JsonParser parser = factory.createParser(inputStream)) {
+
+            if (parser.nextToken() != JsonToken.START_ARRAY) {
+                throw new IOException("Expected JSON Array");
+            }
+
+            while (parser.nextToken() == JsonToken.START_OBJECT) {
+
+                JsonNode node = objectMapper.readTree(parser);
+
+                // ADD THE DIAGNOSTIC CODE HERE
+                String tradingSymbol = getText(node, "trading_symbol");
+
+                if ("RELIANCE".equals(tradingSymbol)
+                        || "HDFCBANK".equals(tradingSymbol)
+                        || "ICICIBANK".equals(tradingSymbol)) {
+
+                    log.info("""
+                        [RAW INSTRUMENT DATA]
+
+                        Symbol            : {}
+                        Intraday Margin   : {}
+                        Intraday Leverage : {}
+                        MTF Enabled       : {}
+                        MTF Bracket       : {}
+                        """,
+                            tradingSymbol,
+                            node.get("intraday_margin"),
+                            node.get("intraday_leverage"),
+                            node.get("mtf_enabled"),
+                            node.get("mtf_bracket"));
+                }
+
+                // EXISTING CODE - DON'T CHANGE
+                Instrument instrument = Instrument.builder()
+                        .broker("UPSTOX")
+                        .exchange(getText(node, "exchange"))
+                        .segment(getText(node, "segment"))
+                        .tradingSymbol(getText(node, "trading_symbol"))
+                        .companyName(getText(node, "company_name"))
+                        .instrumentKey(getText(node, "instrument_key"))
+                        .exchangeToken(getText(node, "exchange_token"))
+                        .isin(getText(node, "isin"))
+                        .instrumentType(getText(node, "instrument_type"))
+                        .tickSize(getDecimal(node, "tick_size"))
+                        .lotSize(getInteger(node, "lot_size"))
+                        .freezeQuantity(getInteger(node, "freeze_quantity"))
+                        .expiry(getDate(node, "expiry"))
+                        .strikePrice(getDecimal(node, "strike_price"))
+                        .optionType(getText(node, "option_type"))
+                        .mtfEnabled(getBoolean(node, "mtf_enabled"))
+                        .mtfBracket(getDecimal(node, "mtf_bracket"))
+                        .intradayMargin(getDecimal(node, "intraday_margin"))
+                        .intradayLeverage(getDecimal(node, "intraday_leverage"))
+                        .isActive(true)
+                        .build();
+
+                instruments.add(instrument);
+            }
+        }
+
+        log.info("[InstrumentParser] Parsed {} instruments.",
+                instruments.size());
+
         return instruments;
     }
 

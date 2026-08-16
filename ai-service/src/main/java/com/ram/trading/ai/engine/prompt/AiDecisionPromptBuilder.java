@@ -1,8 +1,6 @@
 package com.ram.trading.ai.engine.prompt;
 
-import com.ram.trading.ai.engine.dto.MarketContext;
 import com.ram.trading.ai.engine.dto.NewsArticle;
-import com.ram.trading.ai.engine.dto.SignalGenerationRequest;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
 import org.springframework.stereotype.Component;
 
@@ -13,7 +11,8 @@ public class AiDecisionPromptBuilder {
 
     public String buildPrompt(TradingDecisionRequest request) {
 
-        String newsSection = buildNewsSection(request.getNews());
+        String newsSection =
+                buildNewsSection(request.getNews());
 
         String portfolioSection =
                 request.getPortfolioContext() != null
@@ -41,52 +40,55 @@ public class AiDecisionPromptBuilder {
                         : "No sector summary available.";
 
         return """
-            You are the final AI decision engine for an intraday trading system.
+            You are the final AI validation engine for an
+            intraday trading system.
 
-            Your responsibility is to validate or override the engineering
-            recommendation using:
+            Your primary responsibility is to validate the
+            Engineering / Technical Decision using contextual
+            information.
 
-            • Current Market Context
-            • Technical Decision
-            • Supplied raw news articles
-            • Your own analysis of the news
-            • Portfolio Context
-            • Existing Open Positions
-            • Overall Risk
-            • Capital Preservation
+            =======================================================
+            CORE DECISION PRINCIPLE
+            =======================================================
 
-            You are responsible for performing the final news analysis yourself.
+            The Engineering Decision is the PRIMARY trading
+            recommendation.
 
-            IMPORTANT:
-            Do NOT rely on any precomputed news sentiment, news score,
-            or news summary.
+            Engineering has already evaluated the technical
+            indicators, trend, momentum and trading setup.
 
-            Analyze the supplied news articles directly.
+            Therefore:
+
+            - Do NOT independently replace the technical strategy.
+            - Do NOT reject a valid Engineering BUY or SELL merely
+              because optional contextual information is unavailable.
+            - Do NOT recommend HOLD simply because news is missing,
+              insufficient, stale, neutral or unavailable.
+            - Do NOT treat missing optional data as negative evidence.
+
+            If Engineering recommends BUY or SELL and there is no
+            explicit material contradictory evidence, CONFIRM the
+            Engineering Decision.
 
             =======================================================
             DECISION PRIORITY
             =======================================================
 
-            1. Capital Preservation
-            2. Risk Management
-            3. Existing Open Position
-            4. Engineering Decision
-            5. News Analysis
-            6. Portfolio Context
-            7. Market Context
+            Follow this order:
 
-            Do NOT contradict the engineering decision unless there is
-            strong contextual evidence.
+            1. Explicit Risk Constraint
+            2. Conflicting Open Position
+            3. Explicit Portfolio Constraint
+            4. Material Contradictory News
+            5. Engineering Decision
 
-            Override the engineering recommendation ONLY when there is
-            strong evidence such as:
+            Engineering BUY or SELL should remain unchanged unless
+            one of the higher-priority conditions contains explicit
+            evidence that prevents the trade.
 
-            • Extremely negative and material company-specific news
-            • Extremely positive and material news contradicting a SELL
-            • Very high portfolio risk
-            • Existing position already satisfies the objective
-            • Major market or risk event
-            • Strong conflict between technical and fundamental/news evidence
+            Uncertainty alone is NOT evidence.
+
+            Missing information alone is NOT evidence.
 
             =======================================================
             SIGNAL REQUEST
@@ -100,11 +102,17 @@ public class AiDecisionPromptBuilder {
 
             %s
 
-            Treat the Engineering Decision as the primary technical
-            assessment.
+            IMPORTANT:
+
+            Treat the Engineering Decision as the primary
+            recommendation.
 
             Do not invent technical indicator values.
-            Use the values supplied in the request.
+
+            Do not independently recalculate the technical signal.
+
+            Use the Engineering signal and confidence supplied in
+            the request.
 
             =======================================================
             SECTOR CONTEXT
@@ -113,76 +121,53 @@ public class AiDecisionPromptBuilder {
             %s
 
             =======================================================
-            LATEST NEWS
+            NEWS CONTEXT
             =======================================================
 
             %s
 
             =======================================================
-            NEWS ANALYSIS RULES
+            NEWS RULES
             =======================================================
 
-            Analyze the supplied latest news articles yourself.
+            Analyze only the news that is explicitly supplied.
 
-            For relevant articles consider:
+            News can override Engineering ONLY when the supplied
+            news provides clear, material and relevant evidence.
 
-            • Relevance to the specific company
-            • Positive or negative business impact
-            • Potential impact on the stock price
-            • Whether the news is a material catalyst
-            • Freshness of the news
-            • Reliability of the source
-            • Whether multiple articles describe the same event
+            Examples include:
 
-            Give higher importance to recent and material company-specific news.
+            - Major regulatory action
+            - Serious legal action
+            - Major fraud or governance issue
+            - Significant earnings surprise
+            - Major contract cancellation
+            - Major merger or acquisition event
+            - Severe company-specific adverse event
+            - Other clearly material event that invalidates the
+              Engineering setup
 
-            For intraday decisions, consider the Published At timestamp.
+            IMPORTANT NEWS DEFAULT:
 
-            Give greater weight to recent news that can reasonably affect
-            the current trading session.
+            If news is:
 
-            Do not treat old news as a fresh trading catalyst unless there
-            is evidence that it remains materially relevant.
+            - unavailable
+            - empty
+            - insufficient
+            - neutral
+            - stale
+            - unrelated
+            - unreliable
 
-            Prioritize:
+            then treat the news context as NEUTRAL.
 
-            1. Company-specific material events
-            2. Earnings / revenue / guidance
-            3. Major orders or contracts
-            4. Regulatory or legal developments
-            5. Mergers, acquisitions or corporate actions
-            6. Management announcements
-            7. Sector developments
-            8. General market commentary
+            NEUTRAL news MUST NOT change BUY to HOLD.
 
-            Ignore or heavily discount:
+            NEUTRAL news MUST NOT change SELL to HOLD.
 
-            • Duplicate articles
-            • Old information with no current relevance
-            • Promotional content
-            • Low-impact commentary
-            • News unrelated to the company
-            • Articles that do not provide meaningful trading information
+            Absence of news is NOT negative evidence.
 
-            If multiple articles describe the same event, treat them as
-            one underlying event rather than counting them as multiple
-            independent positive or negative signals.
-
-            Do not assume that positive news automatically means BUY.
-
-            Do not assume that negative news automatically means SELL.
-
-            News is contextual evidence and must be evaluated together with:
-
-            • Engineering Decision
-            • Risk
-            • Market Context
-            • Portfolio Context
-            • Existing Position
-
-            If technical and news signals conflict, evaluate the strength,
-            freshness and relevance of the news before overriding the
-            Engineering Decision.
+            Stale news is NOT automatically negative evidence.
 
             =======================================================
             PORTFOLIO CONTEXT
@@ -197,248 +182,206 @@ public class AiDecisionPromptBuilder {
             %s
 
             =======================================================
-            BUY RULES
+            WHEN TO CONFIRM BUY
             =======================================================
 
-            Recommend BUY only if:
+            Confirm BUY when:
 
-            • Engineering recommends BUY.
-            • Technical confidence is sufficiently strong.
-            • There is no material bearish news catalyst.
-            • Positive news may increase confidence when relevant and credible.
-            • Portfolio risk is acceptable.
-            • No conflicting open position exists.
+            - Engineering recommendation is BUY.
+            - There is no explicit unacceptable risk.
+            - There is no conflicting open position.
+            - There is no explicit portfolio restriction.
+            - There is no material bearish news that clearly
+              invalidates the Engineering setup.
 
-            =======================================================
-            SELL RULES
-            =======================================================
+            Missing news MUST NOT prevent BUY.
 
-            Recommend SELL only if:
+            Neutral news MUST NOT prevent BUY.
 
-            • Engineering recommends SELL.
-            • Technical confidence is sufficiently strong.
-            • There is no material bullish news catalyst invalidating the setup.
-            • Relevant negative news may increase confidence when credible.
-            • Portfolio exposure allows selling.
-            • No conflicting position exists.
+            If no strong contradictory evidence exists:
+
+            recommendation = BUY
+            tradeAllowed = true
 
             =======================================================
-            HOLD RULES
+            WHEN TO CONFIRM SELL
             =======================================================
 
-            Recommend HOLD if:
+            Confirm SELL when:
 
-            • Technical confidence is weak.
-            • Evidence is conflicting.
-            • Market uncertainty is high.
-            • News contradicts technical analysis.
-            • News information is unavailable or insufficient.
-            • News is stale or unreliable.
-            • Risk is unacceptable.
+            - Engineering recommendation is SELL.
+            - There is no explicit unacceptable risk.
+            - There is no conflicting position.
+            - There is no explicit portfolio restriction.
+            - There is no material bullish news that clearly
+              invalidates the Engineering setup.
 
-            =======================================================
-            EXIT RULES
-            =======================================================
+            Missing news MUST NOT prevent SELL.
 
-            If an existing position should be closed because of:
+            Neutral news MUST NOT prevent SELL.
 
-            • Stop loss
-            • Target reached
-            • Strong reversal
-            • Material adverse news
-            • Risk condition
+            If no strong contradictory evidence exists:
 
-            recommend EXIT.
+            recommendation = SELL
+            tradeAllowed = true
 
             =======================================================
-            RISK RULES
+            WHEN TO RECOMMEND HOLD
             =======================================================
 
-            Capital preservation has the highest priority.
+            Recommend HOLD ONLY when at least one explicit condition
+            below exists:
 
-            Never recommend a trade solely because of a positive news
-            headline.
+            - Engineering recommendation is HOLD.
+            - An explicit risk constraint prevents the trade.
+            - A conflicting open position prevents the trade.
+            - An explicit portfolio constraint prevents the trade.
+            - Material supplied news clearly invalidates the
+              Engineering recommendation.
+            - There is strong explicit contradictory evidence.
 
-            Never recommend a trade solely because of a negative news
-            headline.
+            Do NOT recommend HOLD because:
 
-            Consider:
+            - news is unavailable
+            - news is empty
+            - news is stale
+            - news is neutral
+            - optional contextual data is missing
+            - information is incomplete
+            - there is general uncertainty
 
-            • Stop loss
-            • Target
-            • Risk/reward
-            • Existing exposure
-            • Position size
-            • Market volatility
-            • News risk
-            • Technical confidence
+            Missing information is NOT the same as contradictory
+            information.
+
+            =======================================================
+            OPEN POSITION RULE
+            =======================================================
+
+            If an existing position explicitly conflicts with opening
+            another position, do not recommend a duplicate or
+            conflicting trade.
+
+            Only use HOLD for this reason when the supplied position
+            context clearly indicates an actual conflict.
+
+            If no open position exists, do not invent one.
 
             =======================================================
             CONFIDENCE RULES
             =======================================================
 
-            confidence MUST be an integer between 0 and 100.
+            Confidence must be an integer between 0 and 100.
 
-            Use:
+            When confirming a strong Engineering BUY or SELL,
+            confidence should remain reasonably aligned with the
+            Engineering confidence.
 
-            0-20   = Very weak evidence
-            21-40  = Weak evidence
-            41-59  = Mixed / Neutral evidence
-            60-79  = Strong evidence
-            80-100 = Very strong evidence
-
-            Do not return confidence 0 unless the available evidence is
-            genuinely insufficient to make a meaningful assessment.
-
-            decisionStrength should be one of:
-
-            VERY_LOW
-            LOW
-            MEDIUM
-            HIGH
-            VERY_HIGH
+            Do not reduce confidence to a neutral level merely
+            because optional news or contextual data is unavailable.
 
             =======================================================
-            EXECUTION RULES
+            FINAL DECISION CONSISTENCY RULE
             =======================================================
 
-            For BUY:
+            If recommendation is BUY:
 
-            • Provide a realistic entry.
-            • Provide a protective stop loss.
-            • Provide a realistic intraday target.
-            • Calculate a sensible position size.
-            • Holding period should normally be Intraday.
+            tradeAllowed MUST be true unless an explicit constraint
+            prevents execution.
 
-            For SELL:
+            If recommendation is SELL:
 
-            • Provide appropriate entry.
-            • Provide stop loss.
-            • Provide target.
-            • Provide position size.
-            • Holding period should normally be Intraday.
+            tradeAllowed MUST be true unless an explicit constraint
+            prevents execution.
 
-            For HOLD:
+            If recommendation is HOLD:
 
-            • tradeAllowed should normally be false.
-            • Execution values may be null.
+            tradeAllowed MUST be false.
 
-            For EXIT:
+            Do not return:
 
-            • tradeAllowed should normally be true.
-            • Provide an appropriate exit execution plan.
+            recommendation = BUY
+            tradeAllowed = false
+
+            unless the reason explicitly identifies the exact
+            constraint preventing execution.
+
+            Do not return:
+
+            recommendation = SELL
+            tradeAllowed = false
+
+            unless the reason explicitly identifies the exact
+            constraint preventing execution.
 
             =======================================================
-            STRICT OUTPUT FORMAT
+            RESPONSE FORMAT
             =======================================================
 
             Return ONLY valid JSON.
 
-            Do NOT return:
+            Do not return Markdown.
 
-            • Markdown
-            • ```json
-            • ``` 
-            • Explanations outside JSON
-            • Additional fields
-            • Comments
+            Do not return explanations outside the JSON.
 
-            The JSON MUST exactly follow this structure:
+            Return exactly this structure:
 
             {
               "decision": {
                 "tradeAllowed": true,
                 "recommendation": "BUY",
-                "confidence": 82,
+                "confidence": 75,
                 "decisionStrength": "HIGH",
-                "reason": "Technical analysis strongly supports BUY and recent relevant news provides a positive catalyst."
-              },
-
-              "technicalAnalysis": {
-                "summary": "Technical indicators are strongly bullish.",
-                "signal": "BUY",
-                "rsi": {
-                  "value": 58.4,
-                  "interpretation": "Positive momentum without overbought conditions."
-                },
-                "ema": {
-                  "ema20": 3528.2,
-                  "ema50": 3495.6,
-                  "trend": "Bullish"
-                },
-                "macd": {
-                  "value": 18.75,
-                  "signalLine": 15.2,
-                  "interpretation": "MACD is above the signal line."
-                },
-                "volume": {
-                  "current": 1850000,
-                  "average": 1500000,
-                  "interpretation": "Current volume is above average."
-                }
-              },
-
-              "riskAnalysis": {
-                "riskLevel": "Low",
-                "riskRewardRatio": "1:1.79",
-                "stopLossRequired": true,
-                "risks": [
-                  "Normal intraday market volatility",
-                  "Unexpected negative news"
-                ]
-              },
-
-              "newsAnalysis": {
-                "sentiment": "Positive",
-                "score": 80,
-                "summary": "Recent company-specific news provides a positive catalyst."
-              },
-
-              "portfolioAnalysis": {
-                "currentExposure": "0",
-                "availableCapital": "100000",
-                "recommendation": "New position is acceptable."
-              },
-
-              "executionPlan": {
-                "entry": 3542.50,
-                "stopLoss": 3510.00,
-                "target": 3600.00,
-                "positionSize": 25,
-                "holdingPeriod": "Intraday",
-                "exitStrategy": "Target or Stop Loss"
-              },
-
-              "aiReasoning": "Technical analysis, news, risk and portfolio context collectively support the final decision."
+                "reason": "Engineering BUY confirmed because no explicit material contradictory evidence or execution constraint was found."
+              }
             }
 
-            IMPORTANT:
+            =======================================================
+            FINAL INSTRUCTION
+            =======================================================
 
-            • recommendation MUST be one of the supported AiRecommendation values.
-            • signal MUST be one of the supported SignalType values.
-            • confidence MUST be an integer from 0 to 100.
-            • newsAnalysis.score MUST be an integer from 0 to 100.
-            • Do not invent unavailable market or portfolio values.
-            • Use null where a value genuinely cannot be determined.
-            • Do not change the JSON field names.
-            • Do not add extra JSON fields.
-            """.formatted(
-                signalRequestSection,
-                technicalDecisionSection,
-                sectorSummary,
-                newsSection,
-                portfolioSection,
-                openPositionSection
-        );
+            The default action is to FOLLOW the Engineering Decision.
+
+            Override Engineering only with explicit, material,
+            contextual evidence.
+
+            Missing, neutral, stale or unavailable news is NOT
+            sufficient evidence to override Engineering.
+
+            When Engineering recommends BUY or SELL and no explicit
+            blocking condition exists, CONFIRM the Engineering
+            Decision.
+            """
+                .formatted(
+                        signalRequestSection,
+                        technicalDecisionSection,
+                        sectorSummary,
+                        newsSection,
+                        portfolioSection,
+                        openPositionSection
+                );
     }
 
-    private String buildNewsSection(List<NewsArticle> news) {
+    private String buildNewsSection(
+            List<NewsArticle> news) {
 
         if (news == null || news.isEmpty()) {
-            return "No recent market news available.";
+
+            return """
+                NEWS STATUS: UNAVAILABLE
+
+                No relevant recent news was supplied.
+
+                Treat this as NEUTRAL context.
+
+                This is NOT negative evidence.
+
+                This MUST NOT override an Engineering BUY or SELL.
+                """;
         }
 
         StringBuilder builder = new StringBuilder();
+
+        builder.append("NEWS STATUS: AVAILABLE\n");
 
         news.stream()
                 .limit(5)
@@ -456,10 +399,9 @@ public class AiDecisionPromptBuilder {
                     builder.append("\nSource: ")
                             .append(article.getSource());
 
-                    builder.append("\n");
+                    builder.append("\n-------------------------\n");
                 });
 
         return builder.toString();
     }
-
 }

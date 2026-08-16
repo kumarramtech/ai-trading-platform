@@ -1836,7 +1836,9 @@ public class PaperTradingService {
                                 .closeSignal(
                                         savedTrade.getSignalId(),
                                         savedTrade.getExitPrice(),
-                                        savedTrade.getProfitLoss())
+                                        savedTrade.getProfitLoss(),
+                                        savedTrade.getStatus(),
+                                        savedTrade.getExitTime())
 
                                 .doOnSuccess(v ->
                                         log.info("Trading Signal Updated"))

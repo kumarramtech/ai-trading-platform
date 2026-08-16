@@ -21,5 +21,6 @@
         <module>newsanalysis-service</module>
         <module>market-stream-service</module>
         <module>broker-auth-service</module>
+        <module>balance-margin-service</module>
     </modules>
 </project>

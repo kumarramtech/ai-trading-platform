@@ -37,4 +37,6 @@ public class TechnicalIndicator {
     private Double macd;
 
     private Double volumeRatio;
+
+    private Double signalLine;
 }

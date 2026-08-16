@@ -6,6 +6,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -29,9 +30,21 @@ public class RiskManagementService {
 
     private static final int MAX_CONSECUTIVE_LOSSES = 100;
 
-    public RiskCheckResponse validateTrade() {
+    @Value("${trading.max-trades-per-symbol-per-day}")
+    private int maxTradesPerSymbolPerDay;
+
+    public RiskCheckResponse validateTrade(String symbol) {
 
         List<String> violations = new ArrayList<>();
+
+        if (maxTradesPerSymbolPerDayReached(symbol)) {
+            log.info(
+                    "Max trades per symbol per day configured as: {}",
+                    maxTradesPerSymbolPerDay
+            );
+            violations.add(
+                    "Maximum daily trades reached for symbol: " + symbol);
+        }
 
         if (dailyLossExceeded()) {
             violations.add(
@@ -87,6 +100,30 @@ public class RiskManagementService {
                 todayPnL);
 
         return todayPnL <= -MAX_DAILY_LOSS;
+    }
+
+    private boolean maxTradesPerSymbolPerDayReached(String symbol) {
+
+        LocalDate today = LocalDate.now();
+
+        long tradesToday =
+                repository.findBySymbol(symbol)
+                        .stream()
+                        .filter(trade ->
+                                trade.getEntryTime() != null)
+                        .filter(trade ->
+                                trade.getEntryTime()
+                                        .toLocalDate()
+                                        .equals(today))
+                        .count();
+
+        log.info(
+                "Symbol = {}, Trades Today = {}, Maximum Allowed = {}",
+                symbol,
+                tradesToday,
+                maxTradesPerSymbolPerDay);
+
+        return tradesToday >= maxTradesPerSymbolPerDay;
     }
 
     private boolean maxOpenTradesReached() {

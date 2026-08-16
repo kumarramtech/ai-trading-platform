@@ -26,4 +26,8 @@ public class TechnicalIndicatorResponse {
     private Double signalLine;
 
     private Double volumeRatio;
+
+    // Strategy V2
+    private Double previousMacd;
+    private Double previousSignalLine;
 }

@@ -29,87 +29,108 @@ public class BasicTradingStrategy
                 .calculate(stock.getSymbol())
                 .map(indicator -> {
 
-                    Double price =
-                            stock.getPrice();
+                    Double price = stock.getPrice();
 
-                    int bullishScore = 0;
+                    double rsi = indicator.getRsi14();
+                    double ema20 = indicator.getEma20();
+                    double ema50 = indicator.getEma50();
+                    double macd = indicator.getMacd();
+                    double signalLine = indicator.getSignalLine();
 
-                    int bearishScore = 0;
+                    double previousMacd =
+                            indicator.getPreviousMacd();
+
+                    double previousSignalLine =
+                            indicator.getPreviousSignalLine();
+
+                    boolean bullishTrend =
+                            ema20 > ema50;
+
+                    boolean bearishTrend =
+                            ema20 < ema50;
+
+                    boolean bullishMomentum =
+                            macd > signalLine;
+
+                    boolean bearishMomentum =
+                            macd < signalLine;
+
+                    boolean bullishMacdCrossover =
+                            previousMacd <= previousSignalLine
+                                    && macd > signalLine;
+
+                    boolean bearishMacdCrossover =
+                            previousMacd >= previousSignalLine
+                                    && macd < signalLine;
+
+                    /*
+                     * RSI is used as confirmation,
+                     * not as an entry trigger.
+                     */
+                    boolean bullishRsi =
+                            rsi >= 50 && rsi <= 70;
+
+                    boolean bearishRsi =
+                            rsi >= 30 && rsi <= 50;
+
+                    String signal;
 
                     StringBuilder reason =
                             new StringBuilder();
 
-                    if (indicator.getRsi14() < 35) {
-
-                        bullishScore += SignalWeights.RSI;
-
-                        reason.append("RSI Oversold, ");
-
-                    } else if (indicator.getRsi14() > 70) {
-
-                        bearishScore += SignalWeights.RSI;
-
-                        reason.append("RSI Overbought, ");
-                    }
-
-                    if (indicator.getEma20() > indicator.getEma50()) {
-
-                        bullishScore += SignalWeights.EMA;
-
-                        reason.append("EMA Bullish, ");
-
-                    } else {
-
-                        bearishScore += SignalWeights.EMA;
-
-                        reason.append("EMA Bearish, ");
-                    }
-
-                    if (indicator.getMacd() > 0) {
-
-                        bullishScore += SignalWeights.MACD;
-
-                        reason.append("MACD Positive, ");
-
-                    } else {
-
-                        bearishScore += SignalWeights.MACD;
-
-                        reason.append("MACD Negative, ");
-                    }
-
-                    if (price > indicator.getEma20()) {
-
-                        bullishScore += SignalWeights.PRICE_ACTION;
-
-                        reason.append("Price Above EMA20, ");
-
-                    } else {
-
-                        bearishScore += SignalWeights.PRICE_ACTION;
-
-                        reason.append("Price Below EMA20, ");
-                    }
-
-                    String signal;
-
-                    int confidence =
-                            Math.max(
-                                    bullishScore,
-                                    bearishScore);
-
-                    if (bullishScore >= 70) {
+                    if (bullishTrend
+                            && bullishMomentum
+                            && bullishMacdCrossover
+                            && bullishRsi) {
 
                         signal = SignalType.BUY.name();
 
-                    } else if (bearishScore >= 70) {
+                        reason.append(
+                                "Bullish Trend, ");
+
+                        reason.append(
+                                "MACD Bullish Crossover, ");
+
+                        reason.append(
+                                "MACD Above Signal, ");
+
+                        reason.append(
+                                "RSI Confirmation");
+
+                    } else if (bearishTrend
+                            && bearishMomentum
+                            && bearishMacdCrossover
+                            && bearishRsi) {
 
                         signal = SignalType.SELL.name();
+
+                        reason.append(
+                                "Bearish Trend, ");
+
+                        reason.append(
+                                "MACD Bearish Crossover, ");
+
+                        reason.append(
+                                "MACD Below Signal, ");
+
+                        reason.append(
+                                "RSI Confirmation");
 
                     } else {
 
                         signal = SignalType.HOLD.name();
+
+                        reason.append(
+                                "No Fresh Trading Setup");
                     }
+
+                    int confidence = calculateConfidence(
+                            bullishTrend,
+                            bearishTrend,
+                            bullishMacdCrossover,
+                            bearishMacdCrossover,
+                            bullishRsi,
+                            bearishRsi);
 
                     Double targetPrice;
                     Double stopLoss;
@@ -136,22 +157,18 @@ public class BasicTradingStrategy
                         stopLoss = price;
                     }
 
-                    log.info("RSI = " + indicator.getRsi14());
-                    log.info("EMA20 = " + indicator.getEma20());
-                    log.info("EMA50 = " + indicator.getEma50());
-                    log.info("MACD = " + indicator.getMacd());
-
-                    log.info("Final Score={}", bullishScore);
-                    String finalReason =
-                            reason.toString();
-
-                    if (finalReason.endsWith(", ")) {
-
-                        finalReason =
-                                finalReason.substring(
-                                        0,
-                                        finalReason.length() - 2);
-                    }
+                    log.info(
+                            "STRATEGY V2 | Symbol={} | Price={} | RSI={} | EMA20={} | EMA50={} | MACD={} | Signal={} | PreviousMACD={} | PreviousSignal={} | Decision={}",
+                            stock.getSymbol(),
+                            price,
+                            rsi,
+                            ema20,
+                            ema50,
+                            macd,
+                            signalLine,
+                            previousMacd,
+                            previousSignalLine,
+                            signal);
 
                     return TradingSignal.builder()
                             .symbol(stock.getSymbol())
@@ -159,12 +176,12 @@ public class BasicTradingStrategy
                             .entryPrice(round(price))
                             .targetPrice(round(targetPrice))
                             .stopLoss(round(stopLoss))
-                            .reason(finalReason)
+                            .reason(reason.toString())
                             .confidence(confidence)
-                            .rsi(round(indicator.getRsi14()))
-                            .ema20(round(indicator.getEma20()))
-                            .ema50(round(indicator.getEma50()))
-                            .macd(round(indicator.getMacd()))
+                            .rsi(round(rsi))
+                            .ema20(round(ema20))
+                            .ema50(round(ema50))
+                            .macd(round(macd))
                             .newsScore(null)
                             .newsSentiment(null)
                             .newsSummary(null)
@@ -175,6 +192,43 @@ public class BasicTradingStrategy
                             .positionSize(null)
                             .build();
                 });
+    }
+
+    private int calculateConfidence(
+            boolean bullishTrend,
+            boolean bearishTrend,
+            boolean bullishCrossover,
+            boolean bearishCrossover,
+            boolean bullishRsi,
+            boolean bearishRsi) {
+
+        if (bullishTrend
+                && bullishCrossover
+                && bullishRsi) {
+
+            return 90;
+        }
+
+        if (bearishTrend
+                && bearishCrossover
+                && bearishRsi) {
+
+            return 90;
+        }
+
+        if (bullishTrend
+                && bullishCrossover) {
+
+            return 80;
+        }
+
+        if (bearishTrend
+                && bearishCrossover) {
+
+            return 80;
+        }
+
+        return 40;
     }
 
     private Double round(Double value) {

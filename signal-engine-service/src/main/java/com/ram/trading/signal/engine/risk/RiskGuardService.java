@@ -25,7 +25,7 @@ public class RiskGuardService {
 
         // Existing Risk Management Checks
         RiskCheckResponse riskCheck =
-                riskManagementService.validateTrade();
+                riskManagementService.validateTrade(evaluation.getSignal().getSymbol());
 
         if (!riskCheck.isAllowed()) {
 

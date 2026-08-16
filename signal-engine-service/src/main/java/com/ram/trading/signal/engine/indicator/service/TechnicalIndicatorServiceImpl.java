@@ -126,6 +126,11 @@ public class TechnicalIndicatorServiceImpl
             String symbol,
             List<Candle> candles) {
 
+        if (candles.size() < 51) {
+            throw new IllegalArgumentException(
+                    "Insufficient candles for technical indicator calculation");
+        }
+
         var rsi =
                 indicatorService.calculate(
                         IndicatorType.RSI,
@@ -156,31 +161,62 @@ public class TechnicalIndicatorServiceImpl
                         candles,
                         50);
 
-        var macd =
+        MACDIndicator currentMacdIndicator =
                 new MACDIndicator(
                         new MACDCalculator(
-                                new EMACalculator()))
-                        .calculate(candles);
+                                new EMACalculator()));
+
+        var currentMacd =
+                currentMacdIndicator.calculate(candles);
+
+        /*
+         * Calculate MACD using candles up to the previous candle.
+         * This allows Strategy V2 to detect a fresh MACD crossover.
+         */
+        List<Candle> previousCandles =
+                candles.subList(
+                        0,
+                        candles.size() - 1);
+
+        MACDIndicator previousMacdIndicator =
+                new MACDIndicator(
+                        new MACDCalculator(
+                                new EMACalculator()));
+
+        var previousMacd =
+                previousMacdIndicator.calculate(previousCandles);
 
         TechnicalIndicatorResponse response =
                 new TechnicalIndicatorResponse();
 
         response.setSymbol(symbol);
 
-        response.setRsi14(rsi.getValue().doubleValue());
+        response.setRsi14(
+                rsi.getValue().doubleValue());
 
-        response.setEma20(ema20.getValue().doubleValue());
+        response.setEma20(
+                ema20.getValue().doubleValue());
 
-        response.setEma50(ema50.getValue().doubleValue());
+        response.setEma50(
+                ema50.getValue().doubleValue());
 
-        response.setSma20(sma20.getValue().doubleValue());
+        response.setSma20(
+                sma20.getValue().doubleValue());
 
-        response.setSma50(sma50.getValue().doubleValue());
+        response.setSma50(
+                sma50.getValue().doubleValue());
 
-        response.setMacd(macd.getMacd().doubleValue());
+        response.setMacd(
+                currentMacd.getMacd().doubleValue());
 
-        // NEW
-        response.setSignalLine(macd.getSignal().doubleValue());
+        response.setSignalLine(
+                currentMacd.getSignal().doubleValue());
+
+        response.setPreviousMacd(
+                previousMacd.getMacd().doubleValue());
+
+        response.setPreviousSignalLine(
+                previousMacd.getSignal().doubleValue());
 
         response.setClosePrice(
                 candles.get(candles.size() - 1)
@@ -188,11 +224,14 @@ public class TechnicalIndicatorServiceImpl
                         .doubleValue());
 
         log.info(
-                "MACD Debug -> Symbol={}, MACD={}, Signal={}, Histogram={}",
+                "MACD Strategy V2 -> Symbol={}, " +
+                        "Previous MACD={}, Previous Signal={}, " +
+                        "Current MACD={}, Current Signal={}",
                 symbol,
-                macd.getMacd(),
-                macd.getSignal(),
-                macd.getHistogram());
+                previousMacd.getMacd(),
+                previousMacd.getSignal(),
+                currentMacd.getMacd(),
+                currentMacd.getSignal());
 
         return response;
     }

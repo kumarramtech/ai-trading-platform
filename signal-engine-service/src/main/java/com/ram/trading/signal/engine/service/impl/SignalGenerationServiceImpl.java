@@ -394,14 +394,14 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * =====================================================
                      */
 
-                    RiskEvaluation evaluation =
-                            RiskEvaluation.builder()
-                                    .context(context)
-                                    .decision(
-                                            aiResponse.getDecision())
-                                    .aiResponse(aiResponse)
-                                    .build();
-
+                    RiskEvaluation evaluation = RiskEvaluation.builder()
+                            .context(context)
+                            .decision(aiResponse.getDecision())
+                            .aiResponse(aiResponse)
+                            .signal(TradingSignal.builder()
+                                    .symbol(request.getSymbol())
+                                    .build())
+                            .build();
                     try {
 
                         log.debug(

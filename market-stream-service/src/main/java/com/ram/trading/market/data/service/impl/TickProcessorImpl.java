@@ -36,6 +36,12 @@ public class TickProcessorImpl implements TickProcessor {
 
         // Update live cache
         livePriceCache.update(livePrice);
+        log.info(
+                "LIVE PRICE CACHE UPDATED -> symbol={}, price={}, cacheSize={}",
+                livePrice.getSymbol(),
+                livePrice.getPrice(),
+                livePriceCache.size()
+        );
 
         publisher.publishPriceUpdate(livePrice);
 

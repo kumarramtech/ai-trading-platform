@@ -19,53 +19,127 @@ public class IndicatorService {
 
     public void generateRsi(String symbol) {
 
-        List<TechnicalIndicator> indicators = new ArrayList<>();
+            List<TechnicalIndicator> indicators = new ArrayList<>();
 
-        List<HistoricalPrice> prices =
-                repository.findBySymbolOrderByTradeDateAsc(symbol);
+            List<HistoricalPrice> prices =
+                    repository.findBySymbolOrderByTradeDateAsc(symbol);
 
-        if (prices.isEmpty()) {
-            return;
-        }
+            if (prices.isEmpty()) {
+                return;
+            }
 
-        List<Double> ema12List = calculateEma(prices, 12);
-        List<Double> ema20List = calculateEma(prices, 20);
-        List<Double> ema26List = calculateEma(prices, 26);
-        List<Double> ema50List = calculateEma(prices, 50);
+            // ==============================
+            // Calculate EMA series
+            // ==============================
 
-        for (int i = 0; i < prices.size(); i++) {
+            List<Double> ema12List =
+                    calculateEma(prices, 12);
 
-            Double rsi = calculateRsi(prices, i);
+            List<Double> ema20List =
+                    calculateEma(prices, 20);
 
-            Double sma20 = calculateSma(prices, i, 20);
-            Double sma50 = calculateSma(prices, i, 50);
+            List<Double> ema26List =
+                    calculateEma(prices, 26);
 
-            Double ema20 = ema20List.get(i);
-            Double ema50 = ema50List.get(i);
+            List<Double> ema50List =
+                    calculateEma(prices, 50);
 
-            Double macd = calculateMacd(
-                    ema12List.get(i),
-                    ema26List.get(i));
+            // ==============================
+            // Calculate MACD series
+            // MACD = EMA12 - EMA26
+            // ==============================
 
-            HistoricalPrice price = prices.get(i);
+            List<Double> macdList =
+                    new ArrayList<>();
 
-            TechnicalIndicator indicator =
-                    TechnicalIndicator.builder()
-                            .symbol(symbol)
-                            .tradeDate(price.getTradeDate())
-                            .closePrice(price.getPrice())
-                            .rsi14(rsi)
-                            .sma20(sma20)
-                            .sma50(sma50)
-                            .ema20(ema20)
-                            .ema50(ema50)
-                            .macd(macd)
-                            .build();
+            for (int i = 0; i < prices.size(); i++) {
 
-            indicators.add(indicator);
-        }
+                Double macd =
+                        calculateMacd(
+                                ema12List.get(i),
+                                ema26List.get(i)
+                        );
 
-        indicatorRepository.saveAll(indicators);
+                macdList.add(macd);
+            }
+
+            // ==============================
+            // Calculate MACD Signal Line
+            // 9-period EMA of MACD
+            // ==============================
+
+            List<Double> signalLineList =
+                    calculateSignalLine(
+                            macdList,
+                            9
+                    );
+
+            // ==============================
+            // Build Technical Indicators
+            // ==============================
+
+            for (int i = 0;
+                 i < prices.size();
+                 i++) {
+
+                Double rsi =
+                        calculateRsi(
+                                prices,
+                                i
+                        );
+
+                Double sma20 =
+                        calculateSma(
+                                prices,
+                                i,
+                                20
+                        );
+
+                Double sma50 =
+                        calculateSma(
+                                prices,
+                                i,
+                                50
+                        );
+
+                Double ema20 =
+                        ema20List.get(i);
+
+                Double ema50 =
+                        ema50List.get(i);
+
+                Double macd =
+                        macdList.get(i);
+
+                Double signalLine =
+                        signalLineList.get(i);
+
+                HistoricalPrice price =
+                        prices.get(i);
+
+                TechnicalIndicator indicator =
+                        TechnicalIndicator.builder()
+                                .symbol(symbol)
+                                .tradeDate(price.getTradeDate())
+                                .closePrice(price.getPrice())
+                                .rsi14(rsi)
+                                .sma20(sma20)
+                                .sma50(sma50)
+                                .ema20(ema20)
+                                .ema50(ema50)
+                                .macd(macd)
+                                .signalLine(signalLine)
+                                .build();
+
+                indicators.add(indicator);
+            }
+
+            // ==============================
+            // Save all indicators
+            // ==============================
+
+            indicatorRepository.saveAll(indicators);
+
     }
 
     public List<TechnicalIndicator> findBySymbolOrderByTradeDateAsc(String symbol) {
@@ -183,5 +257,120 @@ public class IndicatorService {
         double rs = avgGain / avgLoss;
 
         return 100 - (100 / (1 + rs));
+    }
+
+    private List<Double> calculateSignalLine(
+            List<Double> macdValues,
+            int period) {
+
+        List<Double> signalValues =
+                new ArrayList<>();
+
+        if (macdValues.size() < period) {
+
+            for (int i = 0;
+                 i < macdValues.size();
+                 i++) {
+
+                signalValues.add(null);
+            }
+
+            return signalValues;
+        }
+
+        double multiplier =
+                2.0 / (period + 1);
+
+        /*
+         * Find first valid MACD values.
+         */
+        int firstValidIndex = -1;
+
+        for (int i = 0;
+             i < macdValues.size();
+             i++) {
+
+            if (macdValues.get(i) != null) {
+                firstValidIndex = i;
+                break;
+            }
+        }
+
+        if (firstValidIndex == -1) {
+            return signalValues;
+        }
+
+        /*
+         * Need 9 valid MACD values
+         * to initialize the signal EMA.
+         */
+        int signalStartIndex =
+                firstValidIndex + period - 1;
+
+        if (signalStartIndex >= macdValues.size()) {
+
+            for (int i = 0;
+                 i < macdValues.size();
+                 i++) {
+
+                signalValues.add(null);
+            }
+
+            return signalValues;
+        }
+
+        /*
+         * Before signal EMA starts.
+         */
+        for (int i = 0;
+             i < signalStartIndex;
+             i++) {
+
+            signalValues.add(null);
+        }
+
+        /*
+         * Initial SMA of first 9 MACD values.
+         */
+        double sum = 0.0;
+
+        for (int i = firstValidIndex;
+             i <= signalStartIndex;
+             i++) {
+
+            sum += macdValues.get(i);
+        }
+
+        double signal =
+                sum / period;
+
+        signalValues.add(signal);
+
+        /*
+         * Continue EMA calculation.
+         */
+        double previousSignal = signal;
+
+        for (int i = signalStartIndex + 1;
+             i < macdValues.size();
+             i++) {
+
+            Double macd = macdValues.get(i);
+
+            if (macd == null) {
+                signalValues.add(null);
+                continue;
+            }
+
+            double currentSignal =
+                    (macd * multiplier)
+                            + (previousSignal * (1 - multiplier));
+
+            signalValues.add(currentSignal);
+
+            previousSignal = currentSignal;
+        }
+
+        return signalValues;
     }
 }

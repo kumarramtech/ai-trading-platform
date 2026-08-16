@@ -32,6 +32,10 @@ public class PaperTrade {
 
     private Double investedAmount;
 
+    private Double requiredMargin;
+
+    private Double leverage;
+
     private Double exitPrice;
 
     private Double profitLoss;
