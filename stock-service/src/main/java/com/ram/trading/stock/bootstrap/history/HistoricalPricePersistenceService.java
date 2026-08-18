@@ -10,4 +10,6 @@ public interface HistoricalPricePersistenceService {
 
     LocalDate getLastDownloadedDate(String symbol);
 
+    long countBySymbol(String symbol);
+
 }

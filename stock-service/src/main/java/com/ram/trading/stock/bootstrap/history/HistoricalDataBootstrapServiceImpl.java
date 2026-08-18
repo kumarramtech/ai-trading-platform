@@ -31,6 +31,8 @@ public class HistoricalDataBootstrapServiceImpl
 
     private final HistoryBootstrapProperties properties;
 
+    private static final int MINIMUM_REQUIRED_CANDLES = 60;
+
     @Override
     public void bootstrap() {
 
@@ -85,66 +87,137 @@ public class HistoricalDataBootstrapServiceImpl
 
     private void bootstrapHistoricalData(Instrument instrument) {
 
+        String symbol = instrument.getTradingSymbol();
+
         try {
 
-            LocalDate toDate = LocalDate.now().minusDays(1);
+            LocalDate toDate =
+                    LocalDate.now().minusDays(1);
 
-            LocalDate lastDownloadedDate =
-                    persistenceService.getLastDownloadedDate(
-                            instrument.getTradingSymbol());
+            long existingCandleCount = persistenceService.countBySymbol(symbol);
 
             LocalDate fromDate;
 
-            if (lastDownloadedDate == null) {
+            /*
+             * If historical data is incomplete,
+             * perform a full backfill.
+             */
+            if (existingCandleCount < MINIMUM_REQUIRED_CANDLES) {
 
-                // First bootstrap
-                fromDate = toDate.minusDays(properties.getLookbackDays());
+                fromDate =
+                        toDate.minusDays(
+                                properties.getLookbackDays());
 
-                log.info("Initial bootstrap for {} from {} to {}",
-                        instrument.getTradingSymbol(),
+                log.info(
+                        "Historical data incomplete | " +
+                                "Symbol={} | Existing Candles={} | " +
+                                "Minimum Required={} | " +
+                                "Performing FULL BACKFILL | From={} | To={}",
+                        symbol,
+                        existingCandleCount,
+                        MINIMUM_REQUIRED_CANDLES,
                         fromDate,
                         toDate);
 
             } else {
 
-                // Incremental download
-                fromDate = lastDownloadedDate.plusDays(1);
+                LocalDate lastDownloadedDate =
+                        persistenceService
+                                .getLastDownloadedDate(symbol);
 
-                if (fromDate.isAfter(toDate)) {
+                /*
+                 * Safety check.
+                 */
+                if (lastDownloadedDate == null) {
 
-                    log.info("{} is already up-to-date. Last Candle={}",
-                            instrument.getTradingSymbol(),
-                            lastDownloadedDate);
+                    fromDate =
+                            toDate.minusDays(
+                                    properties.getLookbackDays());
 
-                    return;
+                    log.info(
+                            "No previous historical data found | " +
+                                    "Symbol={} | Performing FULL BACKFILL | " +
+                                    "From={} | To={}",
+                            symbol,
+                            fromDate,
+                            toDate);
+
+                } else {
+
+                    /*
+                     * Historical data is sufficient.
+                     * Download only missing candles.
+                     */
+                    fromDate =
+                            lastDownloadedDate.plusDays(1);
+
+                    if (fromDate.isAfter(toDate)) {
+
+                        log.info(
+                                "Historical data already up-to-date | " +
+                                        "Symbol={} | Candle Count={} | " +
+                                        "Last Candle={}",
+                                symbol,
+                                existingCandleCount,
+                                lastDownloadedDate);
+
+                        return;
+                    }
+
+                    log.info(
+                            "Incremental historical download | " +
+                                    "Symbol={} | Candle Count={} | " +
+                                    "From={} | To={}",
+                            symbol,
+                            existingCandleCount,
+                            fromDate,
+                            toDate);
                 }
-
-                log.info("Incremental download for {} from {} to {}",
-                        instrument.getTradingSymbol(),
-                        fromDate,
-                        toDate);
             }
 
             HistoricalCandleResponse response =
                     historicalCandleService
                             .getHistoricalCandles(
-                                    instrument.getTradingSymbol(),
+                                    symbol,
                                     properties.getInterval(),
                                     fromDate,
                                     toDate)
-                            .subscribeOn(Schedulers.boundedElastic())
+                            .subscribeOn(
+                                    Schedulers.boundedElastic())
                             .block();
 
-            if (response != null && response.getCandles() != null
+            if (response != null
+                    && response.getCandles() != null
                     && !response.getCandles().isEmpty()) {
+
+                log.info(
+                        "Historical candles received | " +
+                                "Symbol={} | Candle Count={}",
+                        symbol,
+                        response.getCandles().size());
+
                 persistenceService.save(response);
-                log.info("Completed historical data for {}", instrument.getTradingSymbol());
+
+                log.info(
+                        "Historical data saved successfully | Symbol={}",
+                        symbol);
+
             } else {
-                log.info("No new candles available for {}", instrument.getTradingSymbol());
+
+                log.warn(
+                        "No historical candles available | " +
+                                "Symbol={} | From={} | To={}",
+                        symbol,
+                        fromDate,
+                        toDate);
             }
 
         } catch (Exception ex) {
-            log.error("Historical bootstrap failed for symbol {}", instrument.getTradingSymbol(),ex);
+
+            log.error(
+                    "Historical bootstrap failed | Symbol={}",
+                    symbol,
+                    ex);
         }
     }
 

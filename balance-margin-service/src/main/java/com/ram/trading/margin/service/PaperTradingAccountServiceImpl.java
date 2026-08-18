@@ -3,6 +3,7 @@ package com.ram.trading.margin.service;
 import com.ram.trading.margin.entity.PaperTradingAccount;
 import com.ram.trading.margin.repo.PaperTradingAccountRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -12,8 +13,8 @@ import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
-public class PaperTradingAccountServiceImpl
-        implements PaperTradingAccountService {
+@Slf4j
+public class PaperTradingAccountServiceImpl implements PaperTradingAccountService {
 
     private final PaperTradingAccountRepository accountRepository;
 
@@ -49,79 +50,137 @@ public class PaperTradingAccountServiceImpl
     }
 
     @Override
-    public Mono<PaperTradingAccount> reserveMargin(
-            Double requiredMargin) {
+    public Mono<Void> reserveMargin(Double requiredMargin) {
 
-        return getOrCreateAccount()
-                .flatMap(account ->
-                        Mono.fromCallable(() -> {
+        return Mono.<Void>fromRunnable(() -> {
 
-                            if (account.getAvailableBalance()
-                                    < requiredMargin) {
+            PaperTradingAccount account =
+                    accountRepository.findFirstByOrderByIdAsc()
+                            .orElseThrow(() ->
+                                    new IllegalStateException(
+                                            "Paper trading account not found"));
 
-                                throw new IllegalStateException(
-                                        "Insufficient paper trading balance");
-                            }
+            double availableBalance =
+                    account.getAvailableBalance();
 
-                            account.setAvailableBalance(
-                                    account.getAvailableBalance()
-                                            - requiredMargin
-                            );
+            if (availableBalance < requiredMargin) {
 
-                            account.setUsedMargin(
-                                    account.getUsedMargin()
-                                            + requiredMargin
-                            );
+                throw new IllegalStateException(
+                        "Insufficient balance. Available = "
+                                + availableBalance
+                                + ", Required Margin = "
+                                + requiredMargin);
+            }
 
-                            account.setUpdatedAt(
-                                    LocalDateTime.now()
-                            );
+            account.setAvailableBalance(
+                    availableBalance - requiredMargin);
 
-                            return accountRepository.save(account);
-                        })
-                        .subscribeOn(Schedulers.boundedElastic())
-                );
+            account.setUsedMargin(
+                    account.getUsedMargin() + requiredMargin);
+
+            account.setUpdatedAt(LocalDateTime.now());
+
+            accountRepository.save(account);
+
+            log.info(
+                    "Margin Reserved | Required Margin = {} | "
+                            + "Available Balance = {} | Used Margin = {}",
+                    requiredMargin,
+                    account.getAvailableBalance(),
+                    account.getUsedMargin());
+
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @Override
-    public Mono<PaperTradingAccount> releaseMargin(
+    public Mono<Void> releaseMargin(
             Double requiredMargin,
             Double profitLoss) {
 
-        return getOrCreateAccount()
-                .flatMap(account ->
-                        Mono.fromCallable(() -> {
+        return Mono.<Void>fromRunnable(() -> {
 
-                            double pnl = profitLoss != null
-                                    ? profitLoss
-                                    : 0.0;
+            PaperTradingAccount account =
+                    accountRepository.findFirstByOrderByIdAsc()
+                            .orElseThrow(() ->
+                                    new IllegalStateException(
+                                            "Paper trading account not found"));
 
-                            account.setAvailableBalance(
-                                    account.getAvailableBalance()
-                                            + requiredMargin
-                                            + pnl
-                            );
+            double newAvailableBalance =
+                    account.getAvailableBalance()
+                            + requiredMargin
+                            + profitLoss;
 
-                            account.setUsedMargin(
-                                    Math.max(
-                                            0.0,
-                                            account.getUsedMargin()
-                                                    - requiredMargin
-                                    )
-                            );
+            account.setAvailableBalance(newAvailableBalance);
 
-                            account.setRealizedPnl(
-                                    account.getRealizedPnl()
-                                            + pnl
-                            );
+            account.setUsedMargin(
+                    Math.max(
+                            0.0,
+                            account.getUsedMargin() - requiredMargin));
 
-                            account.setUpdatedAt(
-                                    LocalDateTime.now()
-                            );
+            account.setRealizedPnl(
+                    account.getRealizedPnl() + profitLoss);
 
-                            return accountRepository.save(account);
-                        })
-                        .subscribeOn(Schedulers.boundedElastic())
-                );
+            account.setUpdatedAt(LocalDateTime.now());
+
+            accountRepository.save(account);
+
+            log.info(
+                    "Margin Released | Required Margin = {} | "
+                            + "Profit/Loss = {} | "
+                            + "Available Balance = {} | "
+                            + "Used Margin = {} | "
+                            + "Realized PnL = {}",
+                    requiredMargin,
+                    profitLoss,
+                    account.getAvailableBalance(),
+                    account.getUsedMargin(),
+                    account.getRealizedPnl());
+
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @Override
+    public Mono<Void> resetAccount() {
+
+        return Mono.<Void>fromRunnable(() -> {
+
+            PaperTradingAccount account =
+                    accountRepository
+                            .findFirstByOrderByIdAsc()
+                            .orElseGet(() -> {
+
+                                LocalDateTime now =
+                                        LocalDateTime.now();
+
+                                PaperTradingAccount newAccount =
+                                        PaperTradingAccount.builder()
+                                                .initialBalance(initialBalance)
+                                                .availableBalance(initialBalance)
+                                                .usedMargin(0.0)
+                                                .realizedPnl(0.0)
+                                                .createdAt(now)
+                                                .updatedAt(now)
+                                                .build();
+
+                                return accountRepository.save(newAccount);
+                            });
+
+            account.setInitialBalance(initialBalance);
+            account.setAvailableBalance(initialBalance);
+            account.setUsedMargin(0.0);
+            account.setRealizedPnl(0.0);
+            account.setUpdatedAt(LocalDateTime.now());
+
+            accountRepository.save(account);
+
+            log.info("========================================");
+            log.info("PAPER TRADING ACCOUNT RESET SUCCESSFULLY");
+            log.info("Initial Balance   : {}", initialBalance);
+            log.info("Available Balance : {}", initialBalance);
+            log.info("Used Margin       : 0.0");
+            log.info("Realized PnL      : 0.0");
+            log.info("========================================");
+
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 }

@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.AIServiceClient;
+import com.ram.trading.signal.engine.client.BalanceMarginClient;
 import com.ram.trading.signal.engine.client.NotificationClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.client.interfac.PortfolioClient;
@@ -30,6 +31,10 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import com.ram.trading.signal.engine.dto.InstrumentResponse;
+import com.ram.trading.signal.engine.dto.MarginCalculationResponse;
+import com.ram.trading.signal.engine.dto.MarginInstrumentRequest;
+import com.ram.trading.signal.engine.dto.UpstoxMarginRequest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -60,6 +65,8 @@ public class PaperTradingService {
     private final TradingSessionService tradingSessionService;
 
     private final TradingSignalService tradingSignalService;
+
+    private final BalanceMarginClient balanceMarginClient;
 
 
     @Value("${trading.capital-per-trade}")
@@ -112,14 +119,10 @@ public class PaperTradingService {
          * ============================================================
          * STEP 3 : ONLY BUY / SELL CAN CREATE A TRADE
          * ============================================================
-         *
-         * IMPORTANT:
-         *
-         * We intentionally perform this lightweight validation BEFORE
-         * querying OPEN trades.
          */
         if (!SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())
-                && !SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
+                && !SignalType.SELL.name()
+                .equalsIgnoreCase(signal.getSignal())) {
 
             log.info(
                     "Skipping Non-Tradable Signal | Symbol={} | Signal={}",
@@ -176,7 +179,8 @@ public class PaperTradingService {
         log.info("======================================");
         log.info("CAPITAL CHECK");
         log.info("Total Capital       : {}", totalCapital);
-        log.info("Used Capital        : {}",
+        log.info(
+                "Used Capital        : {}",
                 totalCapital - availableCapital);
         log.info("Available Capital   : {}", availableCapital);
         log.info("Required Capital    : {}", investmentAmount);
@@ -187,14 +191,6 @@ public class PaperTradingService {
          * ============================================================
          * STEP 7 : MINIMUM AVAILABLE CAPITAL GUARD
          * ============================================================
-         *
-         * If available capital falls below our safety threshold,
-         * DO NOT perform the duplicate OPEN-trade lookup.
-         *
-         * This stops creation of NEW trades.
-         *
-         * Existing OPEN trades continue to be monitored by the
-         * existing exit/position monitoring flow.
          */
         if (availableCapital < minAvailableCapital) {
 
@@ -203,7 +199,8 @@ public class PaperTradingService {
             log.warn("Symbol              : {}", signal.getSymbol());
             log.warn("Available Capital   : {}", availableCapital);
             log.warn("Minimum Required    : {}", minAvailableCapital);
-            log.warn("Existing open trades will continue to be monitored.");
+            log.warn(
+                    "Existing open trades will continue to be monitored.");
             log.warn("======================================");
 
             return;
@@ -213,11 +210,6 @@ public class PaperTradingService {
          * ============================================================
          * STEP 8 : PREVENT DUPLICATE OPEN TRADE
          * ============================================================
-         *
-         * This is deliberately AFTER the minimum-capital guard.
-         *
-         * Therefore when capital is too low, we never execute this
-         * database lookup.
          */
         if (!validateTradeCreation(signal)) {
             return;
@@ -227,13 +219,6 @@ public class PaperTradingService {
          * ============================================================
          * STEP 9 : FINAL CAPITAL CHECK
          * ============================================================
-         *
-         * Keep this second check because we need to verify that the
-         * actual required investment fits inside available capital.
-         *
-         * Since createTrade() is synchronized, another createTrade()
-         * call from this JVM cannot modify the capital between the
-         * previous check and this point.
          */
         if (availableCapital < investmentAmount) {
 
@@ -258,119 +243,315 @@ public class PaperTradingService {
                 signal.getTargetPrice(),
                 signal.getStopLoss());
 
-        if (SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())) {
+        if (SignalType.BUY.name()
+                .equalsIgnoreCase(signal.getSignal())) {
 
-            if (signal.getTargetPrice() <= signal.getEntryPrice()) {
+            if (signal.getTargetPrice()
+                    <= signal.getEntryPrice()) {
 
                 log.error(
-                        "Invalid BUY Trade. Symbol={}, Entry={}, Target={}, Stop={}",
+                        "Invalid BUY Trade. Symbol={}, Entry={}, "
+                                + "Target={}, Stop={}",
                         signal.getSymbol(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
 
                 throw new IllegalStateException(
-                        "Invalid BUY Trade : Target Price must be greater than Entry Price.");
+                        "Invalid BUY Trade : Target Price must be "
+                                + "greater than Entry Price.");
             }
 
-            if (signal.getStopLoss() >= signal.getEntryPrice()) {
+            if (signal.getStopLoss()
+                    >= signal.getEntryPrice()) {
 
                 log.error(
-                        "Invalid BUY Trade. Symbol={}, Entry={}, Target={}, Stop={}",
+                        "Invalid BUY Trade. Symbol={}, Entry={}, "
+                                + "Target={}, Stop={}",
                         signal.getSymbol(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
 
                 throw new IllegalStateException(
-                        "Invalid BUY Trade : Stop Loss must be less than Entry Price.");
-            }
-        }
-
-        else if (SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
-
-            if (signal.getTargetPrice() >= signal.getEntryPrice()) {
-
-                log.error(
-                        "Invalid SELL Trade. Symbol={}, Entry={}, Target={}, Stop={}",
-                        signal.getSymbol(),
-                        signal.getEntryPrice(),
-                        signal.getTargetPrice(),
-                        signal.getStopLoss());
-
-                throw new IllegalStateException(
-                        "Invalid SELL Trade : Target Price must be less than Entry Price.");
+                        "Invalid BUY Trade : Stop Loss must be "
+                                + "less than Entry Price.");
             }
 
-            if (signal.getStopLoss() <= signal.getEntryPrice()) {
+        } else if (SignalType.SELL.name()
+                .equalsIgnoreCase(signal.getSignal())) {
+
+            if (signal.getTargetPrice()
+                    >= signal.getEntryPrice()) {
 
                 log.error(
-                        "Invalid SELL Trade. Symbol={}, Entry={}, Target={}, Stop={}",
+                        "Invalid SELL Trade. Symbol={}, Entry={}, "
+                                + "Target={}, Stop={}",
                         signal.getSymbol(),
                         signal.getEntryPrice(),
                         signal.getTargetPrice(),
                         signal.getStopLoss());
 
                 throw new IllegalStateException(
-                        "Invalid SELL Trade : Stop Loss must be greater than Entry Price.");
+                        "Invalid SELL Trade : Target Price must be "
+                                + "less than Entry Price.");
+            }
+
+            if (signal.getStopLoss()
+                    <= signal.getEntryPrice()) {
+
+                log.error(
+                        "Invalid SELL Trade. Symbol={}, Entry={}, "
+                                + "Target={}, Stop={}",
+                        signal.getSymbol(),
+                        signal.getEntryPrice(),
+                        signal.getTargetPrice(),
+                        signal.getStopLoss());
+
+                throw new IllegalStateException(
+                        "Invalid SELL Trade : Stop Loss must be "
+                                + "greater than Entry Price.");
             }
         }
 
         /*
          * ============================================================
-         * STEP 11 : CREATE PAPER TRADE
+         * STEP 11 : GET INSTRUMENT KEY
          * ============================================================
          */
-        PaperTrade trade =
-                PaperTrade.builder()
-                        .symbol(signal.getSymbol())
-                        .signalId(signal.getId())
-                        .signal(signal.getSignal())
+        InstrumentResponse instrumentResponse =
+                stockServiceClient
+                        .getInstrument(signal.getSymbol())
+                        .block();
 
-                        // Actual market entry price.
-                        .entryPrice(round(signal.getEntryPrice()))
+        if (instrumentResponse == null
+                || instrumentResponse.getInstrumentKey() == null
+                || instrumentResponse.getInstrumentKey().isBlank()) {
 
+            log.error(
+                    "Instrument Key not found | Symbol={}",
+                    signal.getSymbol());
+
+            return;
+        }
+
+        String instrumentKey =
+                instrumentResponse.getInstrumentKey();
+
+        log.info(
+                "Instrument Resolved | Symbol={} | InstrumentKey={}",
+                signal.getSymbol(),
+                instrumentKey);
+
+        /*
+         * ============================================================
+         * STEP 12 : CALCULATE REQUIRED MARGIN
+         * ============================================================
+         */
+        MarginInstrumentRequest marginInstrument =
+                MarginInstrumentRequest.builder()
+                        .instrumentKey(instrumentKey)
                         .quantity(quantity)
-
-                        .investedAmount(investmentAmount)
-
-                        .rsi(indicatorResponse.getRsi14())
-                        .ema20(indicatorResponse.getEma20())
-                        .ema50(indicatorResponse.getEma50())
-                        .macd(indicatorResponse.getMacd())
-
-                        .targetPrice(
-                                round(signal.getTargetPrice()))
-
-                        .stopLoss(
-                                round(signal.getStopLoss()))
-
-                        .initialStopLoss(
-                                round(signal.getStopLoss()))
-
-                        .currentStopLoss(
-                                round(signal.getStopLoss()))
-
-                        .trailingStep(0)
-
-                        .lastTrailingUpdate(
-                                LocalDateTime.now())
-
-                        .status(SignalStatus.OPEN)
-
-                        .confidence(signal.getConfidence())
-
-                        .entryTime(LocalDateTime.now())
-
+                        .transactionType(signal.getSignal())
+                        .product("I")
+                        .price(
+                                BigDecimal.valueOf(
+                                        signal.getEntryPrice()))
                         .build();
 
+        UpstoxMarginRequest marginRequest =
+                UpstoxMarginRequest.builder()
+                        .instruments(
+                                List.of(marginInstrument))
+                        .build();
+
+        MarginCalculationResponse marginResponse =
+                balanceMarginClient
+                        .calculateMargin(marginRequest)
+                        .block();
+
+        if (marginResponse == null) {
+
+            log.error(
+                    "Margin calculation failed | Symbol={}",
+                    signal.getSymbol());
+
+            return;
+        }
+
         /*
          * ============================================================
-         * STEP 12 : SAVE TRADE
+         * STEP 13 : CHECK SUFFICIENT BALANCE
          * ============================================================
          */
-        PaperTrade saved =
-                repository.save(trade);
+        if (!marginResponse.getSufficientBalance()) {
+
+            log.warn("======================================");
+            log.warn("INSUFFICIENT MARGIN FOR TRADE");
+            log.warn("Symbol            : {}", signal.getSymbol());
+            log.warn(
+                    "Required Margin   : {}",
+                    marginResponse.getRequiredMargin());
+            log.warn(
+                    "Available Balance : {}",
+                    marginResponse.getAvailableBalance());
+            log.warn(
+                    "Maximum Quantity  : {}",
+                    marginResponse.getMaximumQuantity());
+            log.warn("======================================");
+
+            return;
+        }
+
+        Double requiredMargin =
+                marginResponse.getRequiredMargin();
+
+        Double leverage =
+                marginResponse.getLeverage();
+
+        log.info("======================================");
+        log.info("MARGIN CALCULATION SUCCESS");
+        log.info("Symbol           : {}", signal.getSymbol());
+        log.info("Instrument Key   : {}", instrumentKey);
+        log.info("Trade Value      : {}",
+                marginResponse.getTradeValue());
+        log.info("Required Margin  : {}", requiredMargin);
+        log.info("Leverage         : {}", leverage);
+        log.info("Available Balance: {}",
+                marginResponse.getAvailableBalance());
+        log.info("======================================");
+
+        /*
+         * ============================================================
+         * STEP 14 : RESERVE MARGIN
+         * ============================================================
+         */
+        try {
+
+            balanceMarginClient
+                    .reserveMargin(requiredMargin)
+                    .block();
+
+            log.info(
+                    "Margin Reserved Successfully | Symbol={} | Margin={}",
+                    signal.getSymbol(),
+                    requiredMargin);
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "Failed to reserve margin | Symbol={}",
+                    signal.getSymbol(),
+                    ex);
+
+            return;
+        }
+
+        /*
+         * ============================================================
+         * STEP 15 : CREATE PAPER TRADE
+         * ============================================================
+         */
+        PaperTrade saved;
+
+        try {
+
+            PaperTrade trade =
+                    PaperTrade.builder()
+                            .symbol(signal.getSymbol())
+                            .signalId(signal.getId())
+                            .signal(signal.getSignal())
+
+                            .entryPrice(
+                                    round(signal.getEntryPrice()))
+
+                            .quantity(quantity)
+
+                            .investedAmount(investmentAmount)
+
+                            // NEW MARGIN DETAILS
+                            .requiredMargin(requiredMargin)
+                            .leverage(leverage)
+
+                            .rsi(
+                                    indicatorResponse.getRsi14())
+                            .ema20(
+                                    indicatorResponse.getEma20())
+                            .ema50(
+                                    indicatorResponse.getEma50())
+                            .macd(
+                                    indicatorResponse.getMacd())
+
+                            .targetPrice(
+                                    round(
+                                            signal.getTargetPrice()))
+
+                            .stopLoss(
+                                    round(
+                                            signal.getStopLoss()))
+
+                            .initialStopLoss(
+                                    round(
+                                            signal.getStopLoss()))
+
+                            .currentStopLoss(
+                                    round(
+                                            signal.getStopLoss()))
+
+                            .trailingStep(0)
+
+                            .lastTrailingUpdate(
+                                    LocalDateTime.now())
+
+                            .status(SignalStatus.OPEN)
+
+                            .confidence(
+                                    signal.getConfidence())
+
+                            .entryTime(
+                                    LocalDateTime.now())
+
+                            .build();
+
+            saved = repository.save(trade);
+
+        } catch (Exception ex) {
+
+            /*
+             * IMPORTANT:
+             * Margin was already reserved.
+             * Release it if PaperTrade saving fails.
+             */
+            log.error(
+                    "Paper Trade Save Failed. Releasing reserved margin | "
+                            + "Symbol={}",
+                    signal.getSymbol(),
+                    ex);
+
+            try {
+
+                balanceMarginClient
+                        .releaseMargin(
+                                requiredMargin,
+                                0.0)
+                        .block();
+
+                log.info(
+                        "Reserved Margin Released Successfully | "
+                                + "Symbol={}",
+                        signal.getSymbol());
+
+            } catch (Exception releaseException) {
+
+                log.error(
+                        "CRITICAL: Failed to release margin after "
+                                + "PaperTrade save failure | Symbol={}",
+                        signal.getSymbol(),
+                        releaseException);
+            }
+
+            return;
+        }
 
         log.info("======================================");
         log.info("PAPER TRADE CREATED SUCCESSFULLY");
@@ -380,15 +561,19 @@ public class PaperTradingService {
         log.info("Entry Price         : {}", saved.getEntryPrice());
         log.info("Quantity            : {}", saved.getQuantity());
         log.info("Invested Amount     : {}", saved.getInvestedAmount());
-        log.info("Available Capital Before Trade : {}",
+        log.info("Required Margin     : {}", saved.getRequiredMargin());
+        log.info("Leverage            : {}", saved.getLeverage());
+        log.info(
+                "Available Capital Before Trade : {}",
                 availableCapital);
-        log.info("Available Capital After Trade  : {}",
+        log.info(
+                "Available Capital After Trade  : {}",
                 availableCapital - investmentAmount);
         log.info("======================================");
 
         /*
          * ============================================================
-         * STEP 13 : UPDATE PORTFOLIO
+         * STEP 16 : UPDATE PORTFOLIO
          * ============================================================
          */
         portfolioClient
@@ -416,7 +601,7 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 14 : NOTIFICATION
+         * STEP 17 : NOTIFICATION
          * ============================================================
          */
         NotificationRequest request =
@@ -425,11 +610,21 @@ public class PaperTradingService {
                         .title("TRADE OPENED")
                         .message(
                                 "Symbol: " + saved.getSymbol()
-                                        + ", Signal: " + saved.getSignal()
-                                        + ", Entry: ₹" + saved.getEntryPrice()
-                                        + ", Target: ₹" + saved.getTargetPrice()
-                                        + ", StopLoss: ₹" + saved.getStopLoss()
-                                        + ", Quantity: " + saved.getQuantity()
+                                        + ", Signal: "
+                                        + saved.getSignal()
+                                        + ", Entry: ₹"
+                                        + saved.getEntryPrice()
+                                        + ", Target: ₹"
+                                        + saved.getTargetPrice()
+                                        + ", StopLoss: ₹"
+                                        + saved.getStopLoss()
+                                        + ", Quantity: "
+                                        + saved.getQuantity()
+                                        + ", Required Margin: ₹"
+                                        + saved.getRequiredMargin()
+                                        + ", Leverage: "
+                                        + saved.getLeverage()
+                                        + "x"
                                         + ", Confidence: "
                                         + saved.getConfidence()
                                         + "%")
@@ -741,9 +936,9 @@ public class PaperTradingService {
                                     .message(
                                             "Symbol: " + savedTrade.getSymbol()
                                                     + ", Status: " + savedTrade.getStatus()
-                                                    + ", Entry: " + savedTrade.getEntryPrice()
+                                                    + ", Entry: " + trade.getEntryPrice()
                                                     + ", Exit: " + savedTrade.getExitPrice()
-                                                    + ", PnL: " + savedTrade.getProfitLoss())
+                                                    + ", PnL: " + trade.getProfitLoss())
                                     .build();
 
                     return notificationClient

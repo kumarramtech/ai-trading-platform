@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.client;
 
+import com.ram.trading.signal.engine.dto.InstrumentResponse;
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.history.HistoricalPriceResponse;
 import com.ram.trading.signal.engine.dto.indicator.HistoricalCandleResponse;
@@ -72,5 +73,15 @@ public class StockServiceClient implements MarketDataProvider {
                 .uri("/api/v1/history/{symbol}", symbol)
                 .retrieve()
                 .bodyToFlux(HistoricalPriceResponse.class);
+    }
+
+    public Mono<InstrumentResponse> getInstrument(
+            String symbol) {
+
+        return client
+                .get()
+                .uri("/api/v1/instruments/{symbol}", symbol)
+                .retrieve()
+                .bodyToMono(InstrumentResponse.class);
     }
 }

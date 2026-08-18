@@ -22,5 +22,6 @@
         <module>market-stream-service</module>
         <module>broker-auth-service</module>
         <module>balance-margin-service</module>
+        <module>trade-execution-service</module>
     </modules>
 </project>

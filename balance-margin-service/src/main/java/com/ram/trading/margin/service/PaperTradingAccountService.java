@@ -7,10 +7,9 @@ public interface PaperTradingAccountService {
 
     Mono<PaperTradingAccount> getOrCreateAccount();
 
-    Mono<PaperTradingAccount> reserveMargin(Double requiredMargin);
+    Mono<Void> reserveMargin(Double requiredMargin);
 
-    Mono<PaperTradingAccount> releaseMargin(
-            Double requiredMargin,
-            Double profitLoss
-    );
+    Mono<Void> releaseMargin(Double requiredMargin, Double profitLoss);
+
+    Mono<Void> resetAccount();
 }

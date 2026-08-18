@@ -26,6 +26,8 @@ public class TechnicalIndicatorServiceImpl
 
     private final IndicatorService indicatorService;
 
+    private static final int MINIMUM_CANDLES = 51;
+
 
     @Override
     public Mono<TechnicalIndicatorResponse> calculate(String symbol) {
@@ -38,15 +40,34 @@ public class TechnicalIndicatorServiceImpl
         return stockServiceClient
                 .getHistoricalPrices(symbol)
                 .collectList()
+
                 .doOnNext(prices ->
-                        log.info("Loaded {} historical candles for {}",
-                                prices.size(), symbol))
+                        log.info(
+                                "Loaded {} historical candles for {}",
+                                prices.size(),
+                                symbol))
 
                 .flatMap(prices -> {
 
                     if (prices.isEmpty()) {
 
-                        log.warn("No historical candles found for {}", symbol);
+                        log.warn(
+                                "No historical candles found for {}",
+                                symbol);
+
+                        return Mono.empty();
+                    }
+
+                    if (prices.size() < MINIMUM_CANDLES) {
+
+                        log.warn(
+                                "Skipping indicator calculation | " +
+                                        "Symbol={} | " +
+                                        "Available Candles={} | " +
+                                        "Required Candles={}",
+                                symbol,
+                                prices.size(),
+                                MINIMUM_CANDLES);
 
                         return Mono.empty();
                     }
@@ -59,39 +80,35 @@ public class TechnicalIndicatorServiceImpl
                                 buildResponse(symbol, candles);
 
                         log.info("Technical Indicators Calculated Successfully");
-                        log.info("RSI      : {}", response.getRsi14());
-                        log.info("EMA20    : {}", response.getEma20());
-                        log.info("EMA50    : {}", response.getEma50());
-                        log.info("SMA20    : {}", response.getSma20());
-                        log.info("SMA50    : {}", response.getSma50());
-                        log.info("MACD     : {}", response.getMacd());
-
+                        log.info("RSI      : {}",response.getRsi14());
+                        log.info("EMA20    : {}",response.getEma20());
+                        log.info("EMA50    : {}",response.getEma50());
+                        log.info("SMA20    : {}",response.getSma20());
+                        log.info("SMA50    : {}",response.getSma50());
+                        log.info("MACD     : {}",response.getMacd());
                         return Mono.just(response);
 
-                    } catch (IllegalArgumentException ex) {
-
-                        log.error("Indicator Calculation Failed", ex);
-
+                    } catch (Exception ex) {
+                        log.error("Indicator Calculation Failed | Symbol={}",symbol,ex);
                         return Mono.empty();
                     }
-
                 })
 
                 .doOnSuccess(response -> {
 
                     if (response == null) {
-
-                        log.warn("TechnicalIndicatorService returned NULL/EMPTY");
+                        log.warn("TechnicalIndicatorService returned EMPTY | Symbol={}",symbol);
 
                     } else {
-
-                        log.info("TechnicalIndicatorService completed successfully.");
+                        log.info("TechnicalIndicatorService completed successfully | Symbol={}", symbol);
                     }
-
                 })
 
+                .doOnError(ex ->
+                        log.error("TechnicalIndicatorService unexpected error | Symbol={}",symbol, ex))
+
                 .doOnTerminate(() ->
-                        log.info("TECHNICAL INDICATOR CALCULATION COMPLETED"));
+                        log.info("TECHNICAL INDICATOR CALCULATION COMPLETED | Symbol={}",symbol));
     }
 
     private List<Candle> toCandles(
@@ -125,11 +142,6 @@ public class TechnicalIndicatorServiceImpl
     private TechnicalIndicatorResponse buildResponse(
             String symbol,
             List<Candle> candles) {
-
-        if (candles.size() < 51) {
-            throw new IllegalArgumentException(
-                    "Insufficient candles for technical indicator calculation");
-        }
 
         var rsi =
                 indicatorService.calculate(

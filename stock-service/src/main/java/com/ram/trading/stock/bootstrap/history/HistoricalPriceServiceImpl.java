@@ -42,6 +42,12 @@ public class HistoricalPriceServiceImpl implements HistoricalPriceService {
 
     }
 
+    @Override
+    public long countBySymbol(String symbol) {
+
+        return repository.countBySymbol(symbol);
+    }
+
   /*  @Override
     public void deleteBySymbol(String symbol) {
 

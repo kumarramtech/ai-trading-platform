@@ -16,6 +16,8 @@ public interface HistoricalPriceService {
             LocalDate from,
             LocalDate to);
 
+    long countBySymbol(String symbol);
+
     List<HistoricalPrice> findLatest(
             String symbol,
             Integer limit);

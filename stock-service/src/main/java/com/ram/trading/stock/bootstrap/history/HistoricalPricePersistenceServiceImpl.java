@@ -9,7 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,32 +27,92 @@ public class HistoricalPricePersistenceServiceImpl
     @Transactional
     public void save(HistoricalCandleResponse response) {
 
-        if (response == null || response.getCandles() == null || response.getCandles().isEmpty()) {
-            log.warn("No historical candles received for {}", response != null ? response.getSymbol() : "UNKNOWN");
+        if (response == null
+                || response.getCandles() == null
+                || response.getCandles().isEmpty()) {
+
+            log.warn(
+                    "No historical candles received for {}",
+                    response != null
+                            ? response.getSymbol()
+                            : "UNKNOWN");
+
             return;
         }
 
-        log.info("Persisting {} candles for {}",
-                response.getCandles().size(),
-                response.getSymbol());
+        String symbol = response.getSymbol();
 
-        List<HistoricalPrice> prices =
+        log.info("Historical candles received for persistence | " + "Symbol={} | Received={}",
+                symbol,response.getCandles().size());
+
+        /*
+         * Get all existing candles for this symbol.
+         */
+        Set<LocalDate> existingDates =
+                historicalPriceService
+                        .findBySymbol(symbol)
+                        .stream()
+                        .filter(price ->
+                                CandleInterval.DAY.equals(
+                                        price.getIntervalType()))
+                        .map(HistoricalPrice::getTradeDate)
+                        .collect(Collectors.toSet());
+
+        /*
+         * Convert only candles that do not already exist
+         * in the database.
+         */
+        List<HistoricalPrice> pricesToSave =
                 response.getCandles()
                         .stream()
-                        .map(candle -> mapToEntity(candle,response.getSymbol()))
+                        .filter(candle ->
+                                !existingDates.contains(
+                                        candle.getDateTime()
+                                                .toLocalDate()))
+                        .map(candle ->
+                                mapToEntity(
+                                        candle,
+                                        symbol))
                         .toList();
 
-        historicalPriceService.saveAll(prices);
+        if (pricesToSave.isEmpty()) {
 
-        log.info("Successfully persisted {} historical candles for {}",
-                prices.size(),
-                response.getSymbol());
+            log.info(
+                    "No new historical candles to persist | " +
+                            "Symbol={} | Received={} | Existing={}",
+                    symbol,
+                    response.getCandles().size(),
+                    existingDates.size());
+
+            return;
+        }
+
+        log.info(
+                "Persisting new historical candles | " +
+                        "Symbol={} | Received={} | New={} | Skipped={}",
+                symbol,
+                response.getCandles().size(),
+                pricesToSave.size(),
+                response.getCandles().size()
+                        - pricesToSave.size());
+
+        historicalPriceService.saveAll(pricesToSave);
+
+        log.info(
+                "Successfully persisted {} new historical candles for {}",
+                pricesToSave.size(),
+                symbol);
     }
 
     @Override
     public LocalDate getLastDownloadedDate(String symbol) {
 
         return historicalPriceService.getLastDownloadedDate(symbol);
+    }
+
+    @Override
+    public long countBySymbol(String symbol) {
+        return historicalPriceService.countBySymbol(symbol);
     }
 
     private HistoricalPrice mapToEntity(Candle candle,String symbol) {

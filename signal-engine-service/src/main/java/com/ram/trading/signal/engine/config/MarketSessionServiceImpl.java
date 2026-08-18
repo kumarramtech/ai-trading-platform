@@ -115,4 +115,16 @@ public class MarketSessionServiceImpl implements MarketSessionService {
 
         return !currentTime.isBefore(marketEnd);
     }
+
+    private LocalTime parseTime(String value, String propertyName) {
+
+        if (value == null || value.isBlank()) {
+
+            throw new IllegalStateException(
+                    "Missing market session configuration: "
+                            + propertyName);
+        }
+
+        return LocalTime.parse(value);
+    }
 }
