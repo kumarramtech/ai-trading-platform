@@ -42,6 +42,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -67,6 +68,9 @@ public class PaperTradingService {
     private final TradingSignalService tradingSignalService;
 
     private final BalanceMarginClient balanceMarginClient;
+
+    @Value("${trading.reentry.cooldown-minutes:15}")
+    private long reentryCooldownMinutes;
 
 
     @Value("${trading.capital-per-trade}")
@@ -2105,42 +2109,71 @@ public class PaperTradingService {
     private boolean validateTradeCreation(
             TradingSignalEntity signal) {
 
-        // Only BUY and SELL signals can create trades
-        if (!SignalType.BUY.name().equalsIgnoreCase(signal.getSignal())
-                && !SignalType.SELL.name().equalsIgnoreCase(signal.getSignal())) {
+        String symbol = signal.getSymbol();
+        /*
+         * ========================================
+         * STEP 1 : PREVENT DUPLICATE OPEN TRADE
+         * ========================================
+         */
+        boolean openTradeExists = repository.existsBySymbolAndStatus(
+                        symbol,
+                        SignalStatus.OPEN);
 
-            log.info("======================================");
-            log.info("Skipping Non-Tradable Signal");
-            log.info("Symbol : {}", signal.getSymbol());
-            log.info("Signal : {}", signal.getSignal());
-            log.info("======================================");
+        if (openTradeExists) {
+            log.info("Skipping trade creation. Open trade already exists | Symbol={}", symbol);
+            return false;
+        }
+
+        /*
+         * ========================================
+         * STEP 2 : CHECK LATEST TRADE
+         * ========================================
+         */
+        Optional<PaperTrade> latestTradeOptional = repository.findTopBySymbolOrderByExitTimeDesc(symbol);
+
+        if (latestTradeOptional.isEmpty()) {
+            return true;
+        }
+
+        PaperTrade latestTrade = latestTradeOptional.get();
+
+        /*
+         * ========================================
+         * STEP 3 : APPLY COOLDOWN ONLY
+         * AFTER STOP LOSS
+         * ========================================
+         */
+        if (latestTrade.getStatus() != SignalStatus.STOP_LOSS_HIT) {
+            return true;
+        }
+
+        /*
+         * Exit time can be null for safety.
+         */
+        if (latestTrade.getExitTime() == null) {
+            return true;
+        }
+
+        LocalDateTime cooldownUntil = latestTrade.getExitTime().plusMinutes(reentryCooldownMinutes);
+
+        LocalDateTime now = LocalDateTime.now();
+
+        if (now.isBefore(cooldownUntil)) {
+
+            long remainingSeconds = java.time.Duration.between(now, cooldownUntil).getSeconds();
+
+            log.info("""
+                    Skipping trade due to STOP LOSS cooldown
+                    Symbol={}
+                    Last Exit Time={}
+                    Cooldown Until={}
+                    Remaining Seconds={}
+                    """, symbol, latestTrade.getExitTime(), cooldownUntil, remainingSeconds);
 
             return false;
         }
 
-        String symbol = signal.getSymbol().trim().toUpperCase();
-
-        PaperTrade existingTrade =
-                repository.findTopBySymbolAndStatusOrderByEntryTimeDesc(
-                                symbol,
-                                SignalStatus.OPEN)
-                        .orElse(null);
-
-        if (existingTrade != null) {
-
-            log.info("======================================");
-            log.info("OPEN TRADE ALREADY EXISTS");
-            log.info("Symbol   : {}", symbol);
-            log.info("Trade Id : {}", existingTrade.getId());
-            log.info("======================================");
-
-            return false;
-        }
-
-        log.info(
-                "No OPEN paper trade found for symbol={}",
-                symbol);
-
+        log.info("STOP LOSS cooldown completed. Trade creation allowed | Symbol={}", symbol);
         return true;
     }
 

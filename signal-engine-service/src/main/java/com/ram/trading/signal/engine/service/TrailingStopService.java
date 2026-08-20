@@ -34,29 +34,49 @@ public class TrailingStopService {
             return Mono.just(trade);
         }
 
-        double previousStop = trade.getCurrentStopLoss();
-        double newStop = calculateNewStop(trade, currentPrice);
+        int currentStep = calculateCurrentStep(
+                trade,
+                currentPrice);
 
+        double previousStop = trade.getCurrentStopLoss();
+
+        final double newStop = calculateNewStop(
+                trade,
+                currentPrice);
+
+        // Do not update if the calculated stop
+        // is not better than the existing stop
         if (Double.compare(previousStop, newStop) == 0) {
             return Mono.just(trade);
         }
 
-        updateTrade(trade, newStop);
+        updateTrade(
+                trade,
+                newStop,
+                currentStep);
 
         return Mono.fromCallable(() -> repository.save(trade))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(savedTrade ->
-                        sendTrailingNotification(savedTrade, previousStop, newStop)
+                        sendTrailingNotification(
+                                savedTrade,
+                                previousStop,
+                                newStop)
                                 .thenReturn(savedTrade))
                 .doOnSuccess(saved ->
-                        log.info("Trailing Stop Updated : Symbol={} Old={} New={}",
+                        log.info(
+                                "Trailing Stop Updated : Symbol={} Old={} New={} Step={}",
                                 saved.getSymbol(),
                                 previousStop,
-                                newStop))
+                                newStop,
+                                currentStep))
                 .onErrorResume(ex -> {
-                    log.error("Error updating trailing stop for {}",
+
+                    log.error(
+                            "Error updating trailing stop for {}",
                             trade.getSymbol(),
                             ex);
+
                     return Mono.just(trade);
                 });
     }
@@ -70,32 +90,10 @@ public class TrailingStopService {
             return false;
         }
 
-        double entry = trade.getEntryPrice();
-        double initialStop = trade.getInitialStopLoss();
+        int currentStep = calculateCurrentStep(trade, currentPrice);
 
-        double risk = Math.abs(entry - initialStop);
-
-        if (risk <= 0) {
+        if (currentStep < 2) {
             return false;
-        }
-
-        int currentStep;
-
-        if (SignalType.BUY.name().equalsIgnoreCase(trade.getSignal())) {
-
-            if (currentPrice <= entry) {
-                return false;
-            }
-
-            currentStep = (int) ((currentPrice - entry) / risk);
-
-        } else {
-
-            if (currentPrice >= entry) {
-                return false;
-            }
-
-            currentStep = (int) ((entry - currentPrice) / risk);
         }
 
         int trailingStep = trade.getTrailingStep() == null
@@ -103,6 +101,36 @@ public class TrailingStopService {
                 : trade.getTrailingStep();
 
         return currentStep > trailingStep;
+    }
+
+    private int calculateCurrentStep(
+            PaperTrade trade,
+            double currentPrice) {
+
+        double entry = trade.getEntryPrice();
+        double initialStop = trade.getInitialStopLoss();
+
+        double risk = Math.abs(entry - initialStop);
+
+        if (risk <= 0) {
+            return 0;
+        }
+
+        if (SignalType.BUY.name()
+                .equalsIgnoreCase(trade.getSignal())) {
+
+            if (currentPrice <= entry) {
+                return 0;
+            }
+
+            return (int) ((currentPrice - entry) / risk);
+        }
+
+        if (currentPrice >= entry) {
+            return 0;
+        }
+
+        return (int) ((entry - currentPrice) / risk);
     }
 
     private double calculateNewStop(
@@ -132,32 +160,28 @@ public class TrailingStopService {
 
     private void updateTrade(
             PaperTrade trade,
-            double newStop) {
+            double newStop,
+            int currentStep) {
 
         Double previousStop = trade.getCurrentStopLoss();
 
         trade.setCurrentStopLoss(newStop);
-
-        trade.setTrailingStep(
-                trade.getTrailingStep() == null
-                        ? 1
-                        : trade.getTrailingStep() + 1);
-
+        trade.setTrailingStep(currentStep);
         trade.setLastTrailingUpdate(LocalDateTime.now());
 
         log.info("""
-            Trailing Stop Updated
-            Symbol={}
-            Entry={}
-            Previous Stop={}
-            New Stop={}
-            Step={}
-            """,
+        Trailing Stop Updated
+        Symbol={}
+        Entry={}
+        Previous Stop={}
+        New Stop={}
+        Step={}
+        """,
                 trade.getSymbol(),
                 trade.getEntryPrice(),
                 previousStop,
                 newStop,
-                trade.getTrailingStep());
+                currentStep);
     }
 
     private Mono<Void> sendTrailingNotification(

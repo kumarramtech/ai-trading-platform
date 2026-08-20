@@ -2,6 +2,8 @@ package com.ram.trading.ai.engine.service.impl;
 
 import com.ram.trading.ai.engine.constant.PromptConstants;
 import com.ram.trading.ai.engine.dto.*;
+import com.ram.trading.ai.engine.dto.news.AiPromptRequest;
+import com.ram.trading.ai.engine.dto.news.AiPromptResponse;
 import com.ram.trading.ai.engine.gateway.AIGatewayService;
 import com.ram.trading.ai.engine.service.AIAnalysisService;
 import lombok.RequiredArgsConstructor;
@@ -168,6 +170,34 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
                 .riskLevel(riskLevel)
                 .analysis(analysis)
                 .build();
+    }
+
+    @Override
+    public AiPromptResponse analyze(AiPromptRequest request) {
+
+        log.info("Processing generic AI analysis request");
+
+        try {
+
+            String response =
+                    aiGatewayService.analyze(
+                            request.getPrompt());
+
+            return AiPromptResponse.builder()
+                    .response(response)
+                    .build();
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "AI analysis failed",
+                    ex);
+
+            return AiPromptResponse.builder()
+                    .response(
+                            "AI analysis unavailable. All AI providers failed.")
+                    .build();
+        }
     }
 
     private String executeAiOrFallback(

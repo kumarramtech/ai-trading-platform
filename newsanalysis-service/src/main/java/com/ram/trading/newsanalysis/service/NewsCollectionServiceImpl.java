@@ -7,6 +7,7 @@ import com.ram.trading.newsanalysis.dto.NewsArticle;
 import com.ram.trading.newsanalysis.repo.InstrumentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import java.util.List;
 import com.ram.trading.newsanalysis.entity.Instrument;
@@ -47,14 +48,11 @@ public class NewsCollectionServiceImpl implements NewsCollectionService {
                         return Mono.just(List.of());
                     }
 
-                    Instrument instrument =
-                            optionalInstrument.get();
+                    Instrument instrument = optionalInstrument.get();
 
-                    String companyName =
-                            instrument.getCompanyName();
+                    String companyName = instrument.getCompanyName();
 
-                    if (companyName == null ||
-                            companyName.isBlank()) {
+                    if (companyName == null || companyName.isBlank()) {
 
                         log.warn(
                                 "Company name missing for symbol [{}]. " +
@@ -72,7 +70,42 @@ public class NewsCollectionServiceImpl implements NewsCollectionService {
                     );
 
                     return googleNewsClient
-                            .getLatestHeadlines(symbol);
+                            .getLatestHeadlines(companyName);
+                });
+    }
+
+    @Override
+    public Mono<List<NewsArticle>> collectMarketNews() {
+
+        List<String> queries = List.of(
+                "Indian stock market news",
+                "Indian stock market trends today",
+                "US stock market overnight news",
+                "global market news affecting India",
+                "Indian economy government policy news",
+                "RBI announcements economy",
+                "India sector stock market news"
+        );
+
+        return Flux.fromIterable(queries)
+                .flatMap(googleNewsClient::getLatestHeadlines)
+                .flatMapIterable(articles -> articles)
+                .distinct(NewsArticle::getTitle)
+                .collectList()
+                .doOnSuccess(articles ->
+                        log.info(
+                                "Collected {} market news articles",
+                                articles != null ? articles.size() : 0
+                        )
+                )
+                .onErrorResume(ex -> {
+
+                    log.error(
+                            "Unable to collect market news",
+                            ex
+                    );
+
+                    return Mono.just(List.of());
                 });
     }
 }

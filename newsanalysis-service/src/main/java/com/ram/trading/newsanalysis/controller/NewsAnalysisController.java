@@ -1,8 +1,6 @@
 package com.ram.trading.newsanalysis.controller;
 
-import com.ram.trading.newsanalysis.dto.NewsAnalysisRequest;
-import com.ram.trading.newsanalysis.dto.NewsAnalysisResponse;
-import com.ram.trading.newsanalysis.dto.NewsArticle;
+import com.ram.trading.newsanalysis.dto.*;
 import com.ram.trading.newsanalysis.service.NewsAnalysisService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -31,5 +29,19 @@ public class NewsAnalysisController {
             @RequestParam String symbol) {
 
         return newsAnalysisService.getLatestNews(symbol);
+    }
+
+    @GetMapping("/market-trend")
+    public Mono<MarketTrendAnalysisResponse> analyzeMarketTrend() {
+
+        return newsAnalysisService.analyzeMarketTrend();
+    }
+
+    @GetMapping("/market-trend/stocks")
+    public Mono<SectorStockAnalysisResponse> analyzeMarketTrendStocks() {
+
+        return newsAnalysisService
+                .analyzeMarketTrend()
+                .flatMap(newsAnalysisService::analyzeSectorStocks);
     }
 }

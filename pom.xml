@@ -23,5 +23,6 @@
         <module>broker-auth-service</module>
         <module>balance-margin-service</module>
         <module>trade-execution-service</module>
+        <module>watchlist-service</module>
     </modules>
 </project>

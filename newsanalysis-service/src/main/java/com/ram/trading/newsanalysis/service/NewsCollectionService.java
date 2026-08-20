@@ -9,4 +9,6 @@ public interface NewsCollectionService {
 
     Mono<List<NewsArticle>> collectNews(String symbol);
 
+    Mono<List<NewsArticle>> collectMarketNews();
+
 }

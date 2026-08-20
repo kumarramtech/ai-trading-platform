@@ -1,6 +1,8 @@
 package com.ram.trading.ai.engine.controller;
 
 import com.ram.trading.ai.engine.dto.*;
+import com.ram.trading.ai.engine.dto.news.AiPromptRequest;
+import com.ram.trading.ai.engine.dto.news.AiPromptResponse;
 import com.ram.trading.ai.engine.service.AIAnalysisService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -41,5 +43,12 @@ public class AIController {
             @RequestBody RiskAnalysisRequest request) {
 
         return service.analyzeRisk(request);
+    }
+
+    @PostMapping("/news-analyze")
+    public AiPromptResponse analyze(
+            @RequestBody AiPromptRequest request) {
+
+        return service.analyze(request);
     }
 }

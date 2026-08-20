@@ -1,39 +1,49 @@
 package com.ram.trading.newsanalysis.client;
 
+import com.ram.trading.newsanalysis.dto.AiPromptRequest;
+import com.ram.trading.newsanalysis.dto.AiPromptResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class AIClientImpl implements AIClient {
 
-    private final ChatClient.Builder chatClientBuilder;
+    private final WebClient.Builder webClientBuilder;
+
+    @Value("${ai.service.base-url}")
+    private String aiServiceBaseUrl;
 
     @Override
     public Mono<String> analyze(String prompt) {
 
-        return Mono.fromCallable(() -> {
+        log.info("Calling centralized AI Service");
 
-                    log.info("Calling OpenAI...");
+        AiPromptRequest request =
+                AiPromptRequest.builder()
+                        .prompt(prompt)
+                        .build();
 
-                    return chatClientBuilder
-                            .build()
-                            .prompt(prompt)
-                            .call()
-                            .content();
-
-                })
-                .subscribeOn(Schedulers.boundedElastic())
-                .doOnSuccess(r ->
-                        log.info("AI Response received."))
-                .doOnError(e ->
-                        log.error("AI Call Failed", e));
-
+        return webClientBuilder
+                .baseUrl(aiServiceBaseUrl)
+                .build()
+                .post()
+                .uri("/ai/news-analyze")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(AiPromptResponse.class)
+                .map(AiPromptResponse::getResponse)
+                .doOnSuccess(response ->
+                        log.info("AI response received from centralized AI Service"))
+                .doOnError(error ->
+                        log.error(
+                                "Centralized AI Service call failed",
+                                error
+                        ));
     }
-
 }

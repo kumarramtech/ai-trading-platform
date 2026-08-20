@@ -92,23 +92,19 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
 
                 if ("RELIANCE".equals(tradingSymbol)
                         || "HDFCBANK".equals(tradingSymbol)
-                        || "ICICIBANK".equals(tradingSymbol)) {
+                        || "ICICIBANK".equals(tradingSymbol)
+                        || "TCS".equals(tradingSymbol)
+                        || "INFY".equals(tradingSymbol)
+                        || "AFFLE".equals(tradingSymbol)) {
 
                     log.info("""
+                        ==========================================
                         [RAW INSTRUMENT DATA]
-
-                        Symbol            : {}
-                        Intraday Margin   : {}
-                        Intraday Leverage : {}
-                        MTF Enabled       : {}
-                        MTF Bracket       : {}
-                        """,
-                            tradingSymbol,
-                            node.get("intraday_margin"),
-                            node.get("intraday_leverage"),
-                            node.get("mtf_enabled"),
-                            node.get("mtf_bracket"));
-                }
+                        ==========================================
+                        {}
+                        ==========================================
+                        """, node.toPrettyString());
+                    }
 
                 // EXISTING CODE - DON'T CHANGE
                 Instrument instrument = Instrument.builder()
@@ -116,7 +112,7 @@ public class InstrumentJsonParserImpl implements InstrumentJsonParser {
                         .exchange(getText(node, "exchange"))
                         .segment(getText(node, "segment"))
                         .tradingSymbol(getText(node, "trading_symbol"))
-                        .companyName(getText(node, "company_name"))
+                        .companyName(getText(node, "name"))
                         .instrumentKey(getText(node, "instrument_key"))
                         .exchangeToken(getText(node, "exchange_token"))
                         .isin(getText(node, "isin"))

@@ -26,6 +26,9 @@ public interface PaperTradeRepository
 
     Optional<PaperTrade> findFirstBySymbolAndStatus(String symbol,SignalStatus status);
 
+    // Latest completed/recent trade for symbol
+    Optional<PaperTrade> findTopBySymbolOrderByExitTimeDesc(String symbol);
+
     List<PaperTrade> findAllByOrderByEntryTimeDesc();
     List<PaperTrade> findTop20ByStatusNotOrderByIdDesc(SignalStatus status);
     long countByStatus(SignalStatus status);

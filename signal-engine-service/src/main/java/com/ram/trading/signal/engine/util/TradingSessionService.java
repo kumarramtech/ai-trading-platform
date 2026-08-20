@@ -47,10 +47,13 @@ public class TradingSessionService {
      */
     public boolean canCreateTrade() {
 
+        if (!isMarketOpen()) {
+            return false;
+        }
+
         LocalTime now = LocalTime.now();
 
-        return !now.isBefore(marketOpen)
-                && now.isBefore(entryCutoff);
+        return now.isBefore(entryCutoff);
     }
 
     /**

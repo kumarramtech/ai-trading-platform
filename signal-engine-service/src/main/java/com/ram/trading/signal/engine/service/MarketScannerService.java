@@ -1,8 +1,8 @@
 package com.ram.trading.signal.engine.service;
 
+import com.ram.trading.signal.engine.client.WatchlistClient;
 import com.ram.trading.signal.engine.config.MarketSessionService;
-import com.ram.trading.signal.engine.entity.WatchlistStock;
-import com.ram.trading.signal.engine.repo.WatchlistStockRepository;
+import com.ram.trading.signal.engine.dto.watchlist.WatchlistStockResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,7 +15,7 @@ import java.util.List;
 @Slf4j
 public class MarketScannerService {
 
-    private final WatchlistStockRepository watchlistRepository;
+    private final WatchlistClient watchlistClient;
 
     private final MarketSessionService marketSessionService;
 
@@ -36,11 +36,32 @@ public class MarketScannerService {
             return;
         }
 
-        List<WatchlistStock> stocks =
-                watchlistRepository.findByActiveTrue();
+        watchlistClient
+                .getActiveWatchlist()
+                .collectList()
+
+                .doOnSuccess(this::processWatchlist)
+
+                .doOnError(error ->
+                        log.error(
+                                "Failed to retrieve active watchlist from Watchlist Service. "
+                                        + "Skipping current market scan.",
+                                error
+                        )
+                )
+
+                .subscribe();
+    }
+
+    private void processWatchlist(
+            List<WatchlistStockResponse> stocks) {
 
         if (stocks == null || stocks.isEmpty()) {
-            log.warn("No active watchlist stocks available for scanning.");
+
+            log.warn(
+                    "No active watchlist stocks received from Watchlist Service."
+            );
+
             return;
         }
 
@@ -73,7 +94,7 @@ public class MarketScannerService {
                 totalStocks
         );
 
-        List<WatchlistStock> batch =
+        List<WatchlistStockResponse> batch =
                 stocks.subList(startIndex, endIndex);
 
         batch.forEach(stock ->
@@ -88,6 +109,7 @@ public class MarketScannerService {
         currentIndex = endIndex;
 
         if (currentIndex >= totalStocks) {
+
             log.info(
                     "Completed full watchlist scan. Resetting cursor to beginning."
             );

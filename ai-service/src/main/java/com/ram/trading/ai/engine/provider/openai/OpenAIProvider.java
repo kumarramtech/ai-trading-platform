@@ -54,8 +54,13 @@ public class OpenAIProvider implements LLMProvider {
                     priority);
 
             String response = chatClient
-                    .prompt()
-                    .user(prompt)
+                    .prompt(prompt)
+                    .options(
+                            org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                    .model("gpt-5.6-luna")
+                                    .temperature(1.0)
+                                    .build()
+                    )
                     .call()
                     .content();
 

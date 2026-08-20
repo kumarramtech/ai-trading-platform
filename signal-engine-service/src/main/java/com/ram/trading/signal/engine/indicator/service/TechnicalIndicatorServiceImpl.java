@@ -12,6 +12,7 @@ import com.ram.trading.signal.engine.indicator.macd.MACDIndicator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -109,6 +110,62 @@ public class TechnicalIndicatorServiceImpl
 
                 .doOnTerminate(() ->
                         log.info("TECHNICAL INDICATOR CALCULATION COMPLETED | Symbol={}",symbol));
+    }
+
+    @Override
+    public Flux<TechnicalIndicatorResponse> calculateBulk(
+            List<String> symbols) {
+
+        if (symbols == null || symbols.isEmpty()) {
+
+            log.warn("Bulk indicator calculation skipped | No symbols provided");
+
+            return Flux.empty();
+        }
+
+        log.info("==================================================");
+        log.info("BULK TECHNICAL INDICATOR CALCULATION STARTED");
+        log.info("Total Symbols : {}", symbols.size());
+        log.info("==================================================");
+
+        return Flux.fromIterable(symbols)
+
+                .filter(symbol ->
+                        symbol != null &&
+                                !symbol.isBlank())
+
+                .map(String::trim)
+
+                .distinct()
+
+                .flatMap(
+                        symbol ->
+                                calculate(symbol)
+
+                                        .onErrorResume(ex -> {
+
+                                            log.error(
+                                                    "Bulk indicator calculation failed | Symbol={}",
+                                                    symbol,
+                                                    ex);
+
+                                            return Mono.empty();
+                                        }),
+
+                        10
+                )
+
+                .doOnNext(response ->
+                        log.debug(
+                                "Bulk indicator calculated | Symbol={}",
+                                response.getSymbol()))
+
+                .doOnComplete(() -> {
+
+                    log.info("==================================================");
+                    log.info("BULK TECHNICAL INDICATOR CALCULATION COMPLETED");
+                    log.info("==================================================");
+                });
     }
 
     private List<Candle> toCandles(
