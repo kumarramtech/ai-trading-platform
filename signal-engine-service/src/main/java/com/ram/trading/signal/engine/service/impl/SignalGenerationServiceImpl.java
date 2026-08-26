@@ -18,6 +18,7 @@ import com.ram.trading.signal.engine.service.OpportunityService;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import com.ram.trading.signal.engine.service.SignalGenerationService;
 import com.ram.trading.signal.engine.service.TradingSignalService;
+import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
 import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingSignalMapper;
 import com.ram.trading.signal.engine.service.context.TradingContext;
@@ -51,6 +52,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final TradeExitService tradeExitService;
 
     private final OpportunityService opportunityService;
+
+    private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
 
     @Override
     public Mono<TradingSignal> generateSignal(String symbol) {
@@ -292,15 +295,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                     /*
                      * =====================================================
-                     * ENGINEERING FILTER REJECTION
+                     * AI DECISION VALIDATION
                      * =====================================================
-                     *
-                     * Orchestrator returns Mono.empty() for rejected
-                     * symbols, so normally this block won't be reached
-                     * for rejected symbols.
-                     *
-                     * Still keeping this validation makes the service
-                     * defensive.
                      */
 
                     if (pipelineResult.getAiDecision() == null) {
@@ -334,44 +330,110 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                         return Mono.empty();
                     }
 
-                    log.debug(
-                            "Trade Allowed : {}",
+                    /*
+                     * =====================================================
+                     * FUNNEL : AI DECISION
+                     * =====================================================
+                     */
+
+                    String recommendation =
                             aiResponse
                                     .getDecision()
-                                    .getTradeAllowed());
+                                    .getRecommendation().name();
+
+                    Boolean tradeAllowed =
+                            aiResponse
+                                    .getDecision()
+                                    .getTradeAllowed();
+
+                    if (SignalType.BUY.name()
+                            .equalsIgnoreCase(recommendation)) {
+
+                        tradingFunnelStatisticsService
+                                .recordAiBuy();
+
+                    } else if (SignalType.SELL.name()
+                            .equalsIgnoreCase(recommendation)) {
+
+                        tradingFunnelStatisticsService
+                                .recordAiSell();
+
+                    } else {
+
+                        tradingFunnelStatisticsService
+                                .recordAiHold();
+                    }
+
+                    if (!Boolean.TRUE.equals(tradeAllowed)) {
+
+                        tradingFunnelStatisticsService
+                                .recordAiTradeNotAllowed();
+                    }
+
+                    log.debug(
+                            "Trade Allowed : {}",
+                            tradeAllowed);
 
                     log.debug(
                             "Recommendation : {}",
-                            aiResponse
-                                    .getDecision()
-                                    .getRecommendation());
+                            recommendation);
 
                     logAiDecision(aiResponse);
+
+                    /*
+                     * =====================================================
+                     * AI TRADE-ALLOWED GUARD
+                     * =====================================================
+                     *
+                     * AI explicitly says the trade is not allowed.
+                     * Do not let the signal continue to Risk Guard.
+                     */
+                    if (!Boolean.TRUE.equals(tradeAllowed)) {
+
+                        log.info(
+                                "AI Trade Not Allowed. Returning HOLD | Symbol={} | Recommendation={}",
+                                request.getSymbol(),
+                                recommendation);
+
+                        return Mono.just(
+                                TradingSignal.builder()
+                                        .symbol(request.getSymbol())
+                                        .signal(SignalType.HOLD.name())
+                                        .build());
+                    }
+
+                    /*
+                     * =====================================================
+                     * ENGINEERING ↔ AI DIRECTION GUARD
+                     * =====================================================
+                     *
+                     * AI is a confirmation layer. It must not reverse
+                     * the engineering/technical direction.
+                     *
+                     * BUY  + BUY  -> continue
+                     * SELL + SELL -> continue
+                     * BUY  + SELL -> HOLD
+                     * SELL + BUY  -> HOLD
+                     */
+                    TradingSignal directionGuardResult =
+                            validateAiDirection(
+                                    pipelineResult,
+                                    aiResponse,
+                                    request);
+
+                    if (directionGuardResult != null) {
+                        return Mono.just(directionGuardResult);
+                    }
 
                     /*
                      * =====================================================
                      * GET EXISTING TRADING CONTEXT
                      * =====================================================
                      *
-                     * IMPORTANT:
+                     * Context was already created inside
+                     * TradingOrchestratorService.
                      *
-                     * DO NOT call:
-                     *
-                     * tradingContextService.buildTradingContext(...)
-                     *
-                     * here.
-                     *
-                     * The context has already been created by
-                     * TradingOrchestratorService and is carried inside
-                     * TradingPipelineResult.
-                     *
-                     * This prevents duplicate:
-                     *
-                     * News
-                     * Portfolio
-                     * Open Position
-                     *
-                     * calls.
+                     * Do not rebuild it here.
                      */
 
                     TradingContext context =
@@ -394,18 +456,32 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * =====================================================
                      */
 
-                    RiskEvaluation evaluation = RiskEvaluation.builder()
-                            .context(context)
-                            .decision(aiResponse.getDecision())
-                            .aiResponse(aiResponse)
-                            .signal(TradingSignal.builder()
-                                    .symbol(request.getSymbol())
-                                    .build())
-                            .build();
+                    RiskEvaluation evaluation =
+                            RiskEvaluation.builder()
+                                    .context(context)
+                                    .decision(
+                                            aiResponse.getDecision())
+                                    .aiResponse(aiResponse)
+                                    .signal(
+                                            TradingSignal.builder()
+                                                    .symbol(
+                                                            request.getSymbol())
+                                                    .build())
+                                    .build();
+
                     try {
 
                         log.debug(
                                 "STEP-1 Before Risk Guard");
+
+                        /*
+                         * =================================================
+                         * FUNNEL : RISK EVALUATED
+                         * =================================================
+                         */
+
+                        tradingFunnelStatisticsService
+                                .recordRiskEvaluated();
 
                         RiskGuardResult result =
                                 riskGuardService.evaluate(
@@ -415,6 +491,23 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 "STEP-2 Risk Guard Completed");
 
                         logRiskEvaluation(result);
+
+                        /*
+                         * =================================================
+                         * FUNNEL : RISK RESULT
+                         * =================================================
+                         */
+
+                        if (result.isApproved()) {
+
+                            tradingFunnelStatisticsService
+                                    .recordRiskApproved();
+
+                        } else {
+
+                            tradingFunnelStatisticsService
+                                    .recordRiskRejected();
+                        }
 
                         /*
                          * =================================================
@@ -456,6 +549,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                          * =================================================
                          */
 
+                        tradingFunnelStatisticsService
+                                .recordPostProcessingEntered();
+
                         log.debug(
                                 "STEP-5 Before Post Process");
 
@@ -491,6 +587,186 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                         log.error(
                                 "Trading Decision Pipeline Failed",
                                 error));
+    }
+
+    /**
+     * Validates that the AI recommendation confirms the technical
+     * direction generated by the engineering pipeline.
+     *
+     * AI acts as a confirmation / veto layer.
+     *
+     * BUY  + BUY  -> CONTINUE
+     * SELL + SELL  -> CONTINUE
+     *
+     * BUY  + SELL  -> HOLD
+     * SELL + BUY   -> HOLD
+     *
+     * BUY  + HOLD  -> HOLD
+     * SELL + HOLD  -> HOLD
+     *
+     * HOLD + BUY   -> HOLD
+     * HOLD + SELL  -> HOLD
+     * HOLD + HOLD  -> HOLD
+     *
+     * Any invalid / unknown direction -> HOLD
+     *
+     * @return HOLD signal when the AI does not confirm the engineering
+     *         direction; otherwise null so the normal pipeline continues.
+     */
+    private TradingSignal validateAiDirection(
+            TradingPipelineResult pipelineResult,
+            AiDecisionResponse aiResponse,
+            SignalGenerationRequest request) {
+
+        /*
+         * ============================================================
+         * VALIDATION
+         * ============================================================
+         */
+
+        if (pipelineResult == null
+                || pipelineResult.getTechnicalDecision() == null
+                || aiResponse == null
+                || aiResponse.getDecision() == null
+                || aiResponse.getDecision().getRecommendation() == null) {
+
+            log.warn(
+                    "AI Direction Guard -> HOLD | Incomplete decision data | Symbol={}",
+                    request.getSymbol());
+
+            return TradingSignal.builder()
+                    .symbol(request.getSymbol())
+                    .signal(SignalType.HOLD.name())
+                    .build();
+        }
+
+        /*
+         * ============================================================
+         * ENGINEERING / TECHNICAL SIGNAL
+         * ============================================================
+         */
+
+        SignalType technicalSignal =
+                pipelineResult
+                        .getTechnicalDecision()
+                        .getSignal();
+
+        /*
+         * ============================================================
+         * AI SIGNAL
+         * ============================================================
+         */
+
+        SignalType aiSignal;
+
+        try {
+
+            aiSignal = SignalType.valueOf(
+                    aiResponse
+                            .getDecision()
+                            .getRecommendation()
+                            .name()
+                            .toUpperCase());
+
+        } catch (IllegalArgumentException ex) {
+
+            log.warn(
+                    "AI Direction Guard -> HOLD | Unknown AI recommendation | Symbol={} | Recommendation={}",
+                    request.getSymbol(),
+                    aiResponse.getDecision().getRecommendation());
+
+            return TradingSignal.builder()
+                    .symbol(request.getSymbol())
+                    .signal(SignalType.HOLD.name())
+                    .build();
+        }
+
+        /*
+         * ============================================================
+         * ENGINEERING HOLD
+         * ============================================================
+         *
+         * Engineering is the primary direction anchor.
+         *
+         * If Engineering itself says HOLD, no trade should proceed.
+         */
+
+        if (technicalSignal == null
+                || SignalType.HOLD.equals(technicalSignal)) {
+
+            log.debug(
+                    "AI Direction Guard -> HOLD | Engineering signal is HOLD | Symbol={} | AI={}",
+                    request.getSymbol(),
+                    aiSignal);
+
+            return TradingSignal.builder()
+                    .symbol(request.getSymbol())
+                    .signal(SignalType.HOLD.name())
+                    .build();
+        }
+
+        /*
+         * ============================================================
+         * AI HOLD
+         * ============================================================
+         *
+         * AI did not confirm the Engineering direction.
+         * Therefore, do not trade.
+         */
+
+        if (SignalType.HOLD.equals(aiSignal)) {
+
+            log.debug(
+                    "AI Direction Guard -> HOLD | AI did not confirm Engineering direction | Symbol={} | Engineering={}",
+                    request.getSymbol(),
+                    technicalSignal);
+
+            return TradingSignal.builder()
+                    .symbol(request.getSymbol())
+                    .signal(SignalType.HOLD.name())
+                    .build();
+        }
+
+        /*
+         * ============================================================
+         * DIRECTION MATCH
+         * ============================================================
+         *
+         * Engineering BUY  + AI BUY  -> Continue
+         * Engineering SELL + AI SELL -> Continue
+         */
+
+        if (technicalSignal == aiSignal) {
+
+            log.debug(
+                    "AI DIRECTION CONFIRMED | Symbol={} | Direction={}",
+                    request.getSymbol(),
+                    technicalSignal);
+
+            return null;
+        }
+
+        /*
+         * ============================================================
+         * DIRECTION MISMATCH
+         * ============================================================
+         *
+         * Engineering BUY  + AI SELL -> HOLD
+         * Engineering SELL + AI BUY  -> HOLD
+         *
+         * AI is NOT allowed to reverse Engineering direction.
+         */
+
+        log.warn(
+                "AI DIRECTION MISMATCH -> HOLD | Symbol={} | Engineering={} | AI={}",
+                request.getSymbol(),
+                technicalSignal,
+                aiSignal);
+
+        return TradingSignal.builder()
+                .symbol(request.getSymbol())
+                .signal(SignalType.HOLD.name())
+                .build();
     }
 
     private void logTradingContext(TradingContext context) {
@@ -640,6 +916,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                 .flatMap(entity -> {
 
+                    /*
+                     * FUNNEL : SIGNAL SAVED
+                     */
+                    tradingFunnelStatisticsService
+                            .recordSignalSaved();
+
                     log.info("Trading Signal Saved : {}", entity.getId());
 
                     return Mono.fromRunnable(() -> {
@@ -649,6 +931,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 opportunityService.save(
                                         signal,
                                         entity.getId());
+
+                                /*
+                                 * FUNNEL : OPPORTUNITY SAVED
+                                 */
+                                tradingFunnelStatisticsService
+                                        .recordOpportunitySaved();
 
                                 log.info("Opportunity Saved Successfully.");
 
@@ -663,6 +951,15 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                         Mono.fromRunnable(() -> {
 
                                     log.info("Creating Paper Trade...");
+
+                                    /*
+                                     * FUNNEL : PAPER TRADE ATTEMPTED
+                                     *
+                                     * This means the request reached
+                                     * PaperTradingService.
+                                     */
+                                    tradingFunnelStatisticsService
+                                            .recordPaperTradeAttempted();
 
                                     paperTradingService.createTrade(
                                             entity,

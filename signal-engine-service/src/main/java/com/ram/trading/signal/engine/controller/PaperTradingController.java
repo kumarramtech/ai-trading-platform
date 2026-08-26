@@ -11,9 +11,13 @@ import com.ram.trading.signal.engine.dto.response.OpportunityDashboardResponse;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.service.PaperTradingService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 @RestController
@@ -90,6 +94,45 @@ public class PaperTradingController {
     public DailyPnLResponse getDailyPnL() {
 
         return service.getDailyPnL();
+    }
+
+    @GetMapping("/pnl")
+    public DailyPnLResponse getPnLByDateRange(@RequestParam LocalDate fromDate,
+                                              @RequestParam LocalDate toDate) {
+        return service.getPnLByDateRange(
+                fromDate,
+                toDate);
+    }
+
+    @GetMapping("/historycustomdates")
+    public List<PaperTrade> history(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate fromDate,
+
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate toDate) {
+
+        if (fromDate == null || toDate == null) {
+            return service.getHistory();
+        }
+
+        if (fromDate.isAfter(toDate)) {
+            throw new IllegalArgumentException(
+                    "fromDate cannot be after toDate");
+        }
+
+        LocalDateTime fromDateTime =
+                fromDate.atStartOfDay();
+
+        LocalDateTime toDateTime =
+                toDate.atTime(LocalTime.MAX);
+
+        return service
+                .findByExitTimeBetweenOrderByExitTimeDesc(
+                        fromDateTime,
+                        toDateTime);
     }
 
     @GetMapping("/pnldashboard")

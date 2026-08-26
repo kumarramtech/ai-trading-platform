@@ -42,10 +42,20 @@ public class TradingOrchestratorService {
 
     private final StrategyStatisticsService strategyStatisticsService;
 
+    private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
+
     public Mono<TradingPipelineResult> executeTrade(
             SignalGenerationRequest signalRequest) {
 
         final long totalStart = System.currentTimeMillis();
+
+        /*
+         * ============================================================
+         * FUNNEL : TOTAL EVALUATION
+         * ============================================================
+         */
+        tradingFunnelStatisticsService
+                .recordTotalEvaluation();
 
         log.info("====================================================");
         log.info(
@@ -69,7 +79,8 @@ public class TradingOrchestratorService {
          * the Engineering Filter.
          */
 
-        long technicalStart = System.currentTimeMillis();
+        long technicalStart =
+                System.currentTimeMillis();
 
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
@@ -77,9 +88,11 @@ public class TradingOrchestratorService {
         log.info(
                 "Technical Decision Time [{}] : {} ms",
                 signalRequest.getSymbol(),
-                System.currentTimeMillis() - technicalStart);
+                System.currentTimeMillis()
+                        - technicalStart);
 
         log.info("Technical Decision Generated");
+
         log.info(
                 "Symbol      : {}",
                 signalRequest.getSymbol());
@@ -104,6 +117,22 @@ public class TradingOrchestratorService {
         boolean eligible =
                 engineeringFilterService
                         .isEligibleForAI(technicalDecision);
+
+        /*
+         * ============================================================
+         * FUNNEL : ENGINEERING RESULT
+         * ============================================================
+         */
+        if (eligible) {
+
+            tradingFunnelStatisticsService
+                    .recordEngineeringPassed();
+
+        } else {
+
+            tradingFunnelStatisticsService
+                    .recordEngineeringRejected();
+        }
 
         log.info(
                 "Engineering Filter Time [{}] : {} ms",
@@ -194,7 +223,7 @@ public class TradingOrchestratorService {
          *
          * VERY IMPORTANT:
          *
-         * If rejected, we return immediately.
+         * If rejected, return immediately.
          *
          * NO:
          * - Trading Context
@@ -213,6 +242,14 @@ public class TradingOrchestratorService {
                     signalRequest.getSymbol());
 
             strategyStatisticsService
+                    .printStatistics();
+
+            /*
+             * ============================================================
+             * FUNNEL : PRINT CURRENT STATISTICS
+             * ============================================================
+             */
+            tradingFunnelStatisticsService
                     .printStatistics();
 
             log.info(
@@ -240,8 +277,15 @@ public class TradingOrchestratorService {
                 signalRequest.getSymbol());
 
         return tradingContextService
-                .buildTradingContext(signalRequest.getSymbol())
+                .buildTradingContext(
+                        signalRequest.getSymbol())
                 .flatMap(context -> {
+
+                    log.info(
+                            "Trading Context Time [{}] : {} ms",
+                            signalRequest.getSymbol(),
+                            System.currentTimeMillis()
+                                    - contextStart);
 
                     TradingDecisionRequest aiRequest =
                             tradingDecisionMapper.map(
@@ -249,14 +293,44 @@ public class TradingOrchestratorService {
                                     technicalDecision,
                                     context);
 
+                    /*
+                     * ====================================================
+                     * FUNNEL : AI REQUESTED
+                     * ====================================================
+                     */
+                    tradingFunnelStatisticsService
+                            .recordAiRequested();
+
                     return callAI(aiRequest)
+                            .doOnNext(aiResponse ->
+                                    tradingFunnelStatisticsService
+                                            .recordAiResponseReceived())
                             .map(aiResponse ->
                                     TradingPipelineResult.builder()
-                                            .technicalDecision(technicalDecision)
-                                            .tradingContext(context)
-                                            .aiDecision(aiResponse)
+                                            .technicalDecision(
+                                                    technicalDecision)
+                                            .tradingContext(
+                                                    context)
+                                            .aiDecision(
+                                                    aiResponse)
                                             .build());
-                });
+                })
+                .doOnSuccess(result -> {
+
+                    if (result != null) {
+
+                        log.info(
+                                "TOTAL AI Pipeline Time [{}] : {} ms",
+                                signalRequest.getSymbol(),
+                                System.currentTimeMillis()
+                                        - totalStart);
+                    }
+                })
+                .doOnError(error ->
+                        log.error(
+                                "AI Trading Pipeline Failed | Symbol={}",
+                                signalRequest.getSymbol(),
+                                error));
     }
 
     private TradingDecision generateTechnicalDecision(

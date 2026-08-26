@@ -5,6 +5,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,6 +30,8 @@ public interface PaperTradeRepository
     // Latest completed/recent trade for symbol
     Optional<PaperTrade> findTopBySymbolOrderByExitTimeDesc(String symbol);
 
+    Optional<PaperTrade> findTopBySymbolAndExitTimeIsNotNullOrderByExitTimeDesc(String symbol);
+
     List<PaperTrade> findAllByOrderByEntryTimeDesc();
     List<PaperTrade> findTop20ByStatusNotOrderByIdDesc(SignalStatus status);
     long countByStatus(SignalStatus status);
@@ -38,4 +41,6 @@ public interface PaperTradeRepository
     List<PaperTrade> findAll();
 
     List<PaperTrade> findByStatusIn(List<SignalStatus> targetHit);
+
+    List<PaperTrade> findByExitTimeBetweenOrderByExitTimeDesc(LocalDateTime fromDateTime, LocalDateTime toDateTime);
 }

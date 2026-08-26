@@ -21,6 +21,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
+import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import com.ram.trading.signal.engine.util.TradeUtil;
 import com.ram.trading.signal.engine.util.TradingSessionService;
@@ -38,6 +39,7 @@ import com.ram.trading.signal.engine.dto.UpstoxMarginRequest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -68,6 +70,8 @@ public class PaperTradingService {
     private final TradingSignalService tradingSignalService;
 
     private final BalanceMarginClient balanceMarginClient;
+
+    private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
 
     @Value("${trading.reentry.cooldown-minutes:15}")
     private long reentryCooldownMinutes;
@@ -474,8 +478,8 @@ public class PaperTradingService {
                             .investedAmount(investmentAmount)
 
                             // NEW MARGIN DETAILS
-                            .requiredMargin(requiredMargin)
-                            .leverage(leverage)
+                            .requiredMargin(round(requiredMargin))
+                            .leverage(round(leverage))
 
                             .rsi(
                                     indicatorResponse.getRsi14())
@@ -556,6 +560,8 @@ public class PaperTradingService {
 
             return;
         }
+
+        tradingFunnelStatisticsService.recordPaperTradeCreated();
 
         log.info("======================================");
         log.info("PAPER TRADE CREATED SUCCESSFULLY");
@@ -1496,6 +1502,67 @@ public class PaperTradingService {
                 .build();
     }
 
+    public DailyPnLResponse getPnLByDateRange(
+            LocalDate fromDate,
+            LocalDate toDate) {
+
+        List<PaperTrade> trades =
+                repository.findAll()
+                        .stream()
+                        .filter(trade ->
+                                trade.getExitTime() != null)
+                        .filter(trade -> {
+
+                            LocalDate exitDate =
+                                    trade.getExitTime()
+                                            .toLocalDate();
+
+                            return !exitDate.isBefore(fromDate)
+                                    && !exitDate.isAfter(toDate);
+                        })
+                        .toList();
+
+        double totalProfit =
+                trades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null)
+                        .mapToDouble(
+                                PaperTrade::getProfitLoss)
+                        .sum();
+
+        long winningTrades =
+                trades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null)
+                        .filter(trade ->
+                                trade.getProfitLoss() > 0)
+                        .count();
+
+        long losingTrades =
+                trades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null)
+                        .filter(trade ->
+                                trade.getProfitLoss() < 0)
+                        .count();
+
+        long breakevenTrades =
+                trades.stream()
+                        .filter(trade ->
+                                trade.getProfitLoss() != null)
+                        .filter(trade ->
+                                trade.getProfitLoss() == 0)
+                        .count();
+
+        return DailyPnLResponse.builder()
+                .todayProfit(totalProfit)
+                .totalTrades((long) trades.size())
+                .winningTrades(winningTrades)
+                .losingTrades(losingTrades)
+                .breakevenTrades(breakevenTrades)
+                .build();
+    }
+
     public TradingDashboardResponse getPnLDashboard() {
 
         TradeAnalyticsResponse analytics =
@@ -1533,6 +1600,16 @@ public class PaperTradingService {
                 .openTrades(
                         openTrades)
                 .build();
+    }
+
+    public List<PaperTrade> findByExitTimeBetweenOrderByExitTimeDesc(
+            LocalDateTime fromDateTime,
+            LocalDateTime toDateTime){
+
+        return repository
+                .findByExitTimeBetweenOrderByExitTimeDesc(
+                        fromDateTime,
+                        toDateTime);
     }
 
     public Mono<OpportunityDashboardResponse> getBestOpportunities(
@@ -2110,70 +2187,108 @@ public class PaperTradingService {
             TradingSignalEntity signal) {
 
         String symbol = signal.getSymbol();
+
         /*
          * ========================================
          * STEP 1 : PREVENT DUPLICATE OPEN TRADE
          * ========================================
          */
-        boolean openTradeExists = repository.existsBySymbolAndStatus(
+        boolean openTradeExists =
+                repository.existsBySymbolAndStatus(
                         symbol,
                         SignalStatus.OPEN);
 
         if (openTradeExists) {
-            log.info("Skipping trade creation. Open trade already exists | Symbol={}", symbol);
+
+            log.info(
+                    "Skipping trade creation. Open trade already exists | Symbol={}",
+                    symbol
+            );
+
             return false;
         }
 
         /*
          * ========================================
-         * STEP 2 : CHECK LATEST TRADE
+         * STEP 2 : GET LATEST COMPLETED TRADE
          * ========================================
          */
-        Optional<PaperTrade> latestTradeOptional = repository.findTopBySymbolOrderByExitTimeDesc(symbol);
+        Optional<PaperTrade> latestTradeOptional =
+                repository.findTopBySymbolAndExitTimeIsNotNullOrderByExitTimeDesc(symbol);
 
         if (latestTradeOptional.isEmpty()) {
             return true;
         }
 
-        PaperTrade latestTrade = latestTradeOptional.get();
+        PaperTrade latestTrade =
+                latestTradeOptional.get();
 
         /*
          * ========================================
-         * STEP 3 : APPLY COOLDOWN ONLY
-         * AFTER STOP LOSS
+         * STEP 3 : APPLY COOLDOWN AFTER
+         * ANY COMPLETED TRADE
          * ========================================
-         */
-        if (latestTrade.getStatus() != SignalStatus.STOP_LOSS_HIT) {
-            return true;
-        }
-
-        /*
-         * Exit time can be null for safety.
          */
         if (latestTrade.getExitTime() == null) {
-            return true;
-        }
 
-        LocalDateTime cooldownUntil = latestTrade.getExitTime().plusMinutes(reentryCooldownMinutes);
-
-        LocalDateTime now = LocalDateTime.now();
-
-        if (now.isBefore(cooldownUntil)) {
-
-            long remainingSeconds = java.time.Duration.between(now, cooldownUntil).getSeconds();
-
-            log.info("""
-                    Skipping trade due to STOP LOSS cooldown
-                    Symbol={}
-                    Last Exit Time={}
-                    Cooldown Until={}
-                    Remaining Seconds={}
-                    """, symbol, latestTrade.getExitTime(), cooldownUntil, remainingSeconds);
+            log.warn(
+                    "Latest trade has no exit time. Blocking trade creation | Symbol={} | Status={}",
+                    symbol,
+                    latestTrade.getStatus()
+            );
 
             return false;
         }
 
-        log.info("STOP LOSS cooldown completed. Trade creation allowed | Symbol={}", symbol);
+        LocalDateTime cooldownUntil =
+                latestTrade.getExitTime()
+                        .plusMinutes(reentryCooldownMinutes);
+
+        LocalDateTime now =
+                LocalDateTime.now();
+
+        if (now.isBefore(cooldownUntil)) {
+
+            long remainingSeconds =
+                    Duration.between(
+                            now,
+                            cooldownUntil
+                    ).getSeconds();
+
+            log.info("""
+                
+                ========================================
+                TRADE REJECTED - RE-ENTRY COOLDOWN
+                ========================================
+                Symbol             : {}
+                Previous Status    : {}
+                Last Exit Time     : {}
+                Cooldown Until     : {}
+                Remaining Seconds  : {}
+                ========================================
+                """,
+                    symbol,
+                    latestTrade.getStatus(),
+                    latestTrade.getExitTime(),
+                    cooldownUntil,
+                    remainingSeconds
+            );
+
+            return false;
+        }
+
+        log.info("""
+            
+            Re-entry cooldown completed.
+            Symbol={}
+            Previous Status={}
+            Last Exit Time={}
+            """,
+                symbol,
+                latestTrade.getStatus(),
+                latestTrade.getExitTime()
+        );
+
         return true;
     }
 

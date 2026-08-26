@@ -6,12 +6,14 @@ import com.ram.trading.ai.engine.cache.CacheKeyBuilder;
 import com.ram.trading.ai.engine.cache.RedisCacheService;
 import com.ram.trading.ai.engine.constant.AiRecommendation;
 import com.ram.trading.ai.engine.dto.AiDecisionResponse;
+import com.ram.trading.ai.engine.dto.AiEvaluationState;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
 import com.ram.trading.ai.engine.dto.decision.Decision;
 import com.ram.trading.ai.engine.dto.execution.ExecutionPlan;
 import com.ram.trading.ai.engine.gateway.AIGatewayService;
 import com.ram.trading.ai.engine.parser.AiDecisionResponseParser;
 import com.ram.trading.ai.engine.prompt.AiDecisionPromptBuilder;
+import com.ram.trading.ai.engine.service.AiCallControlService;
 import com.ram.trading.ai.engine.service.AiDecisionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,62 +32,195 @@ public class AiDecisionServiceImpl implements AiDecisionService {
 
     private final RedisCacheService redisCacheService;
 
+    private final AiCallControlService aiCallControlService;
+
     @Override
-    public AiDecisionResponse evaluate(TradingDecisionRequest request) {
+    public AiDecisionResponse evaluate(
+            TradingDecisionRequest request) {
 
-        log.info("Generating AI decision for {}",
-                request.getSignalRequest().getSymbol());
+        String symbol =
+                request != null &&
+                        request.getSignalRequest() != null
+                        ? request.getSignalRequest().getSymbol()
+                        : "UNKNOWN";
 
-        String cacheKey = CacheKeyBuilder.buildAiDecisionKey(request);
+        log.info(
+                "Generating AI decision for {}",
+                symbol);
+
+        /*
+         * ============================================================
+         * STEP 1 : READ AI EVALUATION STATE ONCE
+         * ============================================================
+         */
+        AiEvaluationState previousState =
+                aiCallControlService
+                        .getEvaluationState(request);
+
+        /*
+         * ============================================================
+         * STEP 2 : REDIS AI CALL CONTROL
+         * ============================================================
+         */
+        boolean shouldCallAi =
+                aiCallControlService
+                        .shouldCallAi(
+                                request,
+                                previousState);
+
+        if (!shouldCallAi) {
+
+            if (previousState != null &&
+                    previousState.getAiDecisionResponse() != null) {
+
+                log.info(
+                        "AI CALL SKIPPED | {} | REUSING_PREVIOUS_AI_RESPONSE",
+                        symbol);
+
+                return previousState
+                        .getAiDecisionResponse();
+            }
+
+            /*
+             * Safety fallback.
+             *
+             * Normally this should never happen because
+             * a state is recorded only after a successful AI
+             * evaluation.
+             */
+            log.warn(
+                    "AI CALL SKIPPED | {} | Previous AI response unavailable | FALLBACK",
+                    symbol);
+
+            return buildFallbackResponse(request);
+        }
+
+        /*
+         * ============================================================
+         * STEP 3 : EXISTING EXACT REQUEST CACHE
+         * ============================================================
+         *
+         * V2 logic remains unchanged.
+         */
+        String cacheKey =
+                CacheKeyBuilder
+                        .buildAiDecisionKey(request);
 
         AiDecisionResponse cachedResponse =
-                redisCacheService.get(cacheKey, AiDecisionResponse.class);
+                redisCacheService.get(
+                        cacheKey,
+                        AiDecisionResponse.class);
 
         if (cachedResponse != null) {
 
-            log.info("=========================================");
-            log.info("AI CACHE HIT");
-            log.info("KEY : {}", cacheKey);
-            log.info("Returning cached AI Decision");
-            log.info("=========================================");
+            log.info(
+                    "=========================================");
+
+            log.info(
+                    "AI CACHE HIT");
+
+            log.info(
+                    "KEY : {}",
+                    cacheKey);
+
+            log.info(
+                    "Returning cached AI Decision for {}",
+                    symbol);
+
+            log.info(
+                    "=========================================");
+
+            /*
+             * Record the evaluation state so the
+             * symbol-level AI gate knows about the
+             * latest successful decision.
+             */
+            aiCallControlService
+                    .recordAiEvaluation(
+                            request,
+                            cachedResponse);
 
             return cachedResponse;
         }
 
         try {
 
-            log.info("=========================================");
-            log.info("AI CACHE MISS");
-            log.info("KEY : {}", cacheKey);
-            log.info("Invoking AI Gateway...");
-            log.info("=========================================");
+            log.info(
+                    "=========================================");
 
-            String prompt = promptBuilder.buildPrompt(request);
+            log.info(
+                    "AI CALL ALLOWED | {}",
+                    symbol);
+
+            log.info(
+                    "AI CACHE MISS");
+
+            log.info(
+                    "Invoking AI Gateway...");
+
+            log.info(
+                    "=========================================");
+
+            String prompt =
+                    promptBuilder
+                            .buildPrompt(request);
 
             String aiResponse =
-                    aiGatewayService.analyze(prompt);
+                    aiGatewayService
+                            .analyze(prompt);
 
-            log.info("AI RAW RESPONSE:\n{}", aiResponse);
+            log.info(
+                    "AI RAW RESPONSE:\n{}",
+                    aiResponse);
 
             AiDecisionResponse response =
                     parser.parse(aiResponse);
 
-            log.info("Parsed Response : {}", response);
+            log.info(
+                    "Parsed Response : {}",
+                    response);
 
+            /*
+             * Existing exact-request cache.
+             */
             redisCacheService.put(
                     cacheKey,
                     response,
                     CacheConstants.AI_DECISION_TTL);
 
+            /*
+             * Record successful AI evaluation state.
+             */
+            aiCallControlService
+                    .recordAiEvaluation(
+                            request,
+                            response);
+
             return response;
 
         } catch (Exception ex) {
 
-            log.error("=========================================");
-            log.error("AI Provider Unavailable.");
-            log.error("Using Engineering Decision.");
-            log.error("=========================================", ex);
+            log.error(
+                    "=========================================");
 
+            log.error(
+                    "AI Provider Unavailable.");
+
+            log.error(
+                    "Using Engineering Decision.");
+
+            log.error(
+                    "=========================================",
+                    ex);
+
+            /*
+             * IMPORTANT:
+             *
+             * Do NOT record AI evaluation state here.
+             *
+             * The LLM call failed, therefore the next
+             * evaluation must remain eligible for AI.
+             */
             return buildFallbackResponse(request);
         }
     }

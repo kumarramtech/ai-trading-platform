@@ -4,4 +4,6 @@ public interface AIGatewayService {
 
     String analyze(String prompt);
 
+    String analyzeNews(String prompt);
+
 }

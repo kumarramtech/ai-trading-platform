@@ -173,14 +173,16 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
     }
 
     @Override
-    public AiPromptResponse analyze(AiPromptRequest request) {
+    public AiPromptResponse analyze(
+            AiPromptRequest request) {
 
-        log.info("Processing generic AI analysis request");
+        log.info(
+                "Processing generic NEWS/WATCHLIST AI analysis request");
 
         try {
 
             String response =
-                    aiGatewayService.analyze(
+                    aiGatewayService.analyzeNews(
                             request.getPrompt());
 
             return AiPromptResponse.builder()
@@ -190,12 +192,13 @@ public class AIAnalysisServiceImpl implements AIAnalysisService {
         } catch (Exception ex) {
 
             log.error(
-                    "AI analysis failed",
+                    "Gemini News AI analysis failed",
                     ex);
 
             return AiPromptResponse.builder()
                     .response(
-                            "AI analysis unavailable. All AI providers failed.")
+                            "AI analysis unavailable. "
+                                    + "Gemini provider failed.")
                     .build();
         }
     }
