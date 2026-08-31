@@ -17,6 +17,7 @@ public class EmaRule implements SignalRule {
                     .ruleName(getRuleName())
                     .signal(SignalType.NEUTRAL)
                     .score(0)
+                    .maxScore(TradingConstants.EMA_SCORE)
                     .reason("EMA data unavailable.")
                     .build();
         }
@@ -27,6 +28,7 @@ public class EmaRule implements SignalRule {
                     .ruleName(getRuleName())
                     .signal(SignalType.BUY)
                     .score(TradingConstants.EMA_SCORE)
+                    .maxScore(TradingConstants.EMA_SCORE)
                     .reason("Bullish EMA crossover.")
                     .build();
         }
@@ -37,6 +39,7 @@ public class EmaRule implements SignalRule {
                     .ruleName(getRuleName())
                     .signal(SignalType.SELL)
                     .score(TradingConstants.EMA_SCORE)
+                    .maxScore(TradingConstants.EMA_SCORE)
                     .reason("Bearish EMA crossover.")
                     .build();
         }
@@ -45,6 +48,7 @@ public class EmaRule implements SignalRule {
                 .ruleName(getRuleName())
                 .signal(SignalType.NEUTRAL)
                 .score(0)
+                .maxScore(TradingConstants.EMA_SCORE)
                 .reason("EMA trend is neutral.")
                 .build();
     }

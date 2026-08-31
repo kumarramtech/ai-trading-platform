@@ -26,6 +26,7 @@ public class MacdRule implements SignalRule {
                     .signal(SignalType.NEUTRAL)
                     .ruleName(getRuleName())
                     .score(0)
+                    .maxScore(TradingConstants.MACD_SCORE)
                     .reason("MACD data unavailable.")
                     .build();
         }
@@ -35,6 +36,7 @@ public class MacdRule implements SignalRule {
             return RuleResult.builder()
                     .signal(SignalType.BUY)
                     .score(TradingConstants.MACD_SCORE)
+                    .maxScore(TradingConstants.MACD_SCORE)
                     .ruleName(getRuleName())
                     .reason("Bullish MACD crossover.")
                     .build();
@@ -46,6 +48,7 @@ public class MacdRule implements SignalRule {
                     .signal(SignalType.SELL)
                     .ruleName(getRuleName())
                     .score(TradingConstants.MACD_SCORE)
+                    .maxScore(TradingConstants.MACD_SCORE)
                     .reason("Bearish MACD crossover.")
                     .build();
         }
@@ -54,6 +57,7 @@ public class MacdRule implements SignalRule {
                 .signal(SignalType.NEUTRAL)
                 .ruleName(getRuleName())
                 .score(0)
+                .maxScore(TradingConstants.MACD_SCORE)
                 .reason("MACD is neutral.")
                 .build();
     }

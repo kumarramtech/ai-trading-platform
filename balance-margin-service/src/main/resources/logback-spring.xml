@@ -2,8 +2,8 @@
 
 <configuration>
 
-    <property name="LOG_PATH" value="logs/marketstream"/>
-    <property name="LOG_FILE" value="${LOG_PATH}/market-stream-service.log"/>
+    <property name="LOG_PATH" value="logs"/>
+    <property name="LOG_FILE" value="${LOG_PATH}/balance-margin.log"/>
 
     <!-- Console -->
     <appender name="CONSOLE"
@@ -25,7 +25,7 @@
                 class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
 
             <fileNamePattern>
-                ${LOG_PATH}/market-stream-service-%d{yyyy-MM-dd}.%i.log
+                logs/ai-service-%d{yyyy-MM-dd}.%i.log
             </fileNamePattern>
 
             <maxFileSize>50MB</maxFileSize>

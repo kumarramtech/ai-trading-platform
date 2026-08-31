@@ -2,22 +2,24 @@ package com.ram.trading.signal.engine.service.impl;
 
 import com.ram.trading.signal.engine.contant.SignalType;
 
+import com.ram.trading.signal.engine.dto.EntryQualityResult;
 import com.ram.trading.signal.engine.dto.StockResponse;
 import com.ram.trading.signal.engine.dto.TechnicalIndicatorResponse;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.ai.AiDecisionResponse;
 import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.dto.portfolio.PortfolioContextResponse;
+import com.ram.trading.signal.engine.dto.premarket.JudasSwingResult;
+import com.ram.trading.signal.engine.dto.premarket.MinuteCandle;
+import com.ram.trading.signal.engine.dto.premarket.ORBResult;
+import com.ram.trading.signal.engine.dto.premarket.OpeningRange;
 import com.ram.trading.signal.engine.exit.TradeExitService;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import com.ram.trading.signal.engine.risk.RiskEvaluation;
 import com.ram.trading.signal.engine.risk.RiskGuardResult;
 import com.ram.trading.signal.engine.risk.RiskGuardService;
-import com.ram.trading.signal.engine.service.OpportunityService;
-import com.ram.trading.signal.engine.service.PaperTradingService;
-import com.ram.trading.signal.engine.service.SignalGenerationService;
-import com.ram.trading.signal.engine.service.TradingSignalService;
+import com.ram.trading.signal.engine.service.*;
 import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
 import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingSignalMapper;
@@ -29,6 +31,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -54,6 +61,24 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final OpportunityService opportunityService;
 
     private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
+
+    private final EntryQualityService entryQualityService;
+
+    private final MinuteCandleAggregator minuteCandleAggregator;
+
+    private final OpeningRangeService openingRangeService;
+
+    private final JudasSwingDetector judasSwingDetector;
+
+    private final ORBValidator orbValidator;
+
+    private final Map<String, String> processedStrategySetups = new ConcurrentHashMap<>();
+
+    private record EntrySetup(
+            String strategy,
+            String direction,
+            LocalDateTime confirmationTime
+    ) {}
 
     @Override
     public Mono<TradingSignal> generateSignal(String symbol) {
@@ -149,6 +174,14 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         log.info(
                 "========== LIVE SIGNAL GENERATION STARTED ==========");
 
+        if (tick == null) {
+
+            log.warn(
+                    "Live Signal Generation skipped | Tick is null");
+
+            return Mono.empty();
+        }
+
         log.info(
                 "Symbol : {}",
                 tick.getSymbol());
@@ -157,100 +190,175 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 "LTP    : {}",
                 tick.getLastTradedPrice());
 
-        final long start =
-                System.currentTimeMillis();
+        /*
+         * ============================================================
+         * LIVE 1-MINUTE CANDLE AGGREGATION
+         * ============================================================
+         *
+         * Every incoming live tick is first passed to the
+         * MinuteCandleAggregator.
+         *
+         * This builds the 1-minute OHLC + volume candles that
+         * will later be used by:
+         *
+         *     OpeningRangeService
+         *     JudasSwingDetector
+         *     ORBValidator
+         *
+         * IMPORTANT:
+         *
+         * Candle aggregation does NOT make a trading decision.
+         * It only maintains market structure data.
+         */
+
+        MinuteCandle completedCandle = null;
+
+        try {
+
+            completedCandle =
+                    minuteCandleAggregator.process(tick);
+
+            if (completedCandle != null) {
+
+                log.info(
+                        "1-MIN CANDLE COMPLETED | Symbol={} | Minute={} | O={} | H={} | L={} | C={} | V={}",
+                        completedCandle.getSymbol(),
+                        completedCandle.getMinute(),
+                        completedCandle.getOpen(),
+                        completedCandle.getHigh(),
+                        completedCandle.getLow(),
+                        completedCandle.getClose(),
+                        completedCandle.getVolume()
+                );
+            }
+
+        } catch (Exception ex) {
+
+            /*
+             * Candle aggregation must NEVER break
+             * the existing signal-generation pipeline.
+             */
+            log.error(
+                    "1-MIN CANDLE AGGREGATION FAILED | " +
+                            "Symbol={} | Continuing signal pipeline",
+                    tick.getSymbol(),
+                    ex);
+        }
+
+        final MinuteCandle finalCompletedCandle =
+                completedCandle;
 
         return tradeExitService
                 .evaluateExit(tick)
-
                 .then(
-                        technicalIndicatorService
-                                .calculate(tick.getSymbol())
+                        Mono.defer(() -> {
 
-                                .switchIfEmpty(Mono.defer(() -> {
+                            /*
+                             * ====================================================
+                             * ENTRY STRATEGY GATE
+                             * ====================================================
+                             *
+                             * Entry strategies are evaluated ONLY when a
+                             * completed 1-minute candle is available.
+                             *
+                             * Trade exits remain evaluated on EVERY tick.
+                             */
 
-                                    log.warn(
-                                            "Skipping {} because technical indicators are unavailable.",
-                                            tick.getSymbol());
+                            if (finalCompletedCandle == null) {
 
-                                    return Mono.empty();
-                                }))
+                                log.debug(
+                                        "ENTRY STRATEGY GATE | {} | " +
+                                                "No completed candle | " +
+                                                "Skipping entry evaluation",
+                                        tick.getSymbol());
 
-                                .flatMap(indicator -> {
+                                return Mono.empty();
+                            }
 
-                                    log.debug(
-                                            "Technical Indicators Loaded");
+                            EntrySetup entrySetup =
+                                    findEntrySetup(
+                                            finalCompletedCandle);
 
-                                    log.debug(
-                                            "RSI      : {}",
-                                            indicator.getRsi14());
+                            if (entrySetup == null) {
 
-                                    log.debug(
-                                            "EMA20    : {}",
-                                            indicator.getEma20());
+                                log.debug(
+                                        "ENTRY STRATEGY GATE | {} | " +
+                                                "No valid Judas/ORB setup | " +
+                                                "Skipping AI",
+                                        tick.getSymbol());
 
-                                    log.debug(
-                                            "EMA50    : {}",
-                                            indicator.getEma50());
+                                return Mono.empty();
+                            }
 
-                                    log.debug(
-                                            "SMA20    : {}",
-                                            indicator.getSma20());
+                            log.info(
+                                    "ENTRY STRATEGY GATE PASSED | " +
+                                            "Symbol={} | Strategy={} | Direction={} | Confirmation={}",
+                                    tick.getSymbol(),
+                                    entrySetup.strategy(),
+                                    entrySetup.direction(),
+                                    entrySetup.confirmationTime());
 
-                                    log.debug(
-                                            "SMA50    : {}",
-                                            indicator.getSma50());
+                            log.info(
+                                    "ENTRY STRATEGY GATE PASSED | " +
+                                            "Symbol={} | Candle={}",
+                                    tick.getSymbol(),
+                                    finalCompletedCandle.getMinute());
 
-                                    log.debug(
-                                            "MACD     : {}",
-                                            indicator.getMacd());
+                            return technicalIndicatorService
+                                    .calculate(
+                                            tick.getSymbol())
 
-                                    SignalGenerationRequest request =
-                                            buildSignalRequest(
-                                                    tick,
-                                                    indicator);
+                                    .switchIfEmpty(
+                                            Mono.defer(() -> {
 
-                                    /*
-                                     * IMPORTANT:
-                                     *
-                                     * Do NOT build TradingContext here.
-                                     *
-                                     * Engineering filtering happens
-                                     * inside TradingOrchestratorService
-                                     * before expensive context calls.
-                                     */
+                                                log.warn(
+                                                        "Skipping {} because technical indicators are unavailable.",
+                                                        tick.getSymbol());
 
-                                    return generateTradingSignal(
-                                            request,
-                                            indicator);
-                                })
-                )
+                                                return Mono.empty();
+                                            })
+                                    )
 
-                .doOnSuccess(signal -> {
+                                    .flatMap(indicator -> {
 
-                    if (signal != null) {
+                                        log.debug(
+                                                "Technical Indicators Loaded");
 
-                        log.info(
-                                "Live Signal Generated : {} -> {}",
-                                signal.getSymbol(),
-                                signal.getSignal());
-                    }
+                                        log.debug(
+                                                "RSI      : {}",
+                                                indicator.getRsi14());
 
-                    log.info(
-                            "========== LIVE SIGNAL GENERATION COMPLETED ==========");
-                })
+                                        log.debug(
+                                                "EMA20    : {}",
+                                                indicator.getEma20());
 
-                .doOnError(error ->
-                        log.error(
-                                "Live Signal Generation Failed for {}",
-                                tick.getSymbol(),
-                                error))
+                                        log.debug(
+                                                "EMA50    : {}",
+                                                indicator.getEma50());
 
-                .doFinally(signalType ->
-                        log.info(
-                                "TOTAL Live Signal Processing Time for {} : {} ms",
-                                tick.getSymbol(),
-                                System.currentTimeMillis() - start));
+                                        log.debug(
+                                                "SMA20    : {}",
+                                                indicator.getSma20());
+
+                                        log.debug(
+                                                "SMA50    : {}",
+                                                indicator.getSma50());
+
+                                        log.debug(
+                                                "MACD     : {}",
+                                                indicator.getMacd());
+
+                                        SignalGenerationRequest request =
+                                                buildSignalRequest(
+                                                        tick,
+                                                        indicator);
+
+                                        return generateTradingSignal(
+                                                request,
+                                                indicator);
+                                    });
+                        })
+                );
     }
 
     private Mono<TradingSignal> generateTradingSignal(
@@ -339,7 +447,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     String recommendation =
                             aiResponse
                                     .getDecision()
-                                    .getRecommendation().name();
+                                    .getRecommendation()
+                                    .name();
 
                     Boolean tradeAllowed =
                             aiResponse
@@ -384,10 +493,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * =====================================================
                      * AI TRADE-ALLOWED GUARD
                      * =====================================================
-                     *
-                     * AI explicitly says the trade is not allowed.
-                     * Do not let the signal continue to Risk Guard.
                      */
+
                     if (!Boolean.TRUE.equals(tradeAllowed)) {
 
                         log.info(
@@ -407,14 +514,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * ENGINEERING ↔ AI DIRECTION GUARD
                      * =====================================================
                      *
-                     * AI is a confirmation layer. It must not reverse
-                     * the engineering/technical direction.
-                     *
                      * BUY  + BUY  -> continue
                      * SELL + SELL -> continue
                      * BUY  + SELL -> HOLD
                      * SELL + BUY  -> HOLD
                      */
+
                     TradingSignal directionGuardResult =
                             validateAiDirection(
                                     pipelineResult,
@@ -429,11 +534,6 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * =====================================================
                      * GET EXISTING TRADING CONTEXT
                      * =====================================================
-                     *
-                     * Context was already created inside
-                     * TradingOrchestratorService.
-                     *
-                     * Do not rebuild it here.
                      */
 
                     TradingContext context =
@@ -552,12 +652,20 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                         tradingFunnelStatisticsService
                                 .recordPostProcessingEntered();
 
-                        log.debug(
-                                "STEP-5 Before Post Process");
+                        /*
+                         * IMPORTANT:
+                         *
+                         * Pass the original market price from the
+                         * SignalGenerationRequest into post processing.
+                         *
+                         * This becomes our reference price for the
+                         * Entry Quality measurement.
+                         */
 
                         return postProcessSignal(
                                 signal,
-                                indicator);
+                                indicator,
+                                request.getCurrentPrice());
 
                     } catch (Exception ex) {
 
@@ -900,81 +1008,197 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private Mono<TradingSignal> postProcessSignal(
             TradingSignal signal,
-            TechnicalIndicatorResponse indicator) {
+            TechnicalIndicatorResponse indicator,
+            Double signalPrice) {
 
         log.info("========== POST PROCESSING ==========");
 
-        if (SignalType.HOLD.name().equals(signal.getSignal())) {
-            log.info("Signal is HOLD. Nothing to persist.");
+        if (SignalType.HOLD.name().equals(
+                signal.getSignal())) {
+
+            log.info(
+                    "Signal is HOLD. Nothing to persist.");
+
             return Mono.just(signal);
         }
 
-        log.info("Saving Trading Signal...");
 
-        return Mono.fromCallable(() -> tradingSignalService.save(signal))
-                .subscribeOn(Schedulers.boundedElastic())
+        /*
+         * ============================================================
+         * ENTRY QUALITY
+         *
+         * Measurement ONLY.
+         *
+         * IMPORTANT:
+         * No trade is rejected in this phase.
+         * ============================================================
+         */
 
-                .flatMap(entity -> {
+        return marketDataProvider
+                .getStockPrice(signal.getSymbol())
+
+                .switchIfEmpty(
+                        Mono.defer(() -> {
+
+                            log.warn(
+                                    "ENTRY QUALITY | " +
+                                            "Fresh market price unavailable | " +
+                                            "Symbol={} | " +
+                                            "Direction={} | " +
+                                            "SignalPrice={}",
+                                    signal.getSymbol(),
+                                    signal.getSignal(),
+                                    signalPrice);
+
+                            return Mono.just(
+                                    StockResponse.builder()
+                                            .symbol(
+                                                    signal.getSymbol())
+                                            .price(
+                                                    signalPrice != null
+                                                            ? signalPrice
+                                                            : 0.0)
+                                            .build());
+                        }))
+
+                .flatMap(stock -> {
+
+                    double freshMarketPrice =
+                            stock.getPrice();
+
 
                     /*
-                     * FUNNEL : SIGNAL SAVED
+                     * ====================================================
+                     * ENTRY QUALITY SERVICE
+                     * ====================================================
                      */
-                    tradingFunnelStatisticsService
-                            .recordSignalSaved();
 
-                    log.info("Trading Signal Saved : {}", entity.getId());
+                    EntryQualityResult entryQuality =
+                            entryQualityService.evaluate(
+                                    signal.getSymbol(),
+                                    SignalType.valueOf(
+                                            signal.getSignal()
+                                                    .toUpperCase()),
+                                    signalPrice,
+                                    freshMarketPrice,
+                                    indicator);
 
-                    return Mono.fromRunnable(() -> {
 
-                                log.info("Saving Opportunity...");
+                    /*
+                     * ====================================================
+                     * IMPORTANT
+                     *
+                     * We log the classification but DO NOT reject
+                     * the trade yet.
+                     * ====================================================
+                     */
 
-                                opportunityService.save(
-                                        signal,
+                    log.info(
+                            "ENTRY QUALITY RESULT | " +
+                                    "Symbol={} | " +
+                                    "Status={} | " +
+                                    "DirectionalMove={}%" +
+                                    " | PriceVsEMA20={}%" +
+                                    " | PriceVsEMA50={}%" +
+                                    " | PriceVsHistoricalClose={}%",
+                            entryQuality.getSymbol(),
+                            entryQuality.getStatus(),
+                            entryQuality.getDirectionalMovementPct(),
+                            entryQuality.getPriceVsEma20Pct(),
+                            entryQuality.getPriceVsEma50Pct(),
+                            entryQuality.getPriceVsHistoricalClosePct());
+
+
+                    /*
+                     * ====================================================
+                     * EXISTING PERSISTENCE FLOW
+                     * ====================================================
+                     */
+
+                    log.info("Saving Trading Signal...");
+
+                    return Mono.fromCallable(
+                                    () ->
+                                            tradingSignalService
+                                                    .save(signal))
+
+                            .subscribeOn(
+                                    Schedulers.boundedElastic())
+
+                            .flatMap(entity -> {
+
+                                tradingFunnelStatisticsService
+                                        .recordSignalSaved();
+
+                                log.info(
+                                        "Trading Signal Saved : {}",
                                         entity.getId());
 
-                                /*
-                                 * FUNNEL : OPPORTUNITY SAVED
-                                 */
-                                tradingFunnelStatisticsService
-                                        .recordOpportunitySaved();
 
-                                log.info("Opportunity Saved Successfully.");
+                                return Mono.fromRunnable(() -> {
 
+                                            log.info(
+                                                    "Saving Opportunity...");
+
+                                            opportunityService.save(
+                                                    signal,
+                                                    entity.getId());
+
+
+                                            tradingFunnelStatisticsService
+                                                    .recordOpportunitySaved();
+
+                                            log.info(
+                                                    "Opportunity Saved Successfully.");
+
+                                        })
+
+                                        .subscribeOn(
+                                                Schedulers.boundedElastic())
+
+                                        .thenReturn(entity);
                             })
-                            .subscribeOn(Schedulers.boundedElastic())
-                            .thenReturn(entity);
 
+
+                            /*
+                             * =================================================
+                             * PAPER TRADE
+                             * =================================================
+                             */
+
+                            .flatMap(entity ->
+
+                                    Mono.fromRunnable(() -> {
+
+                                                log.info(
+                                                        "Creating Paper Trade...");
+
+                                                tradingFunnelStatisticsService
+                                                        .recordPaperTradeAttempted();
+
+                                                paperTradingService.createTrade(
+                                                        entity,
+                                                        indicator);
+
+                                            })
+
+                                            .subscribeOn(
+                                                    Schedulers.boundedElastic())
+
+                                            .thenReturn(signal)
+                            );
                 })
 
-                .flatMap(entity ->
+                .doOnSuccess(
+                        s ->
+                                log.info(
+                                        "Post Processing Completed Successfully."))
 
-                        Mono.fromRunnable(() -> {
-
-                                    log.info("Creating Paper Trade...");
-
-                                    /*
-                                     * FUNNEL : PAPER TRADE ATTEMPTED
-                                     *
-                                     * This means the request reached
-                                     * PaperTradingService.
-                                     */
-                                    tradingFunnelStatisticsService
-                                            .recordPaperTradeAttempted();
-
-                                    paperTradingService.createTrade(
-                                            entity,
-                                            indicator);
-
-                                })
-                                .subscribeOn(Schedulers.boundedElastic())
-                                .thenReturn(signal)
-                )
-
-                .doOnSuccess(s ->
-                        log.info("Post Processing Completed Successfully."))
-
-                .doOnError(ex ->
-                        log.error("Post Processing Failed", ex));
+                .doOnError(
+                        ex ->
+                                log.error(
+                                        "Post Processing Failed",
+                                        ex));
     }
 
 
@@ -993,6 +1217,208 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .macd(indicator.getMacd())
                 .signalLine(indicator.getSignalLine())
                 .build();
+    }
+
+    private EntrySetup findEntrySetup(
+            MinuteCandle completedCandle) {
+
+        if (completedCandle == null
+                || completedCandle.getSymbol() == null
+                || completedCandle.getMinute() == null) {
+
+            return null;
+        }
+
+        String symbol =
+                completedCandle.getSymbol();
+
+        LocalTime candleTime =
+                completedCandle.getMinute().toLocalTime();
+
+        /*
+         * ============================================================
+         * OPENING RANGE BUILDING
+         * ============================================================
+         *
+         * 09:15 - 09:29
+         *
+         * No entry strategy is evaluated here.
+         * These candles are used to build the Opening Range.
+         */
+        if (candleTime.isBefore(LocalTime.of(9, 30))) {
+
+            log.debug(
+                    "ENTRY STRATEGY GATE | {} | " +
+                            "Opening range building | Candle={}",
+                    symbol,
+                    completedCandle.getMinute());
+
+            return null;
+        }
+
+        /*
+         * ============================================================
+         * GET COMPLETED OPENING RANGE
+         * ============================================================
+         */
+
+        OpeningRange openingRange =
+                openingRangeService.get(symbol);
+
+        if (openingRange == null) {
+
+            openingRange =
+                    openingRangeService.calculate(symbol);
+        }
+
+        if (openingRange == null
+                || !openingRange.isComplete()) {
+
+            log.info(
+                    "ENTRY STRATEGY GATE | {} | " +
+                            "Opening range unavailable/incomplete",
+                    symbol);
+
+            return null;
+        }
+
+        /*
+         * ============================================================
+         * JUDAS
+         * ============================================================
+         *
+         * 09:30 - 10:30
+         */
+        if (!candleTime.isBefore(LocalTime.of(9, 30))
+                && candleTime.isBefore(LocalTime.of(10, 30))) {
+
+            JudasSwingResult judas =
+                    judasSwingDetector.detect(openingRange);
+
+            if (judas != null
+                    && judas.isDetected()) {
+
+                String setupKey =
+                        symbol
+                                + "|JUDAS|"
+                                + String.valueOf(
+                                judas.getConfirmationTime());
+
+                if (processedStrategySetups.putIfAbsent(
+                        setupKey,
+                        setupKey) == null) {
+
+                    String direction =
+                            normalizeStrategyDirection(
+                                    judas.getDirection());
+
+                    log.info(
+                            "ENTRY STRATEGY GATE | JUDAS VALID | " +
+                                    "Symbol={} | Direction={} | " +
+                                    "SweepSide={} | Confirmation={}",
+                            symbol,
+                            direction,
+                            judas.getSweepSide(),
+                            judas.getConfirmationTime());
+
+                    return new EntrySetup(
+                            "JUDAS",
+                            direction,
+                            judas.getConfirmationTime());
+                }
+
+                log.debug(
+                        "ENTRY STRATEGY GATE | " +
+                                "JUDAS ALREADY PROCESSED | " +
+                                "Symbol={} | Confirmation={}",
+                        symbol,
+                        judas.getConfirmationTime());
+            }
+        }
+
+        /*
+         * ============================================================
+         * ORB
+         * ============================================================
+         *
+         * 09:30 - 11:30
+         */
+        if (!candleTime.isBefore(LocalTime.of(9, 30))
+                && candleTime.isBefore(LocalTime.of(11, 30))) {
+
+            ORBResult orb =
+                    orbValidator.validate(openingRange);
+
+            if (orb != null
+                    && orb.isValid()) {
+
+                String setupKey =
+                        symbol
+                                + "|ORB|"
+                                + String.valueOf(
+                                orb.getConfirmationTime());
+
+                if (processedStrategySetups.putIfAbsent(
+                        setupKey,
+                        setupKey) == null) {
+
+                    String direction =
+                            normalizeStrategyDirection(
+                                    orb.getDirection());
+
+                    log.info(
+                            "ENTRY STRATEGY GATE | ORB VALID | " +
+                                    "Symbol={} | Direction={} | " +
+                                    "BreakoutSide={} | Confirmation={}",
+                            symbol,
+                            direction,
+                            orb.getBreakoutSide(),
+                            orb.getConfirmationTime());
+
+                    return new EntrySetup(
+                            "ORB",
+                            direction,
+                            orb.getConfirmationTime());
+                }
+
+                log.debug(
+                        "ENTRY STRATEGY GATE | " +
+                                "ORB ALREADY PROCESSED | " +
+                                "Symbol={} | Confirmation={}",
+                        symbol,
+                        orb.getConfirmationTime());
+            }
+        }
+
+        log.debug(
+                "ENTRY STRATEGY GATE | NO VALID SETUP | " +
+                        "Symbol={} | Candle={}",
+                symbol,
+                completedCandle.getMinute());
+
+        return null;
+    }
+
+    private String normalizeStrategyDirection(
+            String direction) {
+
+        if (direction == null) {
+            return "NONE";
+        }
+
+        return switch (direction.toUpperCase()) {
+
+            case "BULLISH",
+                 "BULLISH_REVERSAL" ->
+                    "BUY";
+
+            case "BEARISH",
+                 "BEARISH_REVERSAL" ->
+                    "SELL";
+
+            default ->
+                    "NONE";
+        };
     }
 
     private SignalGenerationRequest buildSignalRequest(

@@ -2,7 +2,7 @@
 
 <configuration>
 
-    <property name="LOG_PATH" value="logs"/>
+    <property name="LOG_PATH" value="logs/signallogs"/>
     <property name="LOG_FILE" value="${LOG_PATH}/signal-engine.log"/>
 
     <!-- Console -->
@@ -25,7 +25,7 @@
                 class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
 
             <fileNamePattern>
-                logs/signal-engine-%d{yyyy-MM-dd}.%i.log
+                ${LOG_PATH}/signal-engine-%d{yyyy-MM-dd}.%i.log
             </fileNamePattern>
 
             <maxFileSize>50MB</maxFileSize>

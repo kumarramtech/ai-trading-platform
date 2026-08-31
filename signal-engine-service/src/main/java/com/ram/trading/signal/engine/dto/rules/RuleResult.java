@@ -18,4 +18,6 @@ public class RuleResult {
 
     private String ruleName;
 
+    private int maxScore;
+
 }

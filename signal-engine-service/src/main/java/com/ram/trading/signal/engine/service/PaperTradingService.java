@@ -327,11 +327,17 @@ public class PaperTradingService {
          * STEP 11 : GET INSTRUMENT KEY
          * ============================================================
          */
+        long instrumentStart = System.currentTimeMillis();
+
         InstrumentResponse instrumentResponse =
                 stockServiceClient
                         .getInstrument(signal.getSymbol())
                         .block();
 
+        log.info(
+                "INSTRUMENT LOOKUP COMPLETED | Symbol={} | DurationMs={}",
+                signal.getSymbol(),
+                System.currentTimeMillis() - instrumentStart);
         if (instrumentResponse == null
                 || instrumentResponse.getInstrumentKey() == null
                 || instrumentResponse.getInstrumentKey().isBlank()) {
@@ -373,15 +379,49 @@ public class PaperTradingService {
                                 List.of(marginInstrument))
                         .build();
 
-        MarginCalculationResponse marginResponse =
-                balanceMarginClient
-                        .calculateMargin(marginRequest)
-                        .block();
+        MarginCalculationResponse marginResponse;
+
+        long marginStart = System.currentTimeMillis();
+
+        log.info("======================================");
+        log.info("MARGIN CALCULATION STARTED");
+        log.info("Symbol              : {}", signal.getSymbol());
+        log.info("Signal              : {}", signal.getSignal());
+        log.info("Quantity            : {}", quantity);
+        log.info("Entry Price         : {}", signal.getEntryPrice());
+        log.info("======================================");
+
+        try {
+
+            marginResponse =
+                    balanceMarginClient
+                            .calculateMargin(marginRequest)
+                            .block();
+
+            log.info(
+                    "MARGIN CALCULATION COMPLETED | Symbol={} | DurationMs={}",
+                    signal.getSymbol(),
+                    System.currentTimeMillis() - marginStart);
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "MARGIN CALCULATION FAILED | Symbol={} | DurationMs={}",
+                    signal.getSymbol(),
+                    System.currentTimeMillis() - marginStart,
+                    ex);
+
+            log.warn(
+                    "TRADE NOT CREATED | Reason=MARGIN_UNAVAILABLE | Symbol={}",
+                    signal.getSymbol());
+
+            return;
+        }
 
         if (marginResponse == null) {
 
             log.error(
-                    "Margin calculation failed | Symbol={}",
+                    "MARGIN CALCULATION RETURNED NULL - TRADE SKIPPED | Symbol={}",
                     signal.getSymbol());
 
             return;
@@ -434,26 +474,30 @@ public class PaperTradingService {
          * STEP 14 : RESERVE MARGIN
          * ============================================================
          */
-        try {
 
-            balanceMarginClient
-                    .reserveMargin(requiredMargin)
-                    .block();
+            long reserveStart = System.currentTimeMillis();
 
-            log.info(
-                    "Margin Reserved Successfully | Symbol={} | Margin={}",
-                    signal.getSymbol(),
-                    requiredMargin);
+            try {
 
-        } catch (Exception ex) {
+                balanceMarginClient
+                        .reserveMargin(requiredMargin)
+                        .block();
 
-            log.error(
-                    "Failed to reserve margin | Symbol={}",
-                    signal.getSymbol(),
-                    ex);
+                log.info(
+                        "MARGIN RESERVATION COMPLETED | Symbol={} | DurationMs={}",
+                        signal.getSymbol(),
+                        System.currentTimeMillis() - reserveStart);
 
-            return;
-        }
+            } catch (Exception ex) {
+
+                log.error(
+                        "MARGIN RESERVATION FAILED | Symbol={} | DurationMs={}",
+                        signal.getSymbol(),
+                        System.currentTimeMillis() - reserveStart,
+                        ex);
+
+                return;
+            }
 
         /*
          * ============================================================

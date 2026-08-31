@@ -15,7 +15,6 @@ public class RsiRule implements SignalRule {
     public RuleResult evaluate(SignalGenerationRequest request) {
 
         Double rsi = request.getRsi();
-
         Double ema20 = request.getEma20();
         Double ema50 = request.getEma50();
 
@@ -31,6 +30,7 @@ public class RsiRule implements SignalRule {
                     .signal(SignalType.NEUTRAL)
                     .ruleName(getRuleName())
                     .score(0)
+                    .maxScore(TradingConstants.RSI_SCORE)
                     .reason("RSI not available.")
                     .build();
         }
@@ -50,6 +50,7 @@ public class RsiRule implements SignalRule {
                     .signal(SignalType.NEUTRAL)
                     .ruleName(getRuleName())
                     .score(0)
+                    .maxScore(TradingConstants.RSI_SCORE)
                     .reason(
                             String.format(
                                     "RSI=%.2f but EMA trend unavailable. RSI direction not confirmed.",
@@ -61,14 +62,6 @@ public class RsiRule implements SignalRule {
          * ============================================================
          * OVERSOLD
          * ============================================================
-         *
-         * RSI oversold is a BUY candidate only when the broader
-         * EMA trend is bullish.
-         *
-         * RSI oversold + bearish trend
-         *     -> NEUTRAL
-         *
-         * This prevents bottom-fishing in a strong downtrend.
          */
 
         if (rsi < TradingConstants.RSI_OVERSOLD) {
@@ -78,6 +71,7 @@ public class RsiRule implements SignalRule {
                 return RuleResult.builder()
                         .signal(SignalType.BUY)
                         .score(TradingConstants.RSI_SCORE)
+                        .maxScore(TradingConstants.RSI_SCORE)
                         .ruleName(getRuleName())
                         .reason(
                                 String.format(
@@ -91,6 +85,7 @@ public class RsiRule implements SignalRule {
             return RuleResult.builder()
                     .signal(SignalType.NEUTRAL)
                     .score(0)
+                    .maxScore(TradingConstants.RSI_SCORE)
                     .ruleName(getRuleName())
                     .reason(
                             String.format(
@@ -105,15 +100,6 @@ public class RsiRule implements SignalRule {
          * ============================================================
          * OVERBOUGHT
          * ============================================================
-         *
-         * RSI overbought is a SELL candidate only when the broader
-         * EMA trend is bearish.
-         *
-         * RSI overbought + bullish trend
-         *     -> NEUTRAL
-         *
-         * This prevents shorting a strong bullish trend merely because
-         * RSI is temporarily overbought.
          */
 
         if (rsi > TradingConstants.RSI_OVERBOUGHT) {
@@ -123,6 +109,7 @@ public class RsiRule implements SignalRule {
                 return RuleResult.builder()
                         .signal(SignalType.SELL)
                         .score(TradingConstants.RSI_SCORE)
+                        .maxScore(TradingConstants.RSI_SCORE)
                         .ruleName(getRuleName())
                         .reason(
                                 String.format(
@@ -136,6 +123,7 @@ public class RsiRule implements SignalRule {
             return RuleResult.builder()
                     .signal(SignalType.NEUTRAL)
                     .score(0)
+                    .maxScore(TradingConstants.RSI_SCORE)
                     .ruleName(getRuleName())
                     .reason(
                             String.format(
@@ -155,6 +143,7 @@ public class RsiRule implements SignalRule {
         return RuleResult.builder()
                 .signal(SignalType.NEUTRAL)
                 .score(0)
+                .maxScore(TradingConstants.RSI_SCORE)
                 .ruleName(getRuleName())
                 .reason(
                         String.format(

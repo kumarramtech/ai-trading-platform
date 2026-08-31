@@ -15,94 +15,57 @@ public class RuleConfidenceCalculator {
     public int calculateScore(List<RuleResult> results) {
 
         if (results == null || results.isEmpty()) {
-
             log.info("Calculated Confidence Score : 0");
-
             return 0;
         }
 
         int buyScore = results.stream()
-                .filter(result ->
-                        result != null
-                                && result.getSignal() == SignalType.BUY)
+                .filter(r -> r != null && r.getSignal() == SignalType.BUY)
                 .mapToInt(RuleResult::getScore)
                 .sum();
 
         int sellScore = results.stream()
-                .filter(result ->
-                        result != null
-                                && result.getSignal() == SignalType.SELL)
+                .filter(r -> r != null && r.getSignal() == SignalType.SELL)
                 .mapToInt(RuleResult::getScore)
                 .sum();
 
-        int totalDirectionalScore = buyScore + sellScore;
+        /*
+         * Denominator is now the TOTAL possible score across every rule
+         * that participated in this evaluation — not just the rules
+         * that happened to fire directionally.
+         *
+         * This means a single BUY rule, with the other rules neutral,
+         * can no longer report 100% confidence. It can only ever reach
+         * (its own maxScore / sum of all rules' maxScore) — e.g. one
+         * rule out of three firing caps out around 33%, not 100%.
+         */
+        int totalPossibleScore = results.stream()
+                .filter(r -> r != null)
+                .mapToInt(RuleResult::getMaxScore)
+                .sum();
 
-        if (totalDirectionalScore == 0) {
-
-            log.info(
-                    "Calculated Confidence Score : 0 | " +
-                            "No directional rule signals");
-
+        if (totalPossibleScore == 0) {
+            log.info("Calculated Confidence Score : 0 | No scorable rules");
             return 0;
         }
 
-        /*
-         * Confidence represents the percentage of directional
-         * agreement between BUY and SELL rules.
-         *
-         * Example:
-         *
-         * BUY  = 75
-         * SELL = 0
-         *
-         * Confidence = 100
-         *
-         * BUY  = 50
-         * SELL = 25
-         *
-         * Confidence = 67
-         *
-         * BUY  = 25
-         * SELL = 25
-         *
-         * Confidence = 50
-         *
-         * The final TradingDecisionEngine will still determine
-         * whether the direction is BUY or SELL.
-         */
+        int dominantScore = Math.max(buyScore, sellScore);
 
-        int dominantScore =
-                Math.max(buyScore, sellScore);
-
-        int confidence =
-                (int) Math.round(
-                        (dominantScore * 100.0)
-                                / totalDirectionalScore);
-
-        /*
-         * Safety bounds.
-         */
+        int confidence = (int) Math.round(
+                (dominantScore * 100.0) / totalPossibleScore);
 
         confidence = Math.max(0, Math.min(100, confidence));
 
         log.info(
-                "Calculated Confidence Score : {} | BUY Score : {} | SELL Score : {}",
-                confidence,
-                buyScore,
-                sellScore);
+                "Calculated Confidence Score : {} | BUY Score : {} | SELL Score : {} | Total Possible : {}",
+                confidence, buyScore, sellScore, totalPossibleScore);
 
         return confidence;
     }
 
     public ConfidenceLevel determineLevel(int score) {
-
-        if (score >= 80)
-            return ConfidenceLevel.HIGH;
-
-        if (score >= 60)
-            return ConfidenceLevel.MEDIUM;
-
+        if (score >= 80) return ConfidenceLevel.HIGH;
+        if (score >= 60) return ConfidenceLevel.MEDIUM;
         return ConfidenceLevel.LOW;
     }
-
 }

@@ -2,6 +2,7 @@ package com.ram.trading.watchlist.controller;
 
 import com.ram.trading.watchlist.dto.TrendingStock;
 import com.ram.trading.watchlist.dto.WatchlistResponse;
+import com.ram.trading.watchlist.dto.midday.MiddayMarketSnapshot;
 import com.ram.trading.watchlist.entity.WatchlistStock;
 import com.ram.trading.watchlist.service.TrendingStockService;
 import com.ram.trading.watchlist.service.WatchlistService;
@@ -45,5 +46,12 @@ public class WatchlistController {
             int limit) {
 
         return trendingStockService.getTrendingStocks(limit);
+    }
+
+    @GetMapping("/midday")
+    public Mono<MiddayMarketSnapshot> getMiddayMarketSnapshot() {
+
+        return trendingStockService
+                .getMiddayMarketSnapshot();
     }
 }

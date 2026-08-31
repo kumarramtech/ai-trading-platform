@@ -8,6 +8,7 @@ import com.ram.trading.watchlist.dto.TrendingStock;
 import com.ram.trading.watchlist.dto.WatchlistMarketQuoteResponse;
 import com.ram.trading.watchlist.dto.WatchlistOhlc;
 import com.ram.trading.watchlist.dto.WatchlistQuoteData;
+import com.ram.trading.watchlist.dto.midday.MiddayMarketSnapshot;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -15,11 +16,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -105,9 +102,25 @@ public class TrendingStockService {
      * Splits the complete instrument universe into
      * Upstox-compatible batches.
      */
-    private Mono<List<TrendingStock>> scanInBatches(
-            List<TradableInstrumentResponse> instruments,
-            int topN) {
+
+    /**
+     * Scans the complete instrument universe.
+     *
+     * IMPORTANT:
+     * This method does NOT rank or limit the results.
+     *
+     * It is the common market-scan foundation used by:
+     *
+     * - Existing Trending Stock API
+     * - Midday Market Discovery
+     */
+    private Mono<List<TrendingStock>> scanAllInBatches(
+            List<TradableInstrumentResponse> instruments) {
+
+        if (instruments == null || instruments.isEmpty()) {
+
+            return Mono.just(List.of());
+        }
 
         List<List<TradableInstrumentResponse>> batches =
                 partition(
@@ -115,24 +128,330 @@ public class TrendingStockService {
                         MAX_INSTRUMENTS_PER_REQUEST);
 
         log.info(
-                "Trending Stock Scan | BatchCount={} | BatchSize={}",
+                "Trending Stock Scan | " +
+                        "BatchCount={} | BatchSize={} | " +
+                        "TotalInstruments={}",
                 batches.size(),
-                MAX_INSTRUMENTS_PER_REQUEST);
+                MAX_INSTRUMENTS_PER_REQUEST,
+                instruments.size());
 
         return Flux.fromIterable(batches)
                 .concatMap(this::processBatch)
                 .collectList()
                 .map(this::flatten)
+
+                .doOnNext(stocks ->
+                        log.info(
+                                "Trending Stock Scan | " +
+                                        "Complete Scan ResultCount={}",
+                                stocks.size()));
+    }
+
+    /**
+     * Existing Trending Stock behavior.
+     *
+     * IMPORTANT:
+     * The public getTrendingStocks() behavior remains unchanged.
+     *
+     * We scan the complete universe first and only then apply
+     * the requested top-N trending limit.
+     */
+    private Mono<List<TrendingStock>> scanInBatches(
+            List<TradableInstrumentResponse> instruments,
+            int topN) {
+
+        return scanAllInBatches(instruments)
+
                 .map(stocks ->
                         stocks.stream()
+                                .filter(Objects::nonNull)
+
                                 .sorted(
                                         Comparator.comparing(
                                                 TrendingStock::getTrendingScore,
                                                 Comparator.nullsLast(
                                                         Comparator.reverseOrder())))
+
                                 .limit(topN)
+
                                 .toList())
+
                 .doOnNext(this::logResults);
+    }
+
+    /**
+     * Builds a single midday market snapshot.
+     *
+     * This performs ONE complete market scan and derives:
+     *
+     * - Top Gainers
+     * - Top Losers
+     * - Top Trending Stocks
+     *
+     * Observation-only.
+     *
+     * This method does NOT:
+     *
+     * - generate BUY/SELL signals
+     * - call AI
+     * - call Risk Guard
+     * - create paper trades
+     */
+    public Mono<MiddayMarketSnapshot> getMiddayMarketSnapshot() {
+
+        final int topN = DEFAULT_TOP_RESULTS;
+
+        log.info(
+                "======================================================");
+
+        log.info(
+                "MIDDAY MARKET DISCOVERY STARTED | TopN={}",
+                topN);
+
+        log.info(
+                "======================================================");
+
+        return stockServiceClient
+                .getTradableEquities()
+                .collectList()
+
+                .flatMap(instruments -> {
+
+                    if (instruments == null
+                            || instruments.isEmpty()) {
+
+                        log.warn(
+                                "MIDDAY MARKET DISCOVERY | " +
+                                        "No tradable instruments found");
+
+                        return Mono.just(
+                                MiddayMarketSnapshot.builder()
+                                        .timestamp(Instant.now())
+                                        .topGainers(List.of())
+                                        .topLosers(List.of())
+                                        .trendingStocks(List.of())
+                                        .totalCandidates(0)
+                                        .build());
+                    }
+
+                    log.info(
+                            "MIDDAY MARKET DISCOVERY | " +
+                                    "Tradable Instruments={}",
+                            instruments.size());
+
+                    /*
+                     * IMPORTANT:
+                     *
+                     * Midday discovery must scan the COMPLETE
+                     * tradable universe.
+                     *
+                     * Do NOT call scanInBatches() here because
+                     * that method applies the existing top-N
+                     * trending limit.
+                     */
+                    return scanAllInBatches(instruments)
+
+                            .map(allStocks ->
+                                    buildMiddaySnapshot(
+                                            allStocks,
+                                            topN));
+                })
+
+                .doOnSuccess(snapshot -> {
+
+                    if (snapshot == null) {
+                        return;
+                    }
+
+                    log.info(
+                            "MIDDAY MARKET DISCOVERY COMPLETED | " +
+                                    "Gainers={} | " +
+                                    "Losers={} | " +
+                                    "Trending={} | " +
+                                    "TotalCandidates={}",
+                            snapshot.getTopGainers().size(),
+                            snapshot.getTopLosers().size(),
+                            snapshot.getTrendingStocks().size(),
+                            snapshot.getTotalCandidates());
+                })
+
+                .doOnError(error ->
+                        log.error(
+                                "MIDDAY MARKET DISCOVERY FAILED",
+                                error));
+    }
+
+    private MiddayMarketSnapshot buildMiddaySnapshot(
+            List<TrendingStock> stocks,
+            int topN) {
+
+        if (stocks == null || stocks.isEmpty()) {
+
+            return MiddayMarketSnapshot.builder()
+                    .timestamp(Instant.now())
+                    .topGainers(List.of())
+                    .topLosers(List.of())
+                    .trendingStocks(List.of())
+                    .totalCandidates(0)
+                    .build();
+        }
+
+
+        /*
+         * ============================================================
+         * TOP GAINERS
+         *
+         * Highest positive percentage movers.
+         * ============================================================
+         */
+
+        List<TrendingStock> topGainers =
+                stocks.stream()
+                        .filter(stock ->
+                                stock != null
+                                        && stock.getChangePercentage() != null
+                                        && stock.getChangePercentage() > 0)
+
+                        .sorted(
+                                Comparator.comparing(
+                                        TrendingStock::getChangePercentage,
+                                        Comparator.reverseOrder()))
+
+                        .limit(topN)
+
+                        .toList();
+
+
+        /*
+         * ============================================================
+         * TOP LOSERS
+         *
+         * Largest negative percentage movers.
+         * ============================================================
+         */
+
+        List<TrendingStock> topLosers =
+                stocks.stream()
+                        .filter(stock ->
+                                stock != null
+                                        && stock.getChangePercentage() != null
+                                        && stock.getChangePercentage() < 0)
+
+                        .sorted(
+                                Comparator.comparing(
+                                        TrendingStock::getChangePercentage))
+
+                        .limit(topN)
+
+                        .toList();
+
+
+        /*
+         * ============================================================
+         * TOP TRENDING
+         *
+         * Uses the existing TrendingScoreCalculator output.
+         * ============================================================
+         */
+
+        List<TrendingStock> trendingStocks =
+                stocks.stream()
+                        .filter(stock ->
+                                stock != null
+                                        && stock.getTrendingScore() != null)
+
+                        .sorted(
+                                Comparator.comparing(
+                                        TrendingStock::getTrendingScore,
+                                        Comparator.reverseOrder()))
+
+                        .limit(topN)
+
+                        .toList();
+
+
+        /*
+         * ============================================================
+         * DISCOVERY SUMMARY
+         * ============================================================
+         */
+
+        log.info(
+                "MIDDAY DISCOVERY | " +
+                        "Universe={} | " +
+                        "TopGainers={} | " +
+                        "TopLosers={} | " +
+                        "Trending={}",
+                stocks.size(),
+                topGainers.size(),
+                topLosers.size(),
+                trendingStocks.size());
+
+
+        /*
+         * ============================================================
+         * TOP GAINER DIAGNOSTICS
+         * ============================================================
+         */
+
+        topGainers.forEach(stock ->
+                log.info(
+                        "MIDDAY GAINER | " +
+                                "Symbol={} | " +
+                                "Change={}%% | " +
+                                "Volume={} | " +
+                                "TrendScore={}",
+                        stock.getTradingSymbol(),
+                        stock.getChangePercentage(),
+                        stock.getVolume(),
+                        stock.getTrendingScore()));
+
+
+        /*
+         * ============================================================
+         * TOP LOSER DIAGNOSTICS
+         * ============================================================
+         */
+
+        topLosers.forEach(stock ->
+                log.info(
+                        "MIDDAY LOSER | " +
+                                "Symbol={} | " +
+                                "Change={}%% | " +
+                                "Volume={} | " +
+                                "TrendScore={}",
+                        stock.getTradingSymbol(),
+                        stock.getChangePercentage(),
+                        stock.getVolume(),
+                        stock.getTrendingScore()));
+
+
+        /*
+         * ============================================================
+         * TRENDING DIAGNOSTICS
+         * ============================================================
+         */
+
+        trendingStocks.forEach(stock ->
+                log.info(
+                        "MIDDAY TRENDING | " +
+                                "Symbol={} | " +
+                                "Score={} | " +
+                                "Direction={} | " +
+                                "Change={}%%",
+                        stock.getTradingSymbol(),
+                        stock.getTrendingScore(),
+                        stock.getTrendDirection(),
+                        stock.getChangePercentage()));
+
+
+        return MiddayMarketSnapshot.builder()
+                .timestamp(Instant.now())
+                .topGainers(topGainers)
+                .topLosers(topLosers)
+                .trendingStocks(trendingStocks)
+                .totalCandidates(stocks.size())
+                .build();
     }
 
     /**

@@ -4,6 +4,7 @@ import com.ram.trading.margin.dto.UpstoxFundsResponse;
 import com.ram.trading.margin.dto.UpstoxMarginRequest;
 import com.ram.trading.margin.dto.UpstoxMarginResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,7 @@ import reactor.core.publisher.Mono;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class UpstoxClient {
 
     private final WebClient webClient;
@@ -26,11 +28,9 @@ public class UpstoxClient {
                 .flatMap(accessToken ->
                         webClient.get()
                                 .uri(upstoxBaseUrl + "/v3/user/get-funds-and-margin")
-                                .header(
-                                        HttpHeaders.AUTHORIZATION,
+                                .header(HttpHeaders.AUTHORIZATION,
                                         "Bearer " + accessToken)
-                                .header(
-                                        HttpHeaders.ACCEPT,
+                                .header(HttpHeaders.ACCEPT,
                                         "application/json")
                                 .header(
                                         "Api-Version",
@@ -59,6 +59,20 @@ public class UpstoxClient {
                                 .bodyValue(request)
                                 .retrieve()
                                 .bodyToMono(UpstoxMarginResponse.class)
+                )
+                .retryWhen(
+                        reactor.util.retry.Retry
+                                .backoff(2, java.time.Duration.ofSeconds(2))
+                                .maxBackoff(java.time.Duration.ofSeconds(8))
+                                .filter(throwable ->
+                                        throwable instanceof
+                                                org.springframework.web.reactive.function.client
+                                                        .WebClientResponseException.TooManyRequests)
+                                .doBeforeRetry(retrySignal ->
+                                        log.warn(
+                                                "[Upstox Margin API] 429 received. " +
+                                                        "Retry attempt: {}",
+                                                retrySignal.totalRetries() + 1))
                 );
     }
 }
