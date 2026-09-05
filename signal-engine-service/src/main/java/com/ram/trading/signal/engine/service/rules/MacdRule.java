@@ -15,8 +15,10 @@ public class MacdRule implements SignalRule {
     public RuleResult evaluate(SignalGenerationRequest request) {
 
         log.info(
-                "MACD Rule Input -> Symbol={}, MACD={}, SignalLine={}",
+                "MACD Rule Input -> Symbol={}, PreviousMACD={}, PreviousSignal={}, MACD={}, SignalLine={}",
                 request.getSymbol(),
+                request.getPreviousMacd(),
+                request.getPreviousSignalLine(),
                 request.getMacd(),
                 request.getSignalLine());
 
@@ -31,33 +33,59 @@ public class MacdRule implements SignalRule {
                     .build();
         }
 
-        if (request.getMacd() > request.getSignalLine()) {
+        boolean bullishMomentum =
+                request.getMacd() > request.getSignalLine();
+
+        boolean bearishMomentum =
+                request.getMacd() < request.getSignalLine();
+
+        boolean hasPreviousValues =
+                request.getPreviousMacd() != null
+                        && request.getPreviousSignalLine() != null;
+
+        boolean bullishCrossover =
+                hasPreviousValues
+                        && request.getPreviousMacd() <= request.getPreviousSignalLine()
+                        && request.getMacd() > request.getSignalLine();
+
+        boolean bearishCrossover =
+                hasPreviousValues
+                        && request.getPreviousMacd() >= request.getPreviousSignalLine()
+                        && request.getMacd() < request.getSignalLine();
+
+        if (bullishMomentum) {
 
             return RuleResult.builder()
                     .signal(SignalType.BUY)
                     .score(TradingConstants.MACD_SCORE)
                     .maxScore(TradingConstants.MACD_SCORE)
                     .ruleName(getRuleName())
-                    .reason("Bullish MACD crossover.")
+                    .reason(
+                            bullishCrossover
+                                    ? "Fresh bullish MACD crossover."
+                                    : "Bullish MACD momentum (MACD above signal line; no fresh crossover).")
                     .build();
         }
 
-        if (request.getMacd() < request.getSignalLine()) {
+        if (bearishMomentum) {
 
             return RuleResult.builder()
                     .signal(SignalType.SELL)
-                    .ruleName(getRuleName())
                     .score(TradingConstants.MACD_SCORE)
                     .maxScore(TradingConstants.MACD_SCORE)
-                    .reason("Bearish MACD crossover.")
+                    .ruleName(getRuleName())
+                    .reason(
+                            bearishCrossover
+                                    ? "Fresh bearish MACD crossover."
+                                    : "Bearish MACD momentum (MACD below signal line; no fresh crossover).")
                     .build();
         }
 
         return RuleResult.builder()
                 .signal(SignalType.NEUTRAL)
-                .ruleName(getRuleName())
                 .score(0)
                 .maxScore(TradingConstants.MACD_SCORE)
+                .ruleName(getRuleName())
                 .reason("MACD is neutral.")
                 .build();
     }

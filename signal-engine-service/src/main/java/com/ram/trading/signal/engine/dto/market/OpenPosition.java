@@ -28,6 +28,8 @@ public class OpenPosition {
 
     private Double stopLoss;
 
+    private Double initialStopLoss;
+
     private Double targetPrice;
 
     private Double highestPrice;

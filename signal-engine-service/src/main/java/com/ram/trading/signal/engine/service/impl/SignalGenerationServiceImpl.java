@@ -351,7 +351,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         SignalGenerationRequest request =
                                                 buildSignalRequest(
                                                         tick,
-                                                        indicator);
+                                                        indicator,
+                                                        entrySetup);
 
                                         return generateTradingSignal(
                                                 request,
@@ -1216,6 +1217,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .sma50(indicator.getSma50())
                 .macd(indicator.getMacd())
                 .signalLine(indicator.getSignalLine())
+                .previousMacd(indicator.getPreviousMacd())
+                .previousSignalLine(indicator.getPreviousSignalLine())
                 .build();
     }
 
@@ -1423,7 +1426,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private SignalGenerationRequest buildSignalRequest(
             Tick tick,
-            TechnicalIndicatorResponse indicator) {
+            TechnicalIndicatorResponse indicator,
+            EntrySetup entrySetup) {
 
         return SignalGenerationRequest.builder()
                 .symbol(tick.getSymbol())
@@ -1435,6 +1439,16 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .sma50(indicator.getSma50())
                 .macd(indicator.getMacd())
                 .signalLine(indicator.getSignalLine())
+                .previousMacd(indicator.getPreviousMacd())
+                .previousSignalLine(indicator.getPreviousSignalLine())
+
+                // Original strategy setup
+                .setupStrategy(entrySetup.strategy())
+                .setupDirection(
+                        SignalType.valueOf(
+                                entrySetup.direction()
+                                        .toUpperCase()))
+
                 .build();
     }
 

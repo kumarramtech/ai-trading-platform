@@ -21,6 +21,8 @@ public class ClosedPositionDto {
 
     private String status;
 
+    private String exitReason;
+
     private Double profitLoss;
 
     private LocalDateTime closedAt;

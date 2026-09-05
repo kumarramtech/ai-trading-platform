@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.dto.rules;
 
+import com.ram.trading.signal.engine.contant.SignalType;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
@@ -27,10 +28,18 @@ public class SignalGenerationRequest {
 
     private Double signalLine;
 
+    private Double previousMacd;
+
+    private Double previousSignalLine;
+
     private Double atr;
 
     private Long volume;
 
     private MarketContext marketContext;
+
+    private String setupStrategy;
+
+    private SignalType setupDirection;
 
 }

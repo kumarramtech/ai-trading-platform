@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.entity;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.dto.market.ExitReason;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -68,4 +69,7 @@ public class PaperTrade {
     private Integer trailingStep;
 
     private LocalDateTime lastTrailingUpdate;
+
+    @Enumerated(EnumType.STRING)
+    private ExitReason exitReason;
 }

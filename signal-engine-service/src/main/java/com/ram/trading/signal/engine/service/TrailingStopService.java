@@ -22,6 +22,16 @@ import java.time.LocalTime;
 @RequiredArgsConstructor
 @Slf4j
 public class TrailingStopService {
+
+    /*
+     * Trailing configuration. The 0.45% activation is retained so the
+     * existing break-even protection remains intact. Post break-even gaps
+     * are widened to give profitable trades room to breathe.
+     */
+    private static final double BREAK_EVEN_TRIGGER_PERCENT = 0.45 / 100;
+    private static final double NORMAL_TRAILING_PERCENT = 0.50 / 100;
+    private static final double LATE_TRAILING_PERCENT = 0.30 / 100;
+    private static final double FINAL_TRAILING_PERCENT = 0.15 / 100;
     private final PaperTradeRepository repository;
     private final NotificationClient notificationClient;
 
@@ -185,7 +195,7 @@ public class TrailingStopService {
          * Trailing starts once price moves
          * 0.45% in the favorable direction.
          */
-        double breakEvenTriggerPercent = 0.45 / 100;
+        double breakEvenTriggerPercent = BREAK_EVEN_TRIGGER_PERCENT;
 
         if (isBuy) {
 
@@ -220,7 +230,7 @@ public class TrailingStopService {
          * Step 4 = Final defensive trailing
          */
 
-        double breakEvenTriggerPercent = 0.45 / 100;
+        double breakEvenTriggerPercent = BREAK_EVEN_TRIGGER_PERCENT;
 
         boolean breakEvenReached = isBuy
                 ? currentPrice >= entry * (1 + breakEvenTriggerPercent)
@@ -274,7 +284,7 @@ public class TrailingStopService {
          * Once price moves 0.45% in the favorable direction,
          * Stop Loss moves to Entry Price.
          */
-        double breakEvenTriggerPercent = 0.45 / 100;
+        double breakEvenTriggerPercent = BREAK_EVEN_TRIGGER_PERCENT;
 
         double triggerPrice = isBuy
                 ? entry * (1 + breakEvenTriggerPercent)
@@ -307,9 +317,9 @@ public class TrailingStopService {
          * After break-even, use a dynamic
          * percentage-based trailing gap.
          *
-         * Before 2:00 PM  -> 0.30%
-         * 2:00 - 2:45 PM -> 0.15%
-         * After 2:45 PM  -> 0.10%
+         * Before 2:00 PM  -> 0.50%
+         * 2:00 - 2:45 PM -> 0.30%
+         * After 2:45 PM  -> 0.15%
          */
         LocalTime currentTime = LocalTime.now();
 
@@ -317,15 +327,15 @@ public class TrailingStopService {
 
         if (currentTime.isBefore(LocalTime.of(14, 0))) {
 
-            trailingPercent = 0.30 / 100;
+            trailingPercent = NORMAL_TRAILING_PERCENT;
 
         } else if (currentTime.isBefore(LocalTime.of(14, 45))) {
 
-            trailingPercent = 0.15 / 100;
+            trailingPercent = LATE_TRAILING_PERCENT;
 
         } else {
 
-            trailingPercent = 0.10 / 100;
+            trailingPercent = FINAL_TRAILING_PERCENT;
         }
 
         /*

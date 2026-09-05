@@ -94,7 +94,6 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
                     stockInstrumentClient
                             .loadSubscriptions()
                             .stream()
-                            .limit(100)
                             .map(InstrumentSubscriptionResponse::getInstrumentKey)
                             .toList();
 
@@ -158,7 +157,7 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
                             .method("sub")
                             .data(
                                     SubscriptionData.builder()
-                                            .mode("ltpc")
+                                            .mode("full")
                                             .instrumentKeys(instrumentKeys)
                                             .build())
                             .build();

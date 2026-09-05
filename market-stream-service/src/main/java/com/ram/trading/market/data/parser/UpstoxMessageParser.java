@@ -33,11 +33,11 @@ public class UpstoxMessageParser {
 
             response.getFeedsMap().forEach((instrumentKey, feed) -> {
 
-                if (!feed.hasLtpc()) {
+                var ltpc = extractLtpc(feed);
+
+                if (ltpc == null) {
                     return;
                 }
-
-                var ltpc = feed.getLtpc();
 
                 double lastPrice = ltpc.getLtp();
                 double previousClose = ltpc.getCp();
@@ -52,25 +52,32 @@ public class UpstoxMessageParser {
                 String exchange = "";
 
                 if (instrumentKey.contains("|")) {
-
                     exchange = instrumentKey.split("\\|")[0];
-
                 }
 
                 String symbol =
                         instrumentLookupService.getTradingSymbol(instrumentKey);
-                log.debug("Tick Received -> Symbol: {}, Price: {}",
-                        symbol,
-                        lastPrice);
 
+                FullFeedSnapshot snapshot = extractFullFeedSnapshot(feed);
 
                 Tick tick = Tick.builder()
                         .exchange(exchange)
                         .symbol(symbol)
                         .instrumentKey(instrumentKey)
                         .lastTradedPrice(lastPrice)
-                        .closePrice(previousClose)
-                        .volume((long) ltpc.getLtq())
+                        .openPrice(snapshot.openPrice())
+                        .highPrice(snapshot.highPrice())
+                        .lowPrice(snapshot.lowPrice())
+                        .closePrice(
+                                snapshot.closePrice() != null
+                                        ? snapshot.closePrice()
+                                        : previousClose)
+                        /*
+                         * IMPORTANT: this is the current I1 candle's cumulative
+                         * traded volume, not LTQ. The signal candle aggregator
+                         * replaces this value on every tick rather than summing it.
+                         */
+                        .volume(snapshot.volume())
                         .timestamp(ltpc.getLtt())
                         .previousClose(previousClose)
                         .change(change)
@@ -78,26 +85,79 @@ public class UpstoxMessageParser {
                         .build();
 
                 log.debug(
-                        "LIVE TICK -> Symbol={}, Price={}, Change={}%, Time={}",
+                        "LIVE TICK -> Symbol={}, Price={}, Volume={}, Change={}%, Time={}",
                         symbol,
                         tick.getLastTradedPrice(),
+                        tick.getVolume(),
                         tick.getChangePercentage(),
                         tick.getTradeTime());
 
                 tickProcessor.publishTick(tick);
-
             });
 
         } catch (InvalidProtocolBufferException ex) {
-
             log.error("Unable to parse protobuf.", ex);
-
         } catch (Exception ex) {
-
             log.error("Unexpected error while parsing market feed.", ex);
+        }
+    }
 
+    private MarketDataFeed.LTPC extractLtpc(
+            MarketDataFeed.Feed feed) {
+
+        if (feed.hasLtpc()) {
+            return feed.getLtpc();
         }
 
+        if (feed.hasFullFeed()
+                && feed.getFullFeed().hasMarketFF()
+                && feed.getFullFeed().getMarketFF().hasLtpc()) {
+            return feed.getFullFeed().getMarketFF().getLtpc();
+        }
+
+        return null;
     }
+
+    private FullFeedSnapshot extractFullFeedSnapshot(
+            MarketDataFeed.Feed feed) {
+
+        if (!feed.hasFullFeed()
+                || !feed.getFullFeed().hasMarketFF()
+                || !feed.getFullFeed().getMarketFF().hasMarketOHLC()) {
+            return FullFeedSnapshot.empty();
+        }
+
+        var marketOhlc =
+                feed.getFullFeed()
+                        .getMarketFF()
+                        .getMarketOHLC();
+
+        for (var ohlc : marketOhlc.getOhlcList()) {
+
+            if ("I1".equalsIgnoreCase(ohlc.getInterval())) {
+                return new FullFeedSnapshot(
+                        ohlc.getOpen(),
+                        ohlc.getHigh(),
+                        ohlc.getLow(),
+                        ohlc.getClose(),
+                        ohlc.getVol());
+            }
+        }
+
+        return FullFeedSnapshot.empty();
+    }
+
+    private record FullFeedSnapshot(
+            Double openPrice,
+            Double highPrice,
+            Double lowPrice,
+            Double closePrice,
+            Long volume) {
+
+        private static FullFeedSnapshot empty() {
+            return new FullFeedSnapshot(null, null, null, null, null);
+        }
+    }
+
 
 }

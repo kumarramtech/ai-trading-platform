@@ -475,29 +475,29 @@ public class PaperTradingService {
          * ============================================================
          */
 
-            long reserveStart = System.currentTimeMillis();
+        long reserveStart = System.currentTimeMillis();
 
-            try {
+        try {
 
-                balanceMarginClient
-                        .reserveMargin(requiredMargin)
-                        .block();
+            balanceMarginClient
+                    .reserveMargin(requiredMargin)
+                    .block();
 
-                log.info(
-                        "MARGIN RESERVATION COMPLETED | Symbol={} | DurationMs={}",
-                        signal.getSymbol(),
-                        System.currentTimeMillis() - reserveStart);
+            log.info(
+                    "MARGIN RESERVATION COMPLETED | Symbol={} | DurationMs={}",
+                    signal.getSymbol(),
+                    System.currentTimeMillis() - reserveStart);
 
-            } catch (Exception ex) {
+        } catch (Exception ex) {
 
-                log.error(
-                        "MARGIN RESERVATION FAILED | Symbol={} | DurationMs={}",
-                        signal.getSymbol(),
-                        System.currentTimeMillis() - reserveStart,
-                        ex);
+            log.error(
+                    "MARGIN RESERVATION FAILED | Symbol={} | DurationMs={}",
+                    signal.getSymbol(),
+                    System.currentTimeMillis() - reserveStart,
+                    ex);
 
-                return;
-            }
+            return;
+        }
 
         /*
          * ============================================================
@@ -617,13 +617,47 @@ public class PaperTradingService {
         log.info("Invested Amount     : {}", saved.getInvestedAmount());
         log.info("Required Margin     : {}", saved.getRequiredMargin());
         log.info("Leverage            : {}", saved.getLeverage());
-        log.info(
-                "Available Capital Before Trade : {}",
-                availableCapital);
-        log.info(
-                "Available Capital After Trade  : {}",
+        log.info("Available Capital Before Trade : {}", availableCapital);
+        log.info("Available Capital After Trade  : {}",
                 availableCapital - investmentAmount);
         log.info("======================================");
+
+        log.info(
+                "TRADE_ENTRY_SNAPSHOT | " +
+                        "TradeId={} | " +
+                        "Symbol={} | " +
+                        "SignalId={} | " +
+                        "Signal={} | " +
+                        "Entry={} | " +
+                        "Target={} | " +
+                        "InitialStop={} | " +
+                        "CurrentStop={} | " +
+                        "Qty={} | " +
+                        "Confidence={} | " +
+                        "RSI={} | " +
+                        "EMA20={} | " +
+                        "EMA50={} | " +
+                        "MACD={} | " +
+                        "RequiredMargin={} | " +
+                        "Leverage={} | " +
+                        "EntryTime={}",
+                saved.getId(),
+                saved.getSymbol(),
+                saved.getSignalId(),
+                saved.getSignal(),
+                saved.getEntryPrice(),
+                saved.getTargetPrice(),
+                saved.getInitialStopLoss(),
+                saved.getCurrentStopLoss(),
+                saved.getQuantity(),
+                saved.getConfidence(),
+                saved.getRsi(),
+                saved.getEma20(),
+                saved.getEma50(),
+                saved.getMacd(),
+                saved.getRequiredMargin(),
+                saved.getLeverage(),
+                saved.getEntryTime());
 
         /*
          * ============================================================
@@ -788,9 +822,9 @@ public class PaperTradingService {
 
         if (trade == null) {
             return Mono.just(OpenPositionContextResponse.builder()
-                            .positionExists(false)
-                            .symbol(symbol)
-                            .build());
+                    .positionExists(false)
+                    .symbol(symbol)
+                    .build());
         }
 
         return stockServiceClient
@@ -825,7 +859,7 @@ public class PaperTradingService {
                             .currentPrice(currentPrice)
                             .currentPnL(Math.round(currentPnL * 100.0) / 100.0)
                             .pnlPercentage(Math.round(pnlPercentage * 100.0) / 100.0)
-                            .stopLoss(trade.getStopLoss())
+                            .stopLoss(trade.getCurrentStopLoss())
                             .targetPrice(trade.getTargetPrice())
                             .status(trade.getStatus().name())
                             .signal(trade.getSignal())
@@ -893,7 +927,7 @@ public class PaperTradingService {
                 (winningTrades + losingTrades) == 0
                         ? 0
                         : (winningTrades * 100.0)
-                        / (winningTrades + losingTrades);
+                          / (winningTrades + losingTrades);
 
         return PaperTradeSummary.builder()
                 .totalTrades(totalTrades)
@@ -1171,7 +1205,7 @@ public class PaperTradingService {
                 closedTrades == 0
                         ? 0
                         : ((double) winningTrades
-                        / closedTrades) * 100;
+                           / closedTrades) * 100;
 
         return PaperTradeDashboard.builder()
                 .totalTrades(totalTrades)
@@ -1216,7 +1250,7 @@ public class PaperTradingService {
                 totalTrades == 0
                         ? 0
                         : ((double) winningTrades
-                        / totalTrades) * 100;
+                           / totalTrades) * 100;
 
         double averageConfidence =
                 trades.stream()
@@ -1272,7 +1306,7 @@ public class PaperTradingService {
                         .orElse(0);
 
         long breakevenTrades =  trades.stream().filter(t ->t.getProfitLoss() != null
-                                        && t.getProfitLoss() == 0).count();
+                && t.getProfitLoss() == 0).count();
         return StrategyReport.builder()
                 .totalTrades(totalTrades)
                 .winningTrades(winningTrades)
@@ -1348,15 +1382,15 @@ public class PaperTradingService {
                                         .macd(trade.getMacd())
                                         .build())
                         .toList();
-                if (requests.isEmpty()) {
-                    return Mono.just(
-                            StrategyReviewResponse.builder()
-                                    .totalTrades(0)
-                                    .winningTrades(0)
-                                    .losingTrades(0)
-                                    .review("No completed trades available for strategy review.")
-                                    .build());
-                }
+        if (requests.isEmpty()) {
+            return Mono.just(
+                    StrategyReviewResponse.builder()
+                            .totalTrades(0)
+                            .winningTrades(0)
+                            .losingTrades(0)
+                            .review("No completed trades available for strategy review.")
+                            .build());
+        }
         return aiServiceClient
                 .reviewStrategy(requests);
     }
@@ -1686,48 +1720,48 @@ public class PaperTradingService {
                                                     ? 0
                                                     : Math.round((reward / risk) * 100.0) / 100.0;
 
-                                       return OpportunityDashboard
-                                                .builder()
-                                                .symbol(opportunity.getSymbol())
-                                                .signal(opportunity.getSignal())
-                                                .confidence(opportunity.getConfidence())
-                                                .tradeScore(opportunity.getScore())
-                                                .targetPrice(opportunity.getTargetPrice())
-                                                .stopLoss(opportunity.getStopLoss())
-                                                .entryPrice(opportunity.getEntryPrice())
-                                                .sentiment(opportunity.getSentiment())
-                                                .sentimentScore(opportunity.getSentimentScore())
-                                                .technicalReason(opportunity.getTechnicalReason())
-                                                .sentimentReason(opportunity.getSentimentReason())
-                                                .recommendation(opportunity.getRecommendation())
-                                                .recommendedInvestment(position.getRecommendedInvestment())
-                                                .recommendedQuantity(position.getRecommendedQuantity())
-                                                .riskPerShare(position.getRiskPerShare())
-                                                .totalRisk(position.getTotalRisk())
-                                                .riskRewardRatio(riskRewardRatio)
-                                                .build();}))
-                                                .collectList()
-                                        .map(list -> {
+                                    return OpportunityDashboard
+                                            .builder()
+                                            .symbol(opportunity.getSymbol())
+                                            .signal(opportunity.getSignal())
+                                            .confidence(opportunity.getConfidence())
+                                            .tradeScore(opportunity.getScore())
+                                            .targetPrice(opportunity.getTargetPrice())
+                                            .stopLoss(opportunity.getStopLoss())
+                                            .entryPrice(opportunity.getEntryPrice())
+                                            .sentiment(opportunity.getSentiment())
+                                            .sentimentScore(opportunity.getSentimentScore())
+                                            .technicalReason(opportunity.getTechnicalReason())
+                                            .sentimentReason(opportunity.getSentimentReason())
+                                            .recommendation(opportunity.getRecommendation())
+                                            .recommendedInvestment(position.getRecommendedInvestment())
+                                            .recommendedQuantity(position.getRecommendedQuantity())
+                                            .riskPerShare(position.getRiskPerShare())
+                                            .totalRisk(position.getTotalRisk())
+                                            .riskRewardRatio(riskRewardRatio)
+                                            .build();}))
+                .collectList()
+                .map(list -> {
 
-                                            for (int i = 0; i < list.size(); i++) {
-                                                list.get(i).setRank(i + 1);
-                                            }
+                    for (int i = 0; i < list.size(); i++) {
+                        list.get(i).setRank(i + 1);
+                    }
 
-                                            double recommendedCapital =
-                                                    list.stream()
-                                                            .mapToDouble(
-                                                                    OpportunityDashboard::getRecommendedInvestment)
-                                                            .sum();
+                    double recommendedCapital =
+                            list.stream()
+                                    .mapToDouble(
+                                            OpportunityDashboard::getRecommendedInvestment)
+                                    .sum();
 
-                                            return OpportunityDashboardResponse
-                                                    .builder()
-                                                    .capital(capital)
-                                                    .recommendedCapital(recommendedCapital)
-                                                    .remainingCapital(capital - recommendedCapital)
-                                                    .opportunityCount(list.size())
-                                                    .opportunities(list)
-                                                    .build();
-                                        });
+                    return OpportunityDashboardResponse
+                            .builder()
+                            .capital(capital)
+                            .recommendedCapital(recommendedCapital)
+                            .remainingCapital(capital - recommendedCapital)
+                            .opportunityCount(list.size())
+                            .opportunities(list)
+                            .build();
+                });
     }
 
     public AnalyticsMetricsResponse getAdvancedMetrics() {
@@ -1877,8 +1911,8 @@ public class PaperTradingService {
                 (winningTrades + losingTrades) == 0
                         ? 0
                         : ((double) winningTrades
-                        / (winningTrades + losingTrades))
-                        * 100;
+                           / (winningTrades + losingTrades))
+                          * 100;
 
         double averageProfit =
                 winningTrades == 0
@@ -1889,13 +1923,13 @@ public class PaperTradingService {
                 losingTrades == 0
                         ? 0
                         : Math.abs(totalLoss)
-                        / losingTrades;
+                          / losingTrades;
 
         double profitFactor =
                 totalLoss == 0
                         ? totalProfit
                         : totalProfit
-                        / Math.abs(totalLoss);
+                          / Math.abs(totalLoss);
 
         return PerformanceAnalytics
                 .builder()
@@ -1985,7 +2019,7 @@ public class PaperTradingService {
                                             .entryPrice(trade.getEntryPrice())
                                             .currentPrice(currentPrice)
                                             .targetPrice(trade.getTargetPrice())
-                                            .stopLoss(trade.getStopLoss())
+                                            .stopLoss(trade.getCurrentStopLoss())
                                             .quantity(trade.getQuantity())
                                             .targetProgress(progress)
                                             .investedAmount(
@@ -2059,7 +2093,7 @@ public class PaperTradingService {
                             .positions(
                                     positions)
                             .bestPosition(best != null ? best.getSymbol()
-                                            : null)
+                                    : null)
 
                             .bestPnL(
                                     best != null
@@ -2092,11 +2126,14 @@ public class PaperTradingService {
         log.info("Entry Price : {}", trade.getEntryPrice());
         log.info("Exit Price  : {}", tick.getLastTradedPrice());
 
+        trade.setExitReason(decision.getReason());
+
         if (decision.getReason() == ExitReason.TARGET) {
 
             trade.setStatus(SignalStatus.TARGET_HIT);
 
-        } else if (decision.getReason() == ExitReason.STOP_LOSS) {
+        } else if (decision.getReason() == ExitReason.STOP_LOSS
+                || decision.getReason() == ExitReason.TRAILING_STOP) {
 
             trade.setStatus(SignalStatus.STOP_LOSS_HIT);
 
@@ -2454,6 +2491,9 @@ public class PaperTradingService {
                 .stopLoss(trade.getStopLoss())
                 .confidence(trade.getConfidence())
                 .status(trade.getStatus().name())
+                .exitReason(trade.getExitReason() != null
+                        ? trade.getExitReason().name()
+                        : null)
                 .entryTime(trade.getEntryTime())
                 .exitTime(trade.getExitTime())
                 .closedAt(trade.getExitTime())

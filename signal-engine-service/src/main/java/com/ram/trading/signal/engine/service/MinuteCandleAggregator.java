@@ -144,12 +144,15 @@ public class MinuteCandleAggregator {
         existing.setClose(price);
 
         /*
-         * Add tick volume when available.
+         * Tick.volume represents the cumulative volume of the current I1
+         * candle from the Upstox full feed. Replace it rather than summing
+         * repeated snapshots of the same minute.
          */
-        existing.setVolume(
-                safeVolume(existing.getVolume())
-                        + safeVolume(tick.getVolume())
-        );
+        if (tick.getVolume() != null) {
+            existing.setVolume(
+                    safeVolume(tick.getVolume())
+            );
+        }
 
         minuteCandleStore.save(existing);
 

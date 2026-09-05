@@ -29,6 +29,17 @@ public class EntryQualityService {
 
     private static final double EMA_DISTANCE_OBSERVATION_PCT = 3.00;
 
+    /* Structural entry-quality thresholds. These remain diagnostic only. */
+    private static final double EMA_EXTENSION_CAUTION_PCT = 5.00;
+    private static final double EMA_EXTENSION_EXTENDED_PCT = 8.00;
+    private static final double RSI_CAUTION_BUY = 65.00;
+    private static final double RSI_CAUTION_SELL = 35.00;
+    private static final double RSI_OVERBOUGHT = 70.00;
+    private static final double RSI_OVERSOLD = 30.00;
+    private static final double RSI_NEUTRAL_LOW = 45.00;
+    private static final double RSI_NEUTRAL_HIGH = 55.00;
+    private static final double EMA_NEAR_PRICE_PCT = 2.00;
+
 
     public EntryQualityResult evaluate(
             String symbol,
@@ -196,6 +207,64 @@ public class EntryQualityService {
                     "Fresh price is close to the original signal price.";
         }
 
+        /*
+         * Structural extension is more informative at signal time than
+         * directional movement, because signalPrice and freshPrice are
+         * usually almost identical when the trade is created.
+         */
+        Double rsi = indicator != null ? indicator.getRsi14() : null;
+
+        boolean bullishExtension =
+                SignalType.BUY.equals(direction)
+                        && priceVsEma20Pct != null
+                        && priceVsEma20Pct >= EMA_EXTENSION_EXTENDED_PCT
+                        && rsi != null
+                        && rsi >= RSI_OVERBOUGHT;
+
+        boolean bearishExtension =
+                SignalType.SELL.equals(direction)
+                        && priceVsEma20Pct != null
+                        && priceVsEma20Pct <= -EMA_EXTENSION_EXTENDED_PCT
+                        && rsi != null
+                        && rsi <= RSI_OVERSOLD;
+
+        boolean bullishCaution =
+                SignalType.BUY.equals(direction)
+                        && priceVsEma20Pct != null
+                        && priceVsEma20Pct >= EMA_EXTENSION_CAUTION_PCT
+                        && rsi != null
+                        && rsi >= RSI_CAUTION_BUY;
+
+        boolean bearishCaution =
+                SignalType.SELL.equals(direction)
+                        && priceVsEma20Pct != null
+                        && priceVsEma20Pct <= -EMA_EXTENSION_CAUTION_PCT
+                        && rsi != null
+                        && rsi <= RSI_CAUTION_SELL;
+
+        boolean weakNeutralMomentum =
+                rsi != null
+                        && rsi >= RSI_NEUTRAL_LOW
+                        && rsi <= RSI_NEUTRAL_HIGH
+                        && priceVsEma20Pct != null
+                        && Math.abs(priceVsEma20Pct) <= EMA_NEAR_PRICE_PCT
+                        && priceVsEma50Pct != null
+                        && Math.abs(priceVsEma50Pct) <= EMA_NEAR_PRICE_PCT;
+
+        if (bullishExtension || bearishExtension) {
+            status = "EXTENDED";
+            reason += " Structural extension is confirmed by EMA20 distance and RSI.";
+        } else if ((bullishCaution || bearishCaution || weakNeutralMomentum)
+                && "HEALTHY".equals(status)) {
+            status = "CAUTION";
+
+            if (weakNeutralMomentum) {
+                reason += " Technical structure is near the moving averages with neutral RSI; momentum is weak.";
+            } else {
+                reason += " EMA20 extension and RSI indicate an elevated entry risk.";
+            }
+        }
+
 
         /*
          * ============================================================
@@ -220,16 +289,16 @@ public class EntryQualityService {
 
         log.info(
                 "ENTRY QUALITY | " +
-                "Symbol={} | " +
-                "Direction={} | " +
-                "SignalPrice={} | " +
-                "FreshPrice={} | " +
-                "DirectionalMove={}%" +
-                " | PriceVsEMA20={}%" +
-                " | PriceVsEMA50={}%" +
-                " | PriceVsHistoricalClose={}%" +
-                " | Status={} | " +
-                "Reason={}",
+                        "Symbol={} | " +
+                        "Direction={} | " +
+                        "SignalPrice={} | " +
+                        "FreshPrice={} | " +
+                        "DirectionalMove={}%" +
+                        " | PriceVsEMA20={}%" +
+                        " | PriceVsEMA50={}%" +
+                        " | PriceVsHistoricalClose={}%" +
+                        " | Status={} | " +
+                        "Reason={}",
                 symbol,
                 direction,
                 signalPrice,
@@ -288,9 +357,9 @@ public class EntryQualityService {
 
         log.warn(
                 "ENTRY QUALITY | " +
-                "Unavailable | Symbol={} | " +
-                "Direction={} | SignalPrice={} | " +
-                "FreshPrice={} | Reason={}",
+                        "Unavailable | Symbol={} | " +
+                        "Direction={} | SignalPrice={} | " +
+                        "FreshPrice={} | Reason={}",
                 symbol,
                 direction,
                 signalPrice,

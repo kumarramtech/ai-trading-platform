@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.net.http.WebSocket;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CompletableFuture;
@@ -15,6 +16,9 @@ import java.util.concurrent.CompletableFuture;
 public class UpstoxWebSocketListener implements WebSocket.Listener {
 
     private final UpstoxMessageParser parser;
+
+    private final ByteArrayOutputStream binaryMessageBuffer =
+            new ByteArrayOutputStream();
 
     @Override
     public void onOpen(WebSocket webSocket) {
@@ -42,10 +46,37 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
                                        ByteBuffer data,
                                        boolean last) {
 
-        log.info("Binary Message Received : {} bytes",
-                data.remaining());
+        int fragmentSize = data.remaining();
 
-        parser.parse(data);
+        log.info(
+                "Binary Message Received : {} bytes | last={}",
+                fragmentSize,
+                last);
+
+        try {
+            ByteBuffer copy = data.asReadOnlyBuffer();
+            byte[] fragment = new byte[copy.remaining()];
+            copy.get(fragment);
+
+            binaryMessageBuffer.write(fragment, 0, fragment.length);
+
+            if (last) {
+                byte[] completeMessage =
+                        binaryMessageBuffer.toByteArray();
+
+                binaryMessageBuffer.reset();
+
+                parser.parse(ByteBuffer.wrap(completeMessage));
+            }
+
+        } catch (Exception ex) {
+
+            binaryMessageBuffer.reset();
+
+            log.error(
+                    "Unable to assemble/parse fragmented binary market message",
+                    ex);
+        }
 
         webSocket.request(1);
 

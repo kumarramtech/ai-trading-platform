@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.exit.impl;
 
 import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.market.OpenPosition;
 import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.entity.PaperTrade;
@@ -14,6 +15,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+
+import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -43,7 +46,9 @@ public class TradeExitServiceImpl implements TradeExitService {
 
         if (trade == null) {
 
-            log.info("No OPEN Trade found for {}", tick.getSymbol());
+            log.info(
+                    "No OPEN Trade found for {}",
+                    tick.getSymbol());
 
             return Mono.empty();
         }
@@ -59,19 +64,94 @@ public class TradeExitServiceImpl implements TradeExitService {
 
                 .flatMap(updatedTrade -> {
 
-                    OpenPosition position = map(updatedTrade);
+                    OpenPosition position =
+                            map(updatedTrade);
 
                     ExitDecision decision =
-                            exitOrchestrator.evaluate(position, tick);
+                            exitOrchestrator.evaluate(
+                                    position,
+                                    tick);
 
-                    log.info("Exit Decision : {}", decision);
+                    log.info(
+                            "Exit Decision : {}",
+                            decision);
 
                     if (!decision.isExit()) {
 
-                        log.info("Trade should continue.");
+                        log.info(
+                                "Trade should continue.");
 
                         return Mono.empty();
                     }
+
+                    /*
+                     * ========================================================
+                     * FINAL EXIT SNAPSHOT
+                     * ========================================================
+                     */
+
+                    double entryPrice =
+                            updatedTrade.getEntryPrice();
+
+                    double exitPrice =
+                            tick.getLastTradedPrice();
+
+                    double profitLoss;
+
+                    if (SignalType.SELL.name()
+                            .equalsIgnoreCase(
+                                    updatedTrade.getSignal())) {
+
+                        profitLoss =
+                                (entryPrice - exitPrice)
+                                        * updatedTrade.getQuantity();
+
+                    } else {
+
+                        profitLoss =
+                                (exitPrice - entryPrice)
+                                        * updatedTrade.getQuantity();
+                    }
+
+                    long holdingSeconds = 0;
+
+                    if (updatedTrade.getEntryTime() != null) {
+
+                        holdingSeconds =
+                                java.time.Duration.between(
+                                                updatedTrade.getEntryTime(),
+                                                LocalDateTime.now())
+                                        .getSeconds();
+                    }
+
+                    log.info(
+                            "TRADE_EXIT_SNAPSHOT | " +
+                                    "TradeId={} | " +
+                                    "Symbol={} | " +
+                                    "Signal={} | " +
+                                    "Entry={} | " +
+                                    "Exit={} | " +
+                                    "Target={} | " +
+                                    "InitialStop={} | " +
+                                    "CurrentStop={} | " +
+                                    "Qty={} | " +
+                                    "Reason={} | " +
+                                    "PnL={} | " +
+                                    "HoldingSeconds={} | " +
+                                    "ExitTime={}",
+                            updatedTrade.getId(),
+                            updatedTrade.getSymbol(),
+                            updatedTrade.getSignal(),
+                            entryPrice,
+                            exitPrice,
+                            updatedTrade.getTargetPrice(),
+                            updatedTrade.getInitialStopLoss(),
+                            updatedTrade.getCurrentStopLoss(),
+                            updatedTrade.getQuantity(),
+                            decision.getReason(),
+                            profitLoss,
+                            holdingSeconds,
+                            LocalDateTime.now());
 
                     return paperTradingService.closeTrade(
                             updatedTrade,
@@ -88,6 +168,7 @@ public class TradeExitServiceImpl implements TradeExitService {
                 .entryPrice(trade.getEntryPrice())
                 .targetPrice(trade.getTargetPrice())
                 .stopLoss(trade.getCurrentStopLoss())
+                .initialStopLoss(trade.getInitialStopLoss())
                 .quantity(trade.getQuantity())
                 .build();
     }

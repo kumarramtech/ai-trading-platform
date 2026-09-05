@@ -28,11 +28,9 @@
                 logs/stock-service-%d{yyyy-MM-dd}.%i.log
             </fileNamePattern>
 
-            <maxFileSize>50MB</maxFileSize>
-
+            <maxFileSize>100MB</maxFileSize>
             <maxHistory>30</maxHistory>
-
-            <totalSizeCap>2GB</totalSizeCap>
+            <totalSizeCap>10GB</totalSizeCap>
 
         </rollingPolicy>
 
