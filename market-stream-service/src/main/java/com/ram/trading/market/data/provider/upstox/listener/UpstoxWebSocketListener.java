@@ -23,7 +23,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
     @Override
     public void onOpen(WebSocket webSocket) {
 
-        log.info("Connected to Upstox Market Feed");
+        log.debug("Connected to Upstox Market Feed");
 
         webSocket.request(1);
 
@@ -34,7 +34,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
                                      CharSequence data,
                                      boolean last) {
 
-        log.info("Text Message Received : {}", data);
+        log.debug("Text Message Received : {}", data);
 
         webSocket.request(1);
 
@@ -48,7 +48,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
 
         int fragmentSize = data.remaining();
 
-        log.info(
+        log.debug(
                 "Binary Message Received : {} bytes | last={}",
                 fragmentSize,
                 last);
@@ -99,7 +99,7 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
     public CompletionStage<?> onPong(WebSocket webSocket,
                                      ByteBuffer message) {
 
-        log.info("Pong Received");
+        log.debug("Pong Received");
 
         webSocket.request(1);
 
@@ -111,9 +111,9 @@ public class UpstoxWebSocketListener implements WebSocket.Listener {
                                       int statusCode,
                                       String reason) {
 
-        log.info("WebSocket Closed");
-        log.info("Status Code : {}", statusCode);
-        log.info("Reason      : {}", reason);
+        log.debug("WebSocket Closed");
+        log.debug("Status Code : {}", statusCode);
+        log.debug("Reason      : {}", reason);
 
         return WebSocket.Listener.super.onClose(webSocket,
                 statusCode,

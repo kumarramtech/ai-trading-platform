@@ -57,11 +57,11 @@ public class TradingOrchestratorService {
         tradingFunnelStatisticsService
                 .recordTotalEvaluation();
 
-        log.info("====================================================");
-        log.info(
+        log.debug("====================================================");
+        log.debug(
                 "AI Trading Pipeline Started : {}",
                 signalRequest.getSymbol());
-        log.info("====================================================");
+        log.debug("====================================================");
 
         /*
          * ============================================================
@@ -85,23 +85,23 @@ public class TradingOrchestratorService {
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
 
-        log.info(
+        log.debug(
                 "Technical Decision Time [{}] : {} ms",
                 signalRequest.getSymbol(),
                 System.currentTimeMillis()
                         - technicalStart);
 
-        log.info("Technical Decision Generated");
+        log.debug("Technical Decision Generated");
 
-        log.info(
+        log.debug(
                 "Symbol      : {}",
                 signalRequest.getSymbol());
 
-        log.info(
+        log.debug(
                 "Signal      : {}",
                 technicalDecision.getSignal());
 
-        log.info(
+        log.debug(
                 "Confidence  : {}",
                 technicalDecision.getConfidence());
 
@@ -134,7 +134,7 @@ public class TradingOrchestratorService {
                     .recordEngineeringRejected();
         }
 
-        log.info(
+        log.debug(
                 "Engineering Filter Time [{}] : {} ms",
                 signalRequest.getSymbol(),
                 System.currentTimeMillis()
@@ -210,7 +210,7 @@ public class TradingOrchestratorService {
         strategyStatisticsService.recordAudit(
                 auditReport);
 
-        log.info(
+        log.debug(
                 "Audit Time [{}] : {} ms",
                 signalRequest.getSymbol(),
                 System.currentTimeMillis()
@@ -237,7 +237,7 @@ public class TradingOrchestratorService {
 
         if (!eligible) {
 
-            log.info(
+            log.debug(
                     "Engineering Filter Rejected {}",
                     signalRequest.getSymbol());
 
@@ -252,7 +252,7 @@ public class TradingOrchestratorService {
             tradingFunnelStatisticsService
                     .printStatistics();
 
-            log.info(
+            log.debug(
                     "TOTAL AI Pipeline Time [{}] : {} ms",
                     signalRequest.getSymbol(),
                     System.currentTimeMillis()
@@ -272,7 +272,7 @@ public class TradingOrchestratorService {
         long contextStart =
                 System.currentTimeMillis();
 
-        log.info(
+        log.debug(
                 "Building Trading Context for [{}]",
                 signalRequest.getSymbol());
 
@@ -281,7 +281,7 @@ public class TradingOrchestratorService {
                         signalRequest.getSymbol())
                 .flatMap(context -> {
 
-                    log.info(
+                    log.debug(
                             "Trading Context Time [{}] : {} ms",
                             signalRequest.getSymbol(),
                             System.currentTimeMillis()
@@ -319,7 +319,7 @@ public class TradingOrchestratorService {
 
                     if (result != null) {
 
-                        log.info(
+                        log.debug(
                                 "TOTAL AI Pipeline Time [{}] : {} ms",
                                 signalRequest.getSymbol(),
                                 System.currentTimeMillis()

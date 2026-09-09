@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 
 @Service
 @Slf4j
@@ -15,7 +16,7 @@ public class TradingSessionService {
     @Value("${trading.market.open}")
     private LocalTime marketOpen;
 
-    @Value("${trading.market.entry.cutoff}")
+    @Value("${trading.market.entry.cut}")
     private LocalTime entryCutoff;
 
     @Value("${trading.market.close}")
@@ -24,19 +25,26 @@ public class TradingSessionService {
     @Value("${trading.market.end}")
     private LocalTime marketEnd;
 
+    @Value("${trading.market.timezone:Asia/Kolkata}")
+    private String timezone;
+
+    private ZoneId zoneId() {
+        return ZoneId.of(timezone);
+    }
+
     /**
      * Market is open for monitoring.
      */
     public boolean isMarketOpen() {
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(zoneId());
 
         if (today.getDayOfWeek() == DayOfWeek.SATURDAY ||
                 today.getDayOfWeek() == DayOfWeek.SUNDAY) {
             return false;
         }
 
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(zoneId());
 
         return !now.isBefore(marketOpen)
                 && now.isBefore(marketEnd);
@@ -51,7 +59,7 @@ public class TradingSessionService {
             return false;
         }
 
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(zoneId());
 
         return now.isBefore(entryCutoff);
     }
@@ -61,7 +69,7 @@ public class TradingSessionService {
      */
     public boolean shouldForceCloseTrades() {
 
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(zoneId());
 
         return !now.isBefore(marketClose)
                 && now.isBefore(marketEnd);

@@ -19,7 +19,7 @@ public class RiskGuardService {
 
     public RiskGuardResult evaluate(RiskEvaluation evaluation) {
 
-        log.info("========== RISK GUARD ==========");
+        log.debug("========== RISK GUARD ==========");
 
         List<RiskViolation> violations = new ArrayList<>();
 
@@ -51,7 +51,7 @@ public class RiskGuardService {
 
         boolean approved = violations.isEmpty();
 
-        log.info("Risk Approved : {}", approved);
+        log.debug("Risk Approved : {}", approved);
 
         return RiskGuardResult.builder()
                 .approved(approved)

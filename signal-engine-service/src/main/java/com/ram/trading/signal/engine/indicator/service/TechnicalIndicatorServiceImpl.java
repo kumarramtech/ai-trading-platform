@@ -33,10 +33,10 @@ public class TechnicalIndicatorServiceImpl
     @Override
     public Mono<TechnicalIndicatorResponse> calculate(String symbol) {
 
-        log.info("==================================================");
-        log.info("TECHNICAL INDICATOR CALCULATION STARTED");
-        log.info("Symbol : {}", symbol);
-        log.info("==================================================");
+        log.debug("==================================================");
+        log.debug("TECHNICAL INDICATOR CALCULATION STARTED");
+        log.debug("Symbol : {}", symbol);
+        log.debug("==================================================");
 
         return stockServiceClient
                 .getHistoricalPrices(symbol)
@@ -80,13 +80,13 @@ public class TechnicalIndicatorServiceImpl
                         TechnicalIndicatorResponse response =
                                 buildResponse(symbol, candles);
 
-                        log.info("Technical Indicators Calculated Successfully");
-                        log.info("RSI      : {}",response.getRsi14());
-                        log.info("EMA20    : {}",response.getEma20());
-                        log.info("EMA50    : {}",response.getEma50());
-                        log.info("SMA20    : {}",response.getSma20());
-                        log.info("SMA50    : {}",response.getSma50());
-                        log.info("MACD     : {}",response.getMacd());
+                        log.debug("Technical Indicators Calculated Successfully");
+                        log.debug("RSI      : {}",response.getRsi14());
+                        log.debug("EMA20    : {}",response.getEma20());
+                        log.debug("EMA50    : {}",response.getEma50());
+                        log.debug("SMA20    : {}",response.getSma20());
+                        log.debug("SMA50    : {}",response.getSma50());
+                        log.debug("MACD     : {}",response.getMacd());
                         return Mono.just(response);
 
                     } catch (Exception ex) {
@@ -101,7 +101,7 @@ public class TechnicalIndicatorServiceImpl
                         log.warn("TechnicalIndicatorService returned EMPTY | Symbol={}",symbol);
 
                     } else {
-                        log.info("TechnicalIndicatorService completed successfully | Symbol={}", symbol);
+                        log.debug("TechnicalIndicatorService completed successfully | Symbol={}", symbol);
                     }
                 })
 
@@ -109,7 +109,7 @@ public class TechnicalIndicatorServiceImpl
                         log.error("TechnicalIndicatorService unexpected error | Symbol={}",symbol, ex))
 
                 .doOnTerminate(() ->
-                        log.info("TECHNICAL INDICATOR CALCULATION COMPLETED | Symbol={}",symbol));
+                        log.debug("TECHNICAL INDICATOR CALCULATION COMPLETED | Symbol={}",symbol));
     }
 
     @Override
@@ -123,10 +123,10 @@ public class TechnicalIndicatorServiceImpl
             return Flux.empty();
         }
 
-        log.info("==================================================");
-        log.info("BULK TECHNICAL INDICATOR CALCULATION STARTED");
-        log.info("Total Symbols : {}", symbols.size());
-        log.info("==================================================");
+        log.debug("==================================================");
+        log.debug("BULK TECHNICAL INDICATOR CALCULATION STARTED");
+        log.debug("Total Symbols : {}", symbols.size());
+        log.debug("==================================================");
 
         return Flux.fromIterable(symbols)
 
@@ -162,9 +162,9 @@ public class TechnicalIndicatorServiceImpl
 
                 .doOnComplete(() -> {
 
-                    log.info("==================================================");
-                    log.info("BULK TECHNICAL INDICATOR CALCULATION COMPLETED");
-                    log.info("==================================================");
+                    log.debug("==================================================");
+                    log.debug("BULK TECHNICAL INDICATOR CALCULATION COMPLETED");
+                    log.debug("==================================================");
                 });
     }
 

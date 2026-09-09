@@ -37,6 +37,13 @@ public class Tick {
 
     private Double changePercentage;
 
+    /** Market-wide context enriched by the market feed. */
+    private Double niftyChange;
+
+    private Double bankNiftyChange;
+
+    private String marketRegime;
+
     public LocalDateTime getTradeTime() {
         return LocalDateTime.ofInstant(
                 Instant.ofEpochMilli(timestamp),

@@ -6,6 +6,8 @@ import com.ram.trading.market.data.dto.LivePrice;
 import com.ram.trading.market.data.dto.MarketInstrument;
 import com.ram.trading.market.data.dto.MarketStreamStatus;
 import com.ram.trading.market.data.service.MarketStreamService;
+import com.ram.trading.market.data.service.MarketRegimeTracker;
+import com.ram.trading.market.data.dto.MarketRegimeSnapshot;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +24,8 @@ public class MarketStreamController {
     private final LivePriceCache livePriceCache;
 
     private final MarketStreamService marketStreamService;
+
+    private final MarketRegimeTracker marketRegimeTracker;
 
     @GetMapping("/live-price/{symbol}")
     public ResponseEntity<LivePrice> getLivePrice(
@@ -45,6 +49,12 @@ public class MarketStreamController {
     @GetMapping("/instruments")
     public ResponseEntity<List<MarketInstrument>> instruments() {
         return ResponseEntity.ok(marketStreamService.getInstruments());
+    }
+
+
+    @GetMapping("/regime")
+    public ResponseEntity<MarketRegimeSnapshot> regime() {
+        return ResponseEntity.ok(marketRegimeTracker.snapshot());
     }
 
     @GetMapping("/health")

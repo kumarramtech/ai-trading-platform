@@ -17,7 +17,7 @@ public class MarketSessionProperties {
 
     private String open;
 
-    private String entryCutoff;
+    private String entryCut="15:20";
 
     private String close;
 

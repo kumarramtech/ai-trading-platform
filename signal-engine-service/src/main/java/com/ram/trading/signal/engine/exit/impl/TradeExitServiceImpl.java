@@ -32,11 +32,11 @@ public class TradeExitServiceImpl implements TradeExitService {
     @Override
     public Mono<Void> evaluateExit(Tick tick) {
 
-        log.info("==========================================");
-        log.info("TRADE EXIT EVALUATION STARTED");
-        log.info("Symbol : {}", tick.getSymbol());
-        log.info("Current Price : {}", tick.getLastTradedPrice());
-        log.info("==========================================");
+        log.debug("==========================================");
+        log.debug("TRADE EXIT EVALUATION STARTED");
+        log.debug("Symbol : {}", tick.getSymbol());
+        log.debug("Current Price : {}", tick.getLastTradedPrice());
+        log.debug("==========================================");
 
         PaperTrade trade = paperTradeRepository
                 .findTopBySymbolAndStatusOrderByEntryTimeDesc(
@@ -46,18 +46,18 @@ public class TradeExitServiceImpl implements TradeExitService {
 
         if (trade == null) {
 
-            log.info(
+            log.debug(
                     "No OPEN Trade found for {}",
                     tick.getSymbol());
 
             return Mono.empty();
         }
 
-        log.info("OPEN Trade Found");
-        log.info("Entry Price : {}", trade.getEntryPrice());
-        log.info("Target Price : {}", trade.getTargetPrice());
-        log.info("Stop Loss : {}", trade.getStopLoss());
-        log.info("Quantity : {}", trade.getQuantity());
+        log.debug("OPEN Trade Found");
+        log.debug("Entry Price : {}", trade.getEntryPrice());
+        log.debug("Target Price : {}", trade.getTargetPrice());
+        log.debug("Stop Loss : {}", trade.getStopLoss());
+        log.debug("Quantity : {}", trade.getQuantity());
 
         return trailingStopService
                 .updateTrailingStop(trade, tick)
@@ -72,13 +72,13 @@ public class TradeExitServiceImpl implements TradeExitService {
                                     position,
                                     tick);
 
-                    log.info(
+                    log.debug(
                             "Exit Decision : {}",
                             decision);
 
                     if (!decision.isExit()) {
 
-                        log.info(
+                        log.debug(
                                 "Trade should continue.");
 
                         return Mono.empty();

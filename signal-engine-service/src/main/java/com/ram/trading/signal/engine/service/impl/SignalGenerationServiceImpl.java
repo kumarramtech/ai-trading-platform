@@ -13,8 +13,11 @@ import com.ram.trading.signal.engine.dto.premarket.JudasSwingResult;
 import com.ram.trading.signal.engine.dto.premarket.MinuteCandle;
 import com.ram.trading.signal.engine.dto.premarket.ORBResult;
 import com.ram.trading.signal.engine.dto.premarket.OpeningRange;
+import com.ram.trading.signal.engine.util.TradingSessionService;
 import com.ram.trading.signal.engine.exit.TradeExitService;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
+import com.ram.trading.signal.engine.dto.rules.MarketContext;
+import com.ram.trading.signal.engine.contant.Trend;
 import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import com.ram.trading.signal.engine.risk.RiskEvaluation;
 import com.ram.trading.signal.engine.risk.RiskGuardResult;
@@ -65,6 +68,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final EntryQualityService entryQualityService;
 
     private final MinuteCandleAggregator minuteCandleAggregator;
+
+    private final TradingSessionService tradingSessionService;
 
     private final OpeningRangeService openingRangeService;
 
@@ -182,11 +187,20 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             return Mono.empty();
         }
 
-        log.info(
+        if (!tradingSessionService.isMarketOpen()) {
+
+            log.debug(
+                    "LIVE SIGNAL GATE | Symbol={} | Market session closed | Skipping signal pipeline",
+                    tick.getSymbol());
+
+            return Mono.empty();
+        }
+
+        log.debug(
                 "Symbol : {}",
                 tick.getSymbol());
 
-        log.info(
+        log.debug(
                 "LTP    : {}",
                 tick.getLastTradedPrice());
 
@@ -220,7 +234,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
             if (completedCandle != null) {
 
-                log.info(
+                log.debug(
                         "1-MIN CANDLE COMPLETED | Symbol={} | Minute={} | O={} | H={} | L={} | C={} | V={}",
                         completedCandle.getSymbol(),
                         completedCandle.getMinute(),
@@ -252,6 +266,15 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .evaluateExit(tick)
                 .then(
                         Mono.defer(() -> {
+
+                            if (!tradingSessionService.canCreateTrade()) {
+
+                                log.debug(
+                                        "ENTRY SESSION CLOSED | Symbol={} | Entry cutoff reached | Skipping setup/AI",
+                                        tick.getSymbol());
+
+                                return Mono.empty();
+                            }
 
                             /*
                              * ====================================================
@@ -372,7 +395,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         log.debug(
                 "Trading Decision Pipeline Started");
 
-        log.info(
+        log.debug(
                 "Symbol : {}",
                 request.getSymbol());
 
@@ -1448,8 +1471,31 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                         SignalType.valueOf(
                                 entrySetup.direction()
                                         .toUpperCase()))
-
+                .marketContext(buildMarketContext(tick))
                 .build();
+    }
+
+    private MarketContext buildMarketContext(Tick tick) {
+        if (tick == null) {
+            return null;
+        }
+
+        return MarketContext.builder()
+                .niftyChange(tick.getNiftyChange())
+                .bankNiftyChange(tick.getBankNiftyChange())
+                .marketTrend(toTrend(tick.getMarketRegime()))
+                .marketTime(tick.getTimestamp() != null ? tick.getTradeTime() : null)
+                .build();
+    }
+
+    private Trend toTrend(String regime) {
+        if (regime == null) return null;
+        return switch (regime.toUpperCase()) {
+            case "BULLISH" -> Trend.BULLISH;
+            case "BEARISH" -> Trend.BEARISH;
+            case "SIDEWAYS" -> Trend.SIDEWAYS;
+            default -> null;
+        };
     }
 
 }

@@ -31,16 +31,16 @@ public class TradingContextServiceImpl implements TradingContextService {
 
         final long start = System.currentTimeMillis();
 
-        log.info("====================================================");
-        log.info("Trading Context Started : {}", symbol);
-        log.info("====================================================");
+        log.debug("====================================================");
+        log.debug("Trading Context Started : {}", symbol);
+        log.debug("====================================================");
 
         final long newsStart = System.currentTimeMillis();
 
         Mono<List<NewsArticle>> newsMono =
                 newsAnalysisClient.getLatestNews(symbol)
                         .doOnSuccess(response ->
-                                log.info("News Context Time [{}] : {} ms",
+                                log.debug("News Context Time [{}] : {} ms",
                                         symbol,
                                         System.currentTimeMillis() - newsStart))
                         .onErrorResume(ex -> {
@@ -57,7 +57,7 @@ public class TradingContextServiceImpl implements TradingContextService {
         Mono<PortfolioContextResponse> portfolioMono =
                 portfolioContextClient.getPortfolioContext()
                         .doOnSuccess(response ->
-                                log.info("Portfolio Context Time [{}] : {} ms",
+                                log.debug("Portfolio Context Time [{}] : {} ms",
                                         symbol,
                                         System.currentTimeMillis() - portfolioStart))
                         .onErrorResume(ex -> {
@@ -76,7 +76,7 @@ public class TradingContextServiceImpl implements TradingContextService {
         Mono<OpenPositionContextResponse> openPositionMono =
                 openPositionContextClient.getOpenPositionContext(symbol)
                         .doOnSuccess(response ->
-                                log.info("Open Position Context Time [{}] : {} ms",
+                                log.debug("Open Position Context Time [{}] : {} ms",
                                         symbol,
                                         System.currentTimeMillis() - openPositionStart))
                         .onErrorResume(ex -> {
@@ -110,7 +110,7 @@ public class TradingContextServiceImpl implements TradingContextService {
                             .build();
                 })
                 .doFinally(signalType ->
-                        log.info("TOTAL Trading Context Time [{}] : {} ms",
+                        log.debug("TOTAL Trading Context Time [{}] : {} ms",
                                 symbol,
                                 System.currentTimeMillis() - start));
     }

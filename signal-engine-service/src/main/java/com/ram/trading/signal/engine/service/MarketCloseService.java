@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.time.LocalTime;
 
 @Service
 @RequiredArgsConstructor
@@ -24,11 +23,11 @@ public class MarketCloseService {
     private final StockServiceClient stockServiceClient;
     private final PaperTradingService paperTradingService;
 
+    private final com.ram.trading.signal.engine.util.TradingSessionService tradingSessionService;
+
     public Mono<Void> closeOpenPositions() {
 
-        LocalTime now = LocalTime.now();
-
-        if (now.isBefore(LocalTime.of(15,20))) {
+        if (!tradingSessionService.shouldForceCloseTrades()) {
             return Mono.empty();
         }
 

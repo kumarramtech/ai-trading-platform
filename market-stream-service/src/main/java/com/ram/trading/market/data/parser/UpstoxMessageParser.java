@@ -29,13 +29,43 @@ public class UpstoxMessageParser {
             MarketDataFeed.FeedResponse response =
                     MarketDataFeed.FeedResponse.parseFrom(bytes);
 
-            log.debug("Feed Type : {}", response.getType());
+            /*
+             * IMPORTANT DIAGNOSTIC LOG
+             * Confirms that a binary market-data message actually
+             * reached the protobuf parser.
+             */
+            log.debug(
+                    "UPSTOX FEED RECEIVED -> type={}, feedCount={}, bytes={}",
+                    response.getType(),
+                    response.getFeedsCount(),
+                    bytes.length
+            );
 
             response.getFeedsMap().forEach((instrumentKey, feed) -> {
 
+                /*
+                 * IMPORTANT DIAGNOSTIC LOG
+                 * Shows what type of feed Upstox actually delivered.
+                 */
+                log.debug(
+                        "UPSTOX FEED -> instrumentKey={}, hasLtpc={}, hasFullFeed={}",
+                        instrumentKey,
+                        feed.hasLtpc(),
+                        feed.hasFullFeed()
+                );
+
                 var ltpc = extractLtpc(feed);
 
+                /*
+                 * We cannot create a valid Tick without LTP.
+                 */
                 if (ltpc == null) {
+
+                    log.warn(
+                            "UPSTOX FEED SKIPPED -> instrumentKey={} | LTPC not available",
+                            instrumentKey
+                    );
+
                     return;
                 }
 
@@ -58,7 +88,22 @@ public class UpstoxMessageParser {
                 String symbol =
                         instrumentLookupService.getTradingSymbol(instrumentKey);
 
-                FullFeedSnapshot snapshot = extractFullFeedSnapshot(feed);
+                /*
+                 * Protect the downstream cache and signal pipeline
+                 * from an unresolved instrument.
+                 */
+                if (symbol == null || symbol.isBlank()) {
+
+                    log.warn(
+                            "UPSTOX FEED SKIPPED -> instrumentKey={} | trading symbol not found",
+                            instrumentKey
+                    );
+
+                    return;
+                }
+
+                FullFeedSnapshot snapshot =
+                        extractFullFeedSnapshot(feed);
 
                 Tick tick = Tick.builder()
                         .exchange(exchange)
@@ -71,11 +116,16 @@ public class UpstoxMessageParser {
                         .closePrice(
                                 snapshot.closePrice() != null
                                         ? snapshot.closePrice()
-                                        : previousClose)
+                                        : previousClose
+                        )
                         /*
-                         * IMPORTANT: this is the current I1 candle's cumulative
-                         * traded volume, not LTQ. The signal candle aggregator
-                         * replaces this value on every tick rather than summing it.
+                         * IMPORTANT:
+                         * This is the current I1 candle's cumulative
+                         * traded volume, not LTQ.
+                         *
+                         * MinuteCandleAggregator replaces the candle
+                         * volume with the latest value instead of
+                         * summing this cumulative value repeatedly.
                          */
                         .volume(snapshot.volume())
                         .timestamp(ltpc.getLtt())
@@ -84,21 +134,43 @@ public class UpstoxMessageParser {
                         .changePercentage(changePercentage)
                         .build();
 
+                /*
+                 * IMPORTANT DIAGNOSTIC LOG
+                 * Confirms that a valid Tick has been created.
+                 */
                 log.debug(
-                        "LIVE TICK -> Symbol={}, Price={}, Volume={}, Change={}%, Time={}",
+                        "LIVE TICK -> Symbol={}, InstrumentKey={}, Price={}, Volume={}, Change={}%, Time={}",
                         symbol,
+                        instrumentKey,
                         tick.getLastTradedPrice(),
                         tick.getVolume(),
                         tick.getChangePercentage(),
-                        tick.getTradeTime());
+                        tick.getTradeTime()
+                );
 
+                /*
+                 * This should eventually result in:
+                 *
+                 * LivePriceCache.update(...)
+                 *
+                 * inside TickProcessorImpl.
+                 */
                 tickProcessor.publishTick(tick);
             });
 
         } catch (InvalidProtocolBufferException ex) {
-            log.error("Unable to parse protobuf.", ex);
+
+            log.error(
+                    "Unable to parse Upstox protobuf market message.",
+                    ex
+            );
+
         } catch (Exception ex) {
-            log.error("Unexpected error while parsing market feed.", ex);
+
+            log.error(
+                    "Unexpected error while parsing Upstox market feed.",
+                    ex
+            );
         }
     }
 

@@ -6,6 +6,7 @@ import com.ram.trading.market.data.dto.LivePrice;
 import com.ram.trading.market.data.dto.Tick;
 import com.ram.trading.market.data.service.MarketEventPublisher;
 import com.ram.trading.market.data.service.MarketMetrics;
+import com.ram.trading.market.data.service.MarketSessionService;
 import com.ram.trading.market.data.service.TickProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,8 +25,25 @@ public class TickProcessorImpl implements TickProcessor {
 
     private final SignalServiceClient signalServiceClient;
 
+    private final com.ram.trading.market.data.service.MarketRegimeTracker marketRegimeTracker;
+
+    private final MarketSessionService marketSessionService;
+
     @Override
     public void publishTick(Tick tick) {
+
+        if (tick == null) {
+            log.warn("Ignoring null market tick");
+            return;
+        }
+
+        if (!marketSessionService.isMarketOpen()) {
+            log.debug("Ignoring market tick outside active session | Symbol={}", tick.getSymbol());
+            return;
+        }
+
+        marketRegimeTracker.update(tick);
+        marketRegimeTracker.enrich(tick);
 
         LivePrice livePrice = LivePrice.builder()
                 .symbol(tick.getSymbol())
@@ -36,7 +54,7 @@ public class TickProcessorImpl implements TickProcessor {
 
         // Update live cache
         livePriceCache.update(livePrice);
-        log.info(
+        log.debug(
                 "LIVE PRICE CACHE UPDATED -> symbol={}, price={}, cacheSize={}",
                 livePrice.getSymbol(),
                 livePrice.getPrice(),

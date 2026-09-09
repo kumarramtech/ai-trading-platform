@@ -43,7 +43,7 @@ public class MarketSessionServiceImpl implements MarketSessionService {
 
         if (isWeekend()) {
 
-            log.info("Market Closed : Weekend");
+            log.debug("Market Closed : Weekend");
 
             return false;
         }
@@ -61,7 +61,7 @@ public class MarketSessionServiceImpl implements MarketSessionService {
                         && currentTime.isBefore(marketEnd);
 
         if (!marketOpenNow) {
-            log.info("Market Closed : {}", currentTime);
+            log.debug("Market Closed : {}", currentTime);
         }
 
         return marketOpenNow;
@@ -77,7 +77,7 @@ public class MarketSessionServiceImpl implements MarketSessionService {
         LocalTime currentTime = now();
 
         LocalTime entryCutoff =
-                LocalTime.parse(properties.getEntryCutoff());
+                LocalTime.parse(properties.getEntryCut());
 
         return currentTime.isBefore(entryCutoff);
     }

@@ -22,21 +22,21 @@ public class LiveSignalController {
     @PostMapping("/live")
     public Mono<TradingSignal> processTick(@RequestBody Tick tick) {
 
-        log.info("LIVE REQUEST RECEIVED : {}", tick.getSymbol());
+        log.debug("LIVE REQUEST RECEIVED : {}", tick.getSymbol());
 
         long start = System.currentTimeMillis();
 
         return signalGenerationService.generateSignal(tick)
                 .doOnSuccess(signal -> {
                     long elapsed = System.currentTimeMillis() - start;
-                    log.info(
+                    log.debug(
                             "LIVE REQUEST COMPLETED : {} in {} ms",
                             tick.getSymbol(),
                             elapsed);
                 })
                 .doOnError(ex -> {
                     long elapsed = System.currentTimeMillis() - start;
-                    log.error(
+                    log.warn(
                             "LIVE REQUEST FAILED : {} after {} ms",
                             tick.getSymbol(),
                             elapsed,

@@ -6,6 +6,7 @@ import com.ram.trading.market.data.dto.MarketInstrument;
 import com.ram.trading.market.data.dto.MarketStreamStatus;
 import com.ram.trading.market.data.service.MarketDataProvider;
 import com.ram.trading.market.data.service.MarketMetrics;
+import com.ram.trading.market.data.service.MarketSessionService;
 import com.ram.trading.market.data.service.MarketStreamService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,8 +25,15 @@ public class MarketStreamServiceImpl implements MarketStreamService {
 
     private final MarketMetrics marketMetrics;
 
+    private final MarketSessionService marketSessionService;
+
     @Override
     public void start() {
+
+        if (!marketSessionService.isMarketOpen()) {
+            log.debug("Market stream start ignored because market session is closed.");
+            return;
+        }
 
         if (marketDataProvider.isConnected()) {
             log.debug("Market stream already connected.");
