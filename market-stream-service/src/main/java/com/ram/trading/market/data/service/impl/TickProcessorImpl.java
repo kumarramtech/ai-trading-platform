@@ -45,6 +45,13 @@ public class TickProcessorImpl implements TickProcessor {
         marketRegimeTracker.update(tick);
         marketRegimeTracker.enrich(tick);
 
+        log.debug(
+                "MARKET CONTEXT ENRICHED | Symbol={} | NIFTY={} | BANKNIFTY={} | Regime={}",
+                tick.getSymbol(),
+                tick.getNiftyChange(),
+                tick.getBankNiftyChange(),
+                tick.getMarketRegime());
+
         LivePrice livePrice = LivePrice.builder()
                 .symbol(tick.getSymbol())
                 .price(tick.getLastTradedPrice())

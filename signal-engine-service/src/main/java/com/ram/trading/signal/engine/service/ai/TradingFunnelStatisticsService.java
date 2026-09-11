@@ -31,6 +31,32 @@ public class TradingFunnelStatisticsService {
     private final AtomicLong engineeringRejected =
             new AtomicLong();
 
+    /*
+     * ============================================================
+     * PHASE 2A : STRATEGY SETUP / DIRECTION
+     * ============================================================
+     */
+
+    private final AtomicLong judasBuy = new AtomicLong();
+    private final AtomicLong judasSell = new AtomicLong();
+    private final AtomicLong orbBuy = new AtomicLong();
+    private final AtomicLong orbSell = new AtomicLong();
+
+    private final AtomicLong technicalBuy = new AtomicLong();
+    private final AtomicLong technicalSell = new AtomicLong();
+    private final AtomicLong technicalHold = new AtomicLong();
+
+    private final AtomicLong aiDirectionMatch = new AtomicLong();
+    private final AtomicLong aiDirectionMismatch = new AtomicLong();
+
+    private final AtomicLong finalBuyTrade = new AtomicLong();
+    private final AtomicLong finalSellTrade = new AtomicLong();
+
+    private final AtomicLong regimeBullish = new AtomicLong();
+    private final AtomicLong regimeBearish = new AtomicLong();
+    private final AtomicLong regimeSideways = new AtomicLong();
+    private final AtomicLong regimeUnknown = new AtomicLong();
+
 
     /*
      * ============================================================
@@ -129,6 +155,41 @@ public class TradingFunnelStatisticsService {
     public void recordEngineeringRejected() {
 
         engineeringRejected.incrementAndGet();
+    }
+
+
+    /*
+     * ============================================================
+     * PHASE 2A : STRATEGY SETUP / DIRECTION
+     * ============================================================
+     */
+
+    public void recordJudasBuy() { judasBuy.incrementAndGet(); }
+    public void recordJudasSell() { judasSell.incrementAndGet(); }
+    public void recordOrbBuy() { orbBuy.incrementAndGet(); }
+    public void recordOrbSell() { orbSell.incrementAndGet(); }
+
+    public void recordTechnicalBuy() { technicalBuy.incrementAndGet(); }
+    public void recordTechnicalSell() { technicalSell.incrementAndGet(); }
+    public void recordTechnicalHold() { technicalHold.incrementAndGet(); }
+
+    public void recordAiDirectionMatch() { aiDirectionMatch.incrementAndGet(); }
+    public void recordAiDirectionMismatch() { aiDirectionMismatch.incrementAndGet(); }
+
+    public void recordFinalBuyTrade() { finalBuyTrade.incrementAndGet(); }
+    public void recordFinalSellTrade() { finalSellTrade.incrementAndGet(); }
+
+    public void recordMarketRegime(String regime) {
+        if (regime == null) {
+            regimeUnknown.incrementAndGet();
+            return;
+        }
+        switch (regime.toUpperCase()) {
+            case "BULLISH" -> regimeBullish.incrementAndGet();
+            case "BEARISH" -> regimeBearish.incrementAndGet();
+            case "SIDEWAYS" -> regimeSideways.incrementAndGet();
+            default -> regimeUnknown.incrementAndGet();
+        }
     }
 
 
@@ -266,6 +327,27 @@ public class TradingFunnelStatisticsService {
                 Engineering Rejected           : {}
                 Engineering Pass Rate          : {}%
 
+                MARKET REGIME CONTEXT
+                -----------------------------------------------------
+                BULLISH Evaluations              : {}
+                BEARISH Evaluations              : {}
+                SIDEWAYS Evaluations             : {}
+                UNKNOWN Evaluations              : {}
+
+                PHASE 2A : STRATEGY / DIRECTION
+                -----------------------------------------------------
+                JUDAS BUY                     : {}
+                JUDAS SELL                    : {}
+                ORB BUY                       : {}
+                ORB SELL                      : {}
+                Technical BUY                 : {}
+                Technical SELL                : {}
+                Technical HOLD                : {}
+                AI Direction Match            : {}
+                AI Direction Mismatch         : {}
+                Final BUY Trades              : {}
+                Final SELL Trades             : {}
+
                 AI PIPELINE
                 -----------------------------------------------------
                 AI Requested                   : {}
@@ -296,11 +378,28 @@ public class TradingFunnelStatisticsService {
                 """,
                 total,
 
+                regimeBullish.get(),
+                regimeBearish.get(),
+                regimeSideways.get(),
+                regimeUnknown.get(),
+
                 engineeringPassed.get(),
                 engineeringRejected.get(),
                 calculatePercentage(
                         engineeringPassed.get(),
                         total),
+
+                judasBuy.get(),
+                judasSell.get(),
+                orbBuy.get(),
+                orbSell.get(),
+                technicalBuy.get(),
+                technicalSell.get(),
+                technicalHold.get(),
+                aiDirectionMatch.get(),
+                aiDirectionMismatch.get(),
+                finalBuyTrade.get(),
+                finalSellTrade.get(),
 
                 aiRequested.get(),
                 aiResponseReceived.get(),

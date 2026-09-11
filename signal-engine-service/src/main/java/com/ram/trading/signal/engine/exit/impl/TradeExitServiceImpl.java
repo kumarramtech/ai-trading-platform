@@ -63,9 +63,16 @@ public class TradeExitServiceImpl implements TradeExitService {
                 .updateTrailingStop(trade, tick)
 
                 .flatMap(updatedTrade -> {
-
-                    OpenPosition position =
-                            map(updatedTrade);
+                    OpenPosition position = map(updatedTrade);
+                    log.debug(
+                            "EXIT EVALUATION STATE | Symbol={} | Price={} | Entry={} | " +
+                                    "InitialStop={} | CurrentStop={} | TrailingStep={}",
+                            updatedTrade.getSymbol(),
+                            tick.getLastTradedPrice(),
+                            updatedTrade.getEntryPrice(),
+                            updatedTrade.getInitialStopLoss(),
+                            updatedTrade.getCurrentStopLoss(),
+                            updatedTrade.getTrailingStep());
 
                     ExitDecision decision =
                             exitOrchestrator.evaluate(
@@ -77,10 +84,7 @@ public class TradeExitServiceImpl implements TradeExitService {
                             decision);
 
                     if (!decision.isExit()) {
-
-                        log.debug(
-                                "Trade should continue.");
-
+                        log.debug("Trade should continue.");
                         return Mono.empty();
                     }
 

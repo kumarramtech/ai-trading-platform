@@ -91,84 +91,148 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         log.info("========== SIGNAL GENERATION STARTED ==========");
         log.info("Symbol : {}", symbol);
 
+        /*
+         * ============================================================
+         * IMPORTANT SAFETY GATE
+         * ============================================================
+         *
+         * This String-based signal generation path is used by the
+         * Market Scanner / revalidation flow.
+         *
+         * It does NOT have a JUDAS / ORB EntrySetup.
+         *
+         * Therefore it MUST NOT create a trading signal that can
+         * reach PaperTradingService and open a trade.
+         *
+         * All automatic entries must come through:
+         *
+         * Tick
+         *   ↓
+         * Opening Range
+         *   ↓
+         * JUDAS / ORB
+         *   ↓
+         * EntrySetup
+         *   ↓
+         * Engineering
+         *   ↓
+         * AI
+         *   ↓
+         * Risk Guard
+         *   ↓
+         * Trade
+         *
+         * The Tick-based generateSignal(Tick) method is responsible
+         * for the actual strategy-entry pipeline.
+         * ============================================================
+         */
+
+        if (!tradingSessionService.canCreateStrategyEntry()) {
+
+            log.debug(
+                    "GENERIC SIGNAL PATH BLOCKED | " +
+                            "Symbol={} | Strategy entry window is closed",
+                    symbol);
+
+            return Mono.just(
+                    TradingSignal.builder()
+                            .symbol(symbol)
+                            .signal(SignalType.HOLD.name())
+                            .build());
+        }
+
+        /*
+         * ============================================================
+         * GENERIC SCANNER PATH
+         * ============================================================
+         *
+         * We can still calculate technical indicators for analysis,
+         * but we deliberately DO NOT call generateTradingSignal().
+         *
+         * Calling generateTradingSignal() would eventually execute
+         * postProcessSignal(), which can create a paper trade.
+         *
+         * Therefore this path remains analysis-only.
+         * ============================================================
+         */
+
         return marketDataProvider
                 .getStockPrice(symbol)
 
                 .doOnNext(stock ->
-                        log.info(
-                                "Live Price : {} -> {}",
+                        log.debug(
+                                "Scanner Analysis Price | Symbol={} | Price={}",
                                 stock.getSymbol(),
                                 stock.getPrice()))
 
                 .zipWhen(stock ->
                         technicalIndicatorService
                                 .calculate(symbol)
-                                .switchIfEmpty(Mono.defer(() -> {
+                                .switchIfEmpty(
+                                        Mono.defer(() -> {
 
-                                    log.warn(
-                                            "Skipping {} because technical indicators are unavailable.",
-                                            symbol);
+                                            log.warn(
+                                                    "Scanner Analysis skipped | " +
+                                                            "Technical indicators unavailable | " +
+                                                            "Symbol={}",
+                                                    symbol);
 
-                                    return Mono.empty();
-                                }))
+                                            return Mono.empty();
+                                        }))
                 )
 
-                .flatMap(tuple -> {
+                .map(tuple -> {
 
                     StockResponse stock = tuple.getT1();
                     TechnicalIndicatorResponse indicator = tuple.getT2();
 
-                    SignalGenerationRequest request =
-                            buildSignalRequest(
-                                    stock,
-                                    indicator);
-
-                    log.debug("Technical Indicators Loaded");
-                    log.debug("RSI      : {}", indicator.getRsi14());
-                    log.debug("EMA20    : {}", indicator.getEma20());
-                    log.debug("EMA50    : {}", indicator.getEma50());
-                    log.debug("SMA20    : {}", indicator.getSma20());
-                    log.debug("SMA50    : {}", indicator.getSma50());
-                    log.debug("MACD     : {}", indicator.getMacd());
+                    log.debug(
+                            "Scanner Analysis Completed | " +
+                                    "Symbol={} | RSI={} | EMA20={} | EMA50={} | MACD={}",
+                            symbol,
+                            indicator.getRsi14(),
+                            indicator.getEma20(),
+                            indicator.getEma50(),
+                            indicator.getMacd());
 
                     /*
                      * IMPORTANT:
                      *
-                     * TradingContext is NOT created here.
+                     * Do NOT call:
                      *
-                     * Technical Decision
-                     *        ↓
-                     * Engineering Filter
-                     *        ↓
-                     * Trading Context
-                     *        ↓
-                     * AI
+                     * generateTradingSignal(request, indicator)
                      *
-                     * TradingOrchestratorService owns this flow.
+                     * here.
+                     *
+                     * This method has no JUDAS / ORB EntrySetup and
+                     * therefore must never produce an executable BUY
+                     * or SELL signal.
                      */
 
-                    return generateTradingSignal(
-                            request,
-                            indicator);
+                    return TradingSignal.builder()
+                            .symbol(stock.getSymbol())
+                            .signal(SignalType.HOLD.name())
+                            .build();
                 })
 
                 .doOnSuccess(signal -> {
 
                     if (signal != null) {
 
-                        log.info(
-                                "Signal Generated Successfully : {} -> {}",
+                        log.debug(
+                                "Scanner Analysis Completed | " +
+                                        "Symbol={} | Result={}",
                                 signal.getSymbol(),
                                 signal.getSignal());
                     }
 
-                    log.info(
-                            "========== SIGNAL GENERATION COMPLETED ==========");
+                    log.debug(
+                            "========== GENERIC SIGNAL ANALYSIS COMPLETED ==========");
                 })
 
                 .doOnError(error ->
                         log.error(
-                                "Signal generation failed for {}",
+                                "Scanner analysis failed for {}",
                                 symbol,
                                 error));
     }
@@ -320,6 +384,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     entrySetup.strategy(),
                                     entrySetup.direction(),
                                     entrySetup.confirmationTime());
+
+                            recordStrategySetup(entrySetup);
 
                             log.info(
                                     "ENTRY STRATEGY GATE PASSED | " +
@@ -870,6 +936,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
         if (technicalSignal == aiSignal) {
 
+            tradingFunnelStatisticsService.recordAiDirectionMatch();
+
             log.debug(
                     "AI DIRECTION CONFIRMED | Symbol={} | Direction={}",
                     request.getSymbol(),
@@ -888,6 +956,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          *
          * AI is NOT allowed to reverse Engineering direction.
          */
+
+        tradingFunnelStatisticsService.recordAiDirectionMismatch();
 
         log.warn(
                 "AI DIRECTION MISMATCH -> HOLD | Symbol={} | Engineering={} | AI={}",
@@ -1425,6 +1495,30 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         return null;
     }
 
+    private void recordStrategySetup(EntrySetup entrySetup) {
+
+        if (entrySetup == null || entrySetup.direction() == null) {
+            return;
+        }
+
+        String strategy = entrySetup.strategy();
+        String direction = entrySetup.direction().toUpperCase();
+
+        if ("JUDAS".equalsIgnoreCase(strategy)) {
+            if ("BUY".equals(direction)) {
+                tradingFunnelStatisticsService.recordJudasBuy();
+            } else if ("SELL".equals(direction)) {
+                tradingFunnelStatisticsService.recordJudasSell();
+            }
+        } else if ("ORB".equalsIgnoreCase(strategy)) {
+            if ("BUY".equals(direction)) {
+                tradingFunnelStatisticsService.recordOrbBuy();
+            } else if ("SELL".equals(direction)) {
+                tradingFunnelStatisticsService.recordOrbSell();
+            }
+        }
+    }
+
     private String normalizeStrategyDirection(
             String direction) {
 
@@ -1451,6 +1545,17 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             Tick tick,
             TechnicalIndicatorResponse indicator,
             EntrySetup entrySetup) {
+
+        log.debug(
+                "ENTRY QUALITY CONTEXT | Symbol={} | Strategy={} | Direction={} | EntryPrice={} | CandleTime={} | NIFTY={} | BANKNIFTY={} | Regime={}",
+                tick.getSymbol(),
+                entrySetup.strategy(),
+                entrySetup.direction(),
+                tick.getLastTradedPrice(),
+                tick.getTradeTime(),
+                tick.getNiftyChange(),
+                tick.getBankNiftyChange(),
+                tick.getMarketRegime());
 
         return SignalGenerationRequest.builder()
                 .symbol(tick.getSymbol())

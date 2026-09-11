@@ -42,7 +42,23 @@ public class MarketScannerScheduler {
     @Scheduled(fixedRate = 300000)
     public void scanMarket() {
 
-        if (!tradingSessionService.canCreateTrade()) {
+        /*
+         * IMPORTANT:
+         * The legacy market scanner calls the generic
+         * SignalGenerationService.generateSignal(symbol) path.
+         *
+         * That path is not the JUDAS/ORB opening-range entry path.
+         * Therefore the scanner must not run as an automatic trade-entry
+         * source before the strategy entry window opens at 09:30.
+         *
+         * Market monitoring/opening-range formation continues through the
+         * live tick pipeline. This scheduled scanner is restricted to the
+         * strategy-entry window.
+         */
+        if (!tradingSessionService.canCreateStrategyEntry()) {
+            log.debug(
+                    "Market scan skipped | Strategy entry window is closed"
+            );
             return;
         }
 

@@ -29,9 +29,9 @@ public class TrailingStopService {
      * are widened to give profitable trades room to breathe.
      */
     private static final double BREAK_EVEN_TRIGGER_PERCENT = 0.45 / 100;
-    private static final double NORMAL_TRAILING_PERCENT = 0.50 / 100;
-    private static final double LATE_TRAILING_PERCENT = 0.30 / 100;
-    private static final double FINAL_TRAILING_PERCENT = 0.15 / 100;
+    private static final double NORMAL_TRAILING_PERCENT = 0.65 / 100;
+    private static final double LATE_TRAILING_PERCENT = 0.40 / 100;
+    private static final double FINAL_TRAILING_PERCENT = 0.20 / 100;
     private final PaperTradeRepository repository;
     private final NotificationClient notificationClient;
 
@@ -256,7 +256,7 @@ public class TrailingStopService {
          * After Break-even, determine
          * trailing stage based on market time.
          */
-        LocalTime currentTime = LocalTime.now();
+        LocalTime currentTime = LocalTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
         if (currentTime.isBefore(LocalTime.of(14, 0))) {
             return 2;
@@ -317,11 +317,11 @@ public class TrailingStopService {
          * After break-even, use a dynamic
          * percentage-based trailing gap.
          *
-         * Before 2:00 PM  -> 0.50%
-         * 2:00 - 2:45 PM -> 0.30%
-         * After 2:45 PM  -> 0.15%
+         * Before 2:00 PM  -> 0.65%
+         * 2:00 - 2:45 PM -> 0.40%
+         * After 2:45 PM  -> 0.20%
          */
-        LocalTime currentTime = LocalTime.now();
+        LocalTime currentTime = LocalTime.now(java.time.ZoneId.of("Asia/Kolkata"));
 
         double trailingPercent;
 

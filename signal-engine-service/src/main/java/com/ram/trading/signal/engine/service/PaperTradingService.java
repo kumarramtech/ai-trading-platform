@@ -80,6 +80,9 @@ public class PaperTradingService {
     @Value("${trading.capital-per-trade}")
     private double capitalPerTrade;
 
+    @Value("${trading.margin-per-trade:${trading.capital-per-trade}}")
+    private double targetMarginPerTrade;
+
     @Value("${trading.total-capital}")
     private double totalCapital;
 
@@ -225,23 +228,6 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 9 : FINAL CAPITAL CHECK
-         * ============================================================
-         */
-        if (availableCapital < investmentAmount) {
-
-            log.warn("======================================");
-            log.warn("INSUFFICIENT CAPITAL FOR TRADE");
-            log.warn("Symbol              : {}", signal.getSymbol());
-            log.warn("Available Capital   : {}", availableCapital);
-            log.warn("Required Capital    : {}", investmentAmount);
-            log.warn("======================================");
-
-            return;
-        }
-
-        /*
-         * ============================================================
          * STEP 10 : BUSINESS VALIDATION
          * ============================================================
          */
@@ -359,115 +345,97 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 12 : CALCULATE REQUIRED MARGIN
+         * STEP 12 : BROKER-AWARE TARGET MARGIN SIZING
          * ============================================================
          */
-        MarginInstrumentRequest marginInstrument =
-                MarginInstrumentRequest.builder()
-                        .instrumentKey(instrumentKey)
-                        .quantity(quantity)
-                        .transactionType(signal.getSignal())
-                        .product("I")
-                        .price(
-                                BigDecimal.valueOf(
-                                        signal.getEntryPrice()))
-                        .build();
+        final double targetMargin = targetMarginPerTrade;
+        int sizingQuantity = quantity;
+        MarginCalculationResponse marginResponse = null;
 
-        UpstoxMarginRequest marginRequest =
-                UpstoxMarginRequest.builder()
-                        .instruments(
-                                List.of(marginInstrument))
-                        .build();
+        for (int attempt = 1; attempt <= 4; attempt++) {
 
-        MarginCalculationResponse marginResponse;
+            MarginInstrumentRequest marginInstrument =
+                    MarginInstrumentRequest.builder()
+                            .instrumentKey(instrumentKey)
+                            .quantity(sizingQuantity)
+                            .transactionType(signal.getSignal())
+                            .product("I")
+                            .price(BigDecimal.valueOf(signal.getEntryPrice()))
+                            .build();
 
-        long marginStart = System.currentTimeMillis();
+            UpstoxMarginRequest marginRequest =
+                    UpstoxMarginRequest.builder()
+                            .instruments(List.of(marginInstrument))
+                            .build();
 
-        log.info("======================================");
-        log.info("MARGIN CALCULATION STARTED");
-        log.info("Symbol              : {}", signal.getSymbol());
-        log.info("Signal              : {}", signal.getSignal());
-        log.info("Quantity            : {}", quantity);
-        log.info("Entry Price         : {}", signal.getEntryPrice());
-        log.info("======================================");
+            try {
+                marginResponse = balanceMarginClient
+                        .calculateMargin(marginRequest)
+                        .block();
+            } catch (Exception ex) {
+                log.error("MARGIN CALCULATION FAILED | Symbol={} | Attempt={}",
+                        signal.getSymbol(), attempt, ex);
+                log.warn("TRADE NOT CREATED | Reason=MARGIN_UNAVAILABLE | Symbol={}",
+                        signal.getSymbol());
+                return;
+            }
 
-        try {
+            if (marginResponse == null
+                    || marginResponse.getRequiredMargin() == null
+                    || marginResponse.getRequiredMargin() <= 0) {
+                log.error("Invalid margin response - trade skipped | Symbol={}", signal.getSymbol());
+                return;
+            }
 
-            marginResponse =
-                    balanceMarginClient
-                            .calculateMargin(marginRequest)
-                            .block();
+            double required = marginResponse.getRequiredMargin();
 
             log.info(
-                    "MARGIN CALCULATION COMPLETED | Symbol={} | DurationMs={}",
-                    signal.getSymbol(),
-                    System.currentTimeMillis() - marginStart);
+                    "TARGET MARGIN SIZING | Symbol={} | Attempt={} | Qty={} | Required={} | Target={}",
+                    signal.getSymbol(), attempt, sizingQuantity, required, targetMargin);
 
-        } catch (Exception ex) {
+            if (required <= targetMargin) {
+                if (required >= targetMargin * 0.95 || attempt == 4) {
+                    break;
+                }
+                int nextQuantity = (int) Math.floor(
+                        sizingQuantity * (targetMargin / required));
+                if (nextQuantity <= sizingQuantity) {
+                    break;
+                }
+                sizingQuantity = nextQuantity;
+            } else {
+                int nextQuantity = (int) Math.floor(
+                        sizingQuantity * (targetMargin / required));
+                nextQuantity = Math.min(nextQuantity, sizingQuantity - 1);
+                if (nextQuantity <= 0) {
+                    log.warn("Unable to fit target margin | Symbol={} | Required={} | Target={}",
+                            signal.getSymbol(), required, targetMargin);
+                    return;
+                }
+                sizingQuantity = nextQuantity;
+            }
+        }
 
-            log.error(
-                    "MARGIN CALCULATION FAILED | Symbol={} | DurationMs={}",
-                    signal.getSymbol(),
-                    System.currentTimeMillis() - marginStart,
-                    ex);
+        quantity = sizingQuantity;
+        investmentAmount = quantity * signal.getEntryPrice();
+        Double requiredMargin = marginResponse.getRequiredMargin();
+        Double leverage = marginResponse.getLeverage();
 
-            log.warn(
-                    "TRADE NOT CREATED | Reason=MARGIN_UNAVAILABLE | Symbol={}",
-                    signal.getSymbol());
-
+        if (requiredMargin > targetMargin) {
+            log.warn("TRADE NOT CREATED | Final required margin exceeds target | Symbol={} | Required={} | Target={}",
+                    signal.getSymbol(), requiredMargin, targetMargin);
             return;
         }
 
-        if (marginResponse == null) {
-
-            log.error(
-                    "MARGIN CALCULATION RETURNED NULL - TRADE SKIPPED | Symbol={}",
-                    signal.getSymbol());
-
+        if (!Boolean.TRUE.equals(marginResponse.getSufficientBalance())) {
+            log.warn("INSUFFICIENT MARGIN FOR TRADE | Symbol={} | Required={} | Available={}",
+                    signal.getSymbol(), requiredMargin, marginResponse.getAvailableBalance());
             return;
         }
 
-        /*
-         * ============================================================
-         * STEP 13 : CHECK SUFFICIENT BALANCE
-         * ============================================================
-         */
-        if (!marginResponse.getSufficientBalance()) {
-
-            log.warn("======================================");
-            log.warn("INSUFFICIENT MARGIN FOR TRADE");
-            log.warn("Symbol            : {}", signal.getSymbol());
-            log.warn(
-                    "Required Margin   : {}",
-                    marginResponse.getRequiredMargin());
-            log.warn(
-                    "Available Balance : {}",
-                    marginResponse.getAvailableBalance());
-            log.warn(
-                    "Maximum Quantity  : {}",
-                    marginResponse.getMaximumQuantity());
-            log.warn("======================================");
-
-            return;
-        }
-
-        Double requiredMargin =
-                marginResponse.getRequiredMargin();
-
-        Double leverage =
-                marginResponse.getLeverage();
-
-        log.info("======================================");
-        log.info("MARGIN CALCULATION SUCCESS");
-        log.info("Symbol           : {}", signal.getSymbol());
-        log.info("Instrument Key   : {}", instrumentKey);
-        log.info("Trade Value      : {}",
-                marginResponse.getTradeValue());
-        log.info("Required Margin  : {}", requiredMargin);
-        log.info("Leverage         : {}", leverage);
-        log.info("Available Balance: {}",
-                marginResponse.getAvailableBalance());
-        log.info("======================================");
+        log.info("TARGET MARGIN SIZING COMPLETED | Symbol={} | Target={} | Required={} | Qty={} | TradeValue={} | Leverage={}",
+                signal.getSymbol(), targetMargin, requiredMargin, quantity,
+                marginResponse.getTradeValue(), leverage);
 
         /*
          * ============================================================
@@ -2378,7 +2346,9 @@ public class PaperTradingService {
         double usedCapital =
                 repository.findByStatus(SignalStatus.OPEN)
                         .stream()
-                        .mapToDouble(PaperTrade::getInvestedAmount)
+                        .mapToDouble(trade -> trade.getRequiredMargin() != null
+                                ? trade.getRequiredMargin()
+                                : trade.getInvestedAmount())
                         .sum();
 
         double availableCapital =
@@ -2391,7 +2361,7 @@ public class PaperTradingService {
             TradingSignalEntity signal) {
 
         int quantity =
-                (int) (capitalPerTrade
+                (int) (targetMarginPerTrade
                         / signal.getEntryPrice());
 
         log.info("Calculated Quantity : {}",

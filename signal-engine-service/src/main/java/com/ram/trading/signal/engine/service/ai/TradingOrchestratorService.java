@@ -85,6 +85,23 @@ public class TradingOrchestratorService {
         TradingDecision technicalDecision =
                 generateTechnicalDecision(signalRequest);
 
+        tradingFunnelStatisticsService.recordMarketRegime(
+                signalRequest.getMarketContext() != null
+                        ? signalRequest.getMarketContext().getMarketTrend() != null
+                        ? signalRequest.getMarketContext().getMarketTrend().name()
+                        : "UNKNOWN"
+                        : "UNKNOWN");
+
+        if (technicalDecision != null && technicalDecision.getSignal() != null) {
+            switch (technicalDecision.getSignal()) {
+                case BUY -> tradingFunnelStatisticsService.recordTechnicalBuy();
+                case SELL -> tradingFunnelStatisticsService.recordTechnicalSell();
+                default -> tradingFunnelStatisticsService.recordTechnicalHold();
+            }
+        } else {
+            tradingFunnelStatisticsService.recordTechnicalHold();
+        }
+
         log.debug(
                 "Technical Decision Time [{}] : {} ms",
                 signalRequest.getSymbol(),

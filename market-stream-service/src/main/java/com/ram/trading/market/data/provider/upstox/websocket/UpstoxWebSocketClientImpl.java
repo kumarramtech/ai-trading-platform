@@ -23,6 +23,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -105,13 +107,21 @@ public class UpstoxWebSocketClientImpl implements UpstoxWebSocketClient, MarketD
     }
 
     private List<String> loadInstrumentKeys() {
-        List<String> instrumentKeys = stockInstrumentClient
-                .loadSubscriptions()
-                .stream()
-                .map(InstrumentSubscriptionResponse::getInstrumentKey)
-                .filter(key -> key != null && !key.isBlank())
-                .distinct()
-                .toList();
+        Set<String> configuredKeys = new LinkedHashSet<>(
+                stockInstrumentClient
+                        .loadSubscriptions()
+                        .stream()
+                        .map(InstrumentSubscriptionResponse::getInstrumentKey)
+                        .filter(key -> key != null && !key.isBlank())
+                        .toList());
+
+        // Index feeds are required by MarketRegimeTracker. Keep these two
+        // explicit so regime data does not depend on the stock universe
+        // endpoint containing index instruments.
+        configuredKeys.add("NSE_INDEX|Nifty 50");
+        configuredKeys.add("NSE_INDEX|Nifty Bank");
+
+        List<String> instrumentKeys = new ArrayList<>(configuredKeys);
 
         log.debug("Loaded {} unique instruments for Upstox subscription", instrumentKeys.size());
 
