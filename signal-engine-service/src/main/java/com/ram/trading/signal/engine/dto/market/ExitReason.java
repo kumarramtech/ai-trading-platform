@@ -14,7 +14,9 @@ public enum ExitReason {
 
     AI_EXIT,
 
-    MARKET_CLOSE
+    MARKET_CLOSE,
+
+    STRUCTURE_FAILURE
 
 
 }

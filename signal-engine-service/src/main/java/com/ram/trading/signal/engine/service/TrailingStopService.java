@@ -1,9 +1,7 @@
 package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.client.NotificationClient;
-import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
-import com.ram.trading.signal.engine.contant.TradingConstants;
 import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
 import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
@@ -16,7 +14,6 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 
 @Service
 @RequiredArgsConstructor
@@ -24,102 +21,279 @@ import java.time.LocalTime;
 public class TrailingStopService {
 
     /*
-     * Trailing configuration. The 0.45% activation is retained so the
-     * existing break-even protection remains intact. Post break-even gaps
-     * are widened to give profitable trades room to breathe.
+     * ============================================================
+     * PROFIT / R-MULTIPLE TRAILING CONFIGURATION
+     * ============================================================
+     *
+     * R = Initial Risk per Trade
+     *
+     * Example:
+     *
+     * Entry       = 100
+     * Initial SL  = 96
+     *
+     * Risk = 100 - 96 = 4
+     *
+     * Therefore:
+     *
+     * 0.50R = 2 profit
+     * 0.75R = 3 profit
+     * 1.00R = 4 profit
+     * 1.50R = 6 profit
+     * 2.00R = 8 profit
+     * 3.00R = 12 profit
+     *
+     * This makes trailing independent of:
+     *
+     * - market time
+     * - fixed percentage
+     * - symbol price
+     *
+     * The stop is driven by actual trade profitability.
      */
-    private static final double BREAK_EVEN_TRIGGER_PERCENT = 0.45 / 100;
-    private static final double NORMAL_TRAILING_PERCENT = 0.65 / 100;
-    private static final double LATE_TRAILING_PERCENT = 0.40 / 100;
-    private static final double FINAL_TRAILING_PERCENT = 0.20 / 100;
+
+    private static final double BREAK_EVEN_R = 0.50;
+
+    private static final double STAGE_2_TRIGGER_R = 0.75;
+    private static final double STAGE_2_LOCK_R = 0.25;
+
+    private static final double STAGE_3_TRIGGER_R = 1.00;
+    private static final double STAGE_3_LOCK_R = 0.50;
+
+    private static final double STAGE_4_TRIGGER_R = 1.50;
+    private static final double STAGE_4_LOCK_R = 1.00;
+
+    private static final double STAGE_5_TRIGGER_R = 2.00;
+    private static final double STAGE_5_LOCK_R = 1.50;
+
+    private static final double STAGE_6_TRIGGER_R = 3.00;
+    private static final double STAGE_6_LOCK_R = 2.25;
+
     private final PaperTradeRepository repository;
     private final NotificationClient notificationClient;
 
-    public Mono<PaperTrade> updateTrailingStop(PaperTrade trade, Tick tick) {
+
+    /**
+     * Called from TradeExitService on every market tick.
+     *
+     * Responsibilities:
+     *
+     * 1. Check whether trade has enough profit for trailing.
+     * 2. Calculate R-multiple.
+     * 3. Determine profit protection stage.
+     * 4. Calculate improved stop.
+     * 5. Never move BUY stop downward.
+     * 6. Never move SELL stop upward.
+     * 7. Persist the updated stop.
+     * 8. Send notification.
+     */
+    public Mono<PaperTrade> updateTrailingStop(
+            PaperTrade trade,
+            Tick tick) {
 
         /*
-         * Safety validation.
-         *
-         * Mono.just(null) is not allowed,
-         * so null trade/tick must return Mono.empty().
+         * --------------------------------------------------------
+         * BASIC VALIDATION
+         * --------------------------------------------------------
          */
         if (trade == null || tick == null) {
-            log.warn("Skipping trailing stop update due to null trade or tick.");
+
+            log.warn(
+                    "Skipping trailing stop update due to null trade or tick.");
+
             return Mono.empty();
         }
 
-        /*
-         * Validate required trade data.
-         */
         if (trade.getCurrentStopLoss() == null
                 || trade.getInitialStopLoss() == null
                 || trade.getEntryPrice() == null) {
 
-            log.warn("Skipping trailing stop update due to incomplete trade data. Symbol={}", trade.getSymbol());
+            log.warn(
+                    "Skipping trailing stop update due to incomplete trade data. Symbol={}",
+                    trade.getSymbol());
 
             return Mono.just(trade);
         }
 
         double currentPrice = tick.getLastTradedPrice();
 
-        /*
-         * Trailing starts only after the trade moves
-         * 0.45% in the favorable direction.
-         */
-        if (!isEligibleForTrailing(
-                trade,
-                currentPrice)) {
+        if (currentPrice <= 0) {
+
+            log.warn(
+                    "Skipping trailing stop update due to invalid price. Symbol={} Price={}",
+                    trade.getSymbol(),
+                    currentPrice);
 
             return Mono.just(trade);
         }
 
         /*
-         * Calculate the current trailing stage.
-         *
-         * Step 1 = Break-even
-         * Step 2 = Normal trailing
-         * Step 3 = Late market trailing
-         * Step 4 = Final defensive trailing
-         */
-        int currentStep = calculateCurrentStep(
-                trade,
-                currentPrice);
-
-        double previousStop =
-                trade.getCurrentStopLoss();
-
-        /*
-         * Calculate the new percentage-based stop.
-         */
-        double newStop = calculateNewStop(
-                trade,
-                currentPrice);
-
-        /*
-         * Safety Rule:
-         *
-         * BUY  -> Stop Loss can only move upward.
-         * SELL -> Stop Loss can only move downward.
-         *
-         * If the calculated stop does not improve the
-         * existing stop, do nothing.
+         * --------------------------------------------------------
+         * DETERMINE DIRECTION
+         * --------------------------------------------------------
          */
         boolean isBuy = SignalType.BUY.name()
                 .equalsIgnoreCase(trade.getSignal());
 
-        boolean stopNotImproved = isBuy
-                ? newStop <= previousStop
-                : newStop >= previousStop;
+        boolean isSell = SignalType.SELL.name()
+                .equalsIgnoreCase(trade.getSignal());
+
+        if (!isBuy && !isSell) {
+
+            log.warn(
+                    "Skipping trailing stop update due to unknown signal. Symbol={} Signal={}",
+                    trade.getSymbol(),
+                    trade.getSignal());
+
+            return Mono.just(trade);
+        }
+
+        /*
+         * --------------------------------------------------------
+         * CALCULATE INITIAL RISK
+         * --------------------------------------------------------
+         *
+         * BUY:
+         *
+         * Risk = Entry - Initial SL
+         *
+         * SELL:
+         *
+         * Risk = Initial SL - Entry
+         */
+        double entryPrice = trade.getEntryPrice();
+        double initialStopLoss = trade.getInitialStopLoss();
+
+        double initialRisk;
+
+        if (isBuy) {
+
+            initialRisk = entryPrice - initialStopLoss;
+
+        } else {
+
+            initialRisk = initialStopLoss - entryPrice;
+        }
+
+        /*
+         * Invalid initial risk means we cannot calculate R.
+         */
+        if (initialRisk <= 0) {
+
+            log.warn(
+                    "Skipping trailing stop update due to invalid initial risk. " +
+                            "Symbol={} Signal={} Entry={} InitialSL={} Risk={}",
+                    trade.getSymbol(),
+                    trade.getSignal(),
+                    entryPrice,
+                    initialStopLoss,
+                    initialRisk);
+
+            return Mono.just(trade);
+        }
+
+        /*
+         * --------------------------------------------------------
+         * CALCULATE CURRENT PROFIT
+         * --------------------------------------------------------
+         *
+         * This is per share.
+         */
+        double currentProfit;
+
+        if (isBuy) {
+
+            currentProfit = currentPrice - entryPrice;
+
+        } else {
+
+            currentProfit = entryPrice - currentPrice;
+        }
+
+        /*
+         * --------------------------------------------------------
+         * CALCULATE R-MULTIPLE
+         * --------------------------------------------------------
+         *
+         * R = Current Profit / Initial Risk
+         *
+         * Example:
+         *
+         * Initial Risk = ₹10
+         * Current Profit = ₹20
+         *
+         * R = 20 / 10 = 2R
+         */
+        double currentR = currentProfit / initialRisk;
+
+        /*
+         * --------------------------------------------------------
+         * DETERMINE TRAILING STAGE
+         * --------------------------------------------------------
+         */
+        int currentStep = calculateTrailingStep(currentR);
+
+        /*
+         * No trailing until 0.50R.
+         */
+        if (currentStep == 0) {
+
+            return Mono.just(trade);
+        }
+
+        /*
+         * --------------------------------------------------------
+         * CALCULATE PREVIOUS STOP
+         * --------------------------------------------------------
+         */
+        double previousStop = trade.getCurrentStopLoss();
+
+        /*
+         * --------------------------------------------------------
+         * CALCULATE NEW STOP
+         * --------------------------------------------------------
+         */
+        double newStop = calculateNewStop(
+                trade,
+                currentR,
+                initialRisk,
+                currentStep);
+
+        /*
+         * --------------------------------------------------------
+         * SAFETY RULE
+         * --------------------------------------------------------
+         *
+         * BUY:
+         * New SL must be HIGHER than existing SL.
+         *
+         * SELL:
+         * New SL must be LOWER than existing SL.
+         *
+         * This prevents the trailing engine from weakening
+         * an already-protected position.
+         */
+        boolean stopNotImproved;
+
+        if (isBuy) {
+
+            stopNotImproved = newStop <= previousStop;
+
+        } else {
+
+            stopNotImproved = newStop >= previousStop;
+        }
 
         if (stopNotImproved) {
 
             log.debug(
-                    "Trailing Stop Not Improved : " +
-                            "Symbol={} Signal={} CurrentPrice={} " +
-                            "CurrentStop={} CalculatedStop={} Step={}",
+                    "Trailing Stop Not Improved | " +
+                            "Symbol={} Signal={} Price={} " +
+                            "CurrentR={} CurrentStop={} CalculatedStop={} Step={}",
                     trade.getSymbol(),
                     trade.getSignal(),
                     currentPrice,
+                    currentR,
                     previousStop,
                     newStop,
                     currentStep);
@@ -128,8 +302,9 @@ public class TrailingStopService {
         }
 
         /*
-         * Update trade only after confirming
-         * that the new stop is better.
+         * --------------------------------------------------------
+         * UPDATE TRADE
+         * --------------------------------------------------------
          */
         updateTrade(
                 trade,
@@ -137,27 +312,37 @@ public class TrailingStopService {
                 currentStep);
 
         /*
-         * Persist the updated trade and then
-         * send the trailing stop notification.
+         * --------------------------------------------------------
+         * PERSIST
+         * --------------------------------------------------------
          */
-        return Mono.fromCallable(() -> repository.save(trade))
+        return Mono.fromCallable(
+                        () -> repository.save(trade))
+
                 .subscribeOn(Schedulers.boundedElastic())
 
                 .flatMap(savedTrade ->
                         sendTrailingNotification(
                                 savedTrade,
                                 previousStop,
-                                newStop)
+                                newStop,
+                                currentR,
+                                currentStep)
                                 .thenReturn(savedTrade))
 
                 .doOnSuccess(saved ->
+
                         log.info(
-                                "Trailing Stop Updated Successfully : " +
-                                        "Symbol={} Signal={} Price={} " +
-                                        "OldStop={} NewStop={} Step={}",
+                                "Trailing Stop Updated Successfully | " +
+                                        "Symbol={} | Signal={} | " +
+                                        "Price={} | Entry={} | " +
+                                        "CurrentR={} | " +
+                                        "OldStop={} | NewStop={} | Step={}",
                                 saved.getSymbol(),
                                 saved.getSignal(),
                                 currentPrice,
+                                saved.getEntryPrice(),
+                                currentR,
                                 previousStop,
                                 newStop,
                                 currentStep))
@@ -173,246 +358,248 @@ public class TrailingStopService {
                 });
     }
 
-    private boolean isEligibleForTrailing(
-            PaperTrade trade,
-            double currentPrice) {
 
-        if (trade.getCurrentStopLoss() == null
-                || trade.getInitialStopLoss() == null
-                || trade.getEntryPrice() == null) {
+    /**
+     * Determines the profit protection stage.
+     *
+     * Step 0:
+     * No trailing.
+     *
+     * Step 1:
+     * 0.50R -> Break-even.
+     *
+     * Step 2:
+     * 0.75R -> Lock 0.25R.
+     *
+     * Step 3:
+     * 1.00R -> Lock 0.50R.
+     *
+     * Step 4:
+     * 1.50R -> Lock 1.00R.
+     *
+     * Step 5:
+     * 2.00R -> Lock 1.50R.
+     *
+     * Step 6:
+     * 3.00R -> Lock 2.25R.
+     */
+    private int calculateTrailingStep(
+            double currentR) {
 
-            return false;
-        }
+        if (currentR < BREAK_EVEN_R) {
 
-        double entry = trade.getEntryPrice();
-
-        boolean isBuy = SignalType.BUY.name()
-                .equalsIgnoreCase(trade.getSignal());
-
-        /*
-         * Break-even activation threshold.
-         *
-         * Trailing starts once price moves
-         * 0.45% in the favorable direction.
-         */
-        double breakEvenTriggerPercent = BREAK_EVEN_TRIGGER_PERCENT;
-
-        if (isBuy) {
-
-            double triggerPrice =
-                    entry * (1 + breakEvenTriggerPercent);
-
-            return currentPrice >= triggerPrice;
-
-        } else {
-
-            double triggerPrice =
-                    entry * (1 - breakEvenTriggerPercent);
-
-            return currentPrice <= triggerPrice;
-        }
-    }
-
-    private int calculateCurrentStep(
-            PaperTrade trade,
-            double currentPrice) {
-
-        double entry = trade.getEntryPrice();
-
-        boolean isBuy = SignalType.BUY.name()
-                .equalsIgnoreCase(trade.getSignal());
-
-        /*
-         * Step 0 = Initial Stop Loss
-         * Step 1 = Break-even activated
-         * Step 2 = Normal percentage trailing
-         * Step 3 = Late market trailing
-         * Step 4 = Final defensive trailing
-         */
-
-        double breakEvenTriggerPercent = BREAK_EVEN_TRIGGER_PERCENT;
-
-        boolean breakEvenReached = isBuy
-                ? currentPrice >= entry * (1 + breakEvenTriggerPercent)
-                : currentPrice <= entry * (1 - breakEvenTriggerPercent);
-
-        if (!breakEvenReached) {
             return 0;
         }
 
-        int existingStep = trade.getTrailingStep() == null
-                ? 0
-                : trade.getTrailingStep();
+        if (currentR < STAGE_2_TRIGGER_R) {
 
-        /*
-         * First successful trailing update
-         * is always Break-even.
-         */
-        if (existingStep == 0) {
             return 1;
         }
 
-        /*
-         * After Break-even, determine
-         * trailing stage based on market time.
-         */
-        LocalTime currentTime = LocalTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+        if (currentR < STAGE_3_TRIGGER_R) {
 
-        if (currentTime.isBefore(LocalTime.of(14, 0))) {
             return 2;
         }
 
-        if (currentTime.isBefore(LocalTime.of(14, 45))) {
+        if (currentR < STAGE_4_TRIGGER_R) {
+
             return 3;
         }
 
-        return 4;
+        if (currentR < STAGE_5_TRIGGER_R) {
+
+            return 4;
+        }
+
+        if (currentR < STAGE_6_TRIGGER_R) {
+
+            return 5;
+        }
+
+        return 6;
     }
 
+
+    /**
+     * Calculates the new stop based on R-multiple.
+     */
     private double calculateNewStop(
             PaperTrade trade,
-            double currentPrice) {
+            double currentR,
+            double initialRisk,
+            int currentStep) {
 
-        double entry = trade.getEntryPrice();
+        double entryPrice = trade.getEntryPrice();
 
         boolean isBuy = SignalType.BUY.name()
                 .equalsIgnoreCase(trade.getSignal());
 
         /*
-         * Break-even activation threshold.
+         * --------------------------------------------------------
+         * STEP 1
+         * --------------------------------------------------------
          *
-         * Once price moves 0.45% in the favorable direction,
-         * Stop Loss moves to Entry Price.
+         * 0.50R profit
+         *
+         * Move stop to entry.
+         *
+         * This eliminates the original risk once the trade
+         * has demonstrated enough favorable movement.
          */
-        double breakEvenTriggerPercent = BREAK_EVEN_TRIGGER_PERCENT;
+        if (currentStep == 1) {
 
-        double triggerPrice = isBuy
-                ? entry * (1 + breakEvenTriggerPercent)
-                : entry * (1 - breakEvenTriggerPercent);
-
-        boolean breakEvenReached = isBuy
-                ? currentPrice >= triggerPrice
-                : currentPrice <= triggerPrice;
-
-        if (!breakEvenReached) {
-            return trade.getCurrentStopLoss();
+            return entryPrice;
         }
 
         /*
-         * First trailing update:
-         *
-         * Move Stop Loss to Entry Price
-         * to protect against loss.
+         * --------------------------------------------------------
+         * DETERMINE LOCKED R
+         * --------------------------------------------------------
          */
-        int trailingStep = trade.getTrailingStep() == null
-                ? 0
-                : trade.getTrailingStep();
+        double lockedR;
 
-        if (trailingStep == 0) {
+        switch (currentStep) {
 
-            return entry;
+            case 2:
+                lockedR = STAGE_2_LOCK_R;
+                break;
+
+            case 3:
+                lockedR = STAGE_3_LOCK_R;
+                break;
+
+            case 4:
+                lockedR = STAGE_4_LOCK_R;
+                break;
+
+            case 5:
+                lockedR = STAGE_5_LOCK_R;
+                break;
+
+            case 6:
+                lockedR = STAGE_6_LOCK_R;
+                break;
+
+            default:
+                return trade.getCurrentStopLoss();
         }
 
         /*
-         * After break-even, use a dynamic
-         * percentage-based trailing gap.
-         *
-         * Before 2:00 PM  -> 0.65%
-         * 2:00 - 2:45 PM -> 0.40%
-         * After 2:45 PM  -> 0.20%
+         * Convert locked R back into actual price distance.
          */
-        LocalTime currentTime = LocalTime.now(java.time.ZoneId.of("Asia/Kolkata"));
-
-        double trailingPercent;
-
-        if (currentTime.isBefore(LocalTime.of(14, 0))) {
-
-            trailingPercent = NORMAL_TRAILING_PERCENT;
-
-        } else if (currentTime.isBefore(LocalTime.of(14, 45))) {
-
-            trailingPercent = LATE_TRAILING_PERCENT;
-
-        } else {
-
-            trailingPercent = FINAL_TRAILING_PERCENT;
-        }
+        double lockedProfit = initialRisk * lockedR;
 
         /*
          * BUY:
-         * Stop trails below the current favorable price.
+         *
+         * Entry + locked profit
          *
          * SELL:
-         * Stop trails above the current favorable price.
+         *
+         * Entry - locked profit
          */
         if (isBuy) {
 
-            return currentPrice * (1 - trailingPercent);
+            return entryPrice + lockedProfit;
 
         } else {
 
-            return currentPrice * (1 + trailingPercent);
+            return entryPrice - lockedProfit;
         }
     }
 
+
+    /**
+     * Updates the PaperTrade entity in memory.
+     */
     private void updateTrade(
             PaperTrade trade,
             double newStop,
             int currentStep) {
 
-        Double previousStop = trade.getCurrentStopLoss();
+        Double previousStop =
+                trade.getCurrentStopLoss();
 
         trade.setCurrentStopLoss(newStop);
-        trade.setTrailingStep(currentStep);
-        trade.setLastTrailingUpdate(LocalDateTime.now());
 
-        log.info("""
-        Trailing Stop Updated
-        Symbol={}
-        Entry={}
-        Previous Stop={}
-        New Stop={}
-        Step={}
-        """,
+        trade.setTrailingStep(currentStep);
+
+        trade.setLastTrailingUpdate(
+                LocalDateTime.now());
+
+        log.info(
+                """
+                ================================
+                TRAILING STOP UPDATED
+                ================================
+                Symbol       : {}
+                Signal       : {}
+                Entry        : {}
+                Previous SL  : {}
+                New SL       : {}
+                Step         : {}
+                ================================
+                """,
                 trade.getSymbol(),
+                trade.getSignal(),
                 trade.getEntryPrice(),
                 previousStop,
                 newStop,
                 currentStep);
     }
 
+
+    /**
+     * Sends notification whenever a new stop is persisted.
+     */
     private Mono<Void> sendTrailingNotification(
             PaperTrade trade,
             double previousStop,
-            double newStop) {
+            double newStop,
+            double currentR,
+            int currentStep) {
 
-        String message = String.format("""
-            🔒 TRAILING STOP UPDATED
+        String message = String.format(
+                """
+                🔒 TRAILING STOP UPDATED
 
-            Symbol : %s
-            Entry : %.2f
-            Current Stop : %.2f
-            Previous Stop : %.2f
-            New Stop : %.2f
-            Step : %d
-            """,
+                Symbol          : %s
+                Signal          : %s
+                Entry           : %.2f
+
+                Previous Stop   : %.2f
+                New Stop        : %.2f
+
+                Current R       : %.2fR
+                Trailing Stage  : %d
+
+                Profit protection has been increased.
+                """,
                 trade.getSymbol(),
+                trade.getSignal(),
                 trade.getEntryPrice(),
-                newStop,
                 previousStop,
                 newStop,
-                trade.getTrailingStep());
+                currentR,
+                currentStep);
 
-        NotificationRequest request = NotificationRequest.builder()
-                .channel(NotificationChannel.SLACK)
-                .title("Trailing Stop Updated")
-                .message(message)
-                .build();
+        NotificationRequest request =
+                NotificationRequest.builder()
+                        .channel(NotificationChannel.SLACK)
+                        .title("Trailing Stop Updated")
+                        .message(message)
+                        .build();
 
-        return notificationClient.sendNotification(request)
+        return notificationClient
+                .sendNotification(request)
                 .then()
+
                 .doOnError(ex ->
-                        log.error("Failed to send trailing notification", ex))
-                .onErrorResume(ex -> Mono.empty());
+                        log.error(
+                                "Failed to send trailing notification",
+                                ex))
+
+                .onErrorResume(
+                        ex -> Mono.empty());
     }
 }

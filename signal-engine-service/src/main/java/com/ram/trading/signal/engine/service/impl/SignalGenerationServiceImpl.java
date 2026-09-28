@@ -13,6 +13,8 @@ import com.ram.trading.signal.engine.dto.premarket.JudasSwingResult;
 import com.ram.trading.signal.engine.dto.premarket.MinuteCandle;
 import com.ram.trading.signal.engine.dto.premarket.ORBResult;
 import com.ram.trading.signal.engine.dto.premarket.OpeningRange;
+import com.ram.trading.signal.engine.risk.PositionSizingResult;
+import com.ram.trading.signal.engine.risk.PositionSizingService;
 import com.ram.trading.signal.engine.util.TradingSessionService;
 import com.ram.trading.signal.engine.exit.TradeExitService;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
@@ -76,6 +78,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final JudasSwingDetector judasSwingDetector;
 
     private final ORBValidator orbValidator;
+
+    private final PositionSizingService positionSizingService;
 
     private final Map<String, String> processedStrategySetups = new ConcurrentHashMap<>();
 
@@ -1107,15 +1111,18 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
         log.info("========== POST PROCESSING ==========");
 
-        if (SignalType.HOLD.name().equals(
-                signal.getSignal())) {
+        /*
+         * ============================================================
+         * HOLD SIGNAL
+         * ============================================================
+         */
+        if (SignalType.HOLD.name().equals(signal.getSignal())) {
 
             log.info(
                     "Signal is HOLD. Nothing to persist.");
 
             return Mono.just(signal);
         }
-
 
         /*
          * ============================================================
@@ -1127,7 +1134,6 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * No trade is rejected in this phase.
          * ============================================================
          */
-
         return marketDataProvider
                 .getStockPrice(signal.getSymbol())
 
@@ -1146,27 +1152,25 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                             return Mono.just(
                                     StockResponse.builder()
-                                            .symbol(
-                                                    signal.getSymbol())
+                                            .symbol(signal.getSymbol())
                                             .price(
                                                     signalPrice != null
                                                             ? signalPrice
                                                             : 0.0)
                                             .build());
-                        }))
+                        })
+                )
 
                 .flatMap(stock -> {
 
                     double freshMarketPrice =
                             stock.getPrice();
 
-
                     /*
                      * ====================================================
                      * ENTRY QUALITY SERVICE
                      * ====================================================
                      */
-
                     EntryQualityResult entryQuality =
                             entryQualityService.evaluate(
                                     signal.getSymbol(),
@@ -1177,24 +1181,22 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     freshMarketPrice,
                                     indicator);
 
-
                     /*
                      * ====================================================
-                     * IMPORTANT
+                     * ENTRY QUALITY LOG
                      *
-                     * We log the classification but DO NOT reject
-                     * the trade yet.
+                     * Measurement only.
+                     * We do NOT reject the trade here.
                      * ====================================================
                      */
-
                     log.info(
                             "ENTRY QUALITY RESULT | " +
                                     "Symbol={} | " +
                                     "Status={} | " +
-                                    "DirectionalMove={}%" +
-                                    " | PriceVsEMA20={}%" +
-                                    " | PriceVsEMA50={}%" +
-                                    " | PriceVsHistoricalClose={}%",
+                                    "DirectionalMove={}% | " +
+                                    "PriceVsEMA20={}% | " +
+                                    "PriceVsEMA50={}% | " +
+                                    "PriceVsHistoricalClose={}%",
                             entryQuality.getSymbol(),
                             entryQuality.getStatus(),
                             entryQuality.getDirectionalMovementPct(),
@@ -1202,14 +1204,88 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                             entryQuality.getPriceVsEma50Pct(),
                             entryQuality.getPriceVsHistoricalClosePct());
 
+                    /*
+                     * ====================================================
+                     * POSITION SIZING
+                     *
+                     * PositionSizingService calculates the maximum
+                     * quantity allowed based on configured risk per trade.
+                     *
+                     * Example:
+                     *
+                     * Entry      = 1279.20
+                     * Stop Loss  = 1266.41
+                     * Risk/share = 12.79
+                     * Max Risk   = 300
+                     *
+                     * Risk Quantity = floor(300 / 12.79)
+                     *               = 23
+                     *
+                     * PaperTradingService will then apply its own
+                     * broker/margin constraints.
+                     * ====================================================
+                     */
+                    PositionSizingResult sizingResult =
+                            positionSizingService.calculate(signal);
+
+                    if (!sizingResult.isValid()) {
+
+                        log.warn(
+                                "POSITION SIZING REJECTED | " +
+                                        "Symbol={} | " +
+                                        "Entry={} | " +
+                                        "StopLoss={} | " +
+                                        "Reason={}",
+                                signal.getSymbol(),
+                                signal.getEntryPrice(),
+                                signal.getStopLoss(),
+                                sizingResult.getRejectionReason());
+
+                        return Mono.empty();
+                    }
+
+                    int riskBasedQuantity =
+                            sizingResult.getRiskBasedQuantity();
+
+                    if (riskBasedQuantity <= 0) {
+
+                        log.warn(
+                                "POSITION SIZING REJECTED | " +
+                                        "Risk quantity is zero | " +
+                                        "Symbol={} | " +
+                                        "Entry={} | " +
+                                        "StopLoss={}",
+                                signal.getSymbol(),
+                                signal.getEntryPrice(),
+                                signal.getStopLoss());
+
+                        return Mono.empty();
+                    }
+
+                    log.info(
+                            "RISK BASED POSITION SIZING | " +
+                                    "Symbol={} | " +
+                                    "Entry={} | " +
+                                    "StopLoss={} | " +
+                                    "RiskPerShare={} | " +
+                                    "MaxRisk={} | " +
+                                    "RiskQuantity={} | " +
+                                    "ExpectedRisk={}",
+                            signal.getSymbol(),
+                            sizingResult.getEntryPrice(),
+                            sizingResult.getStopLoss(),
+                            sizingResult.getRiskPerShare(),
+                            sizingResult.getMaxRiskPerTrade(),
+                            riskBasedQuantity,
+                            sizingResult.getExpectedRisk());
 
                     /*
                      * ====================================================
-                     * EXISTING PERSISTENCE FLOW
+                     * SAVE TRADING SIGNAL
                      * ====================================================
                      */
-
-                    log.info("Saving Trading Signal...");
+                    log.info(
+                            "Saving Trading Signal...");
 
                     return Mono.fromCallable(
                                     () ->
@@ -1228,7 +1304,11 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         "Trading Signal Saved : {}",
                                         entity.getId());
 
-
+                                /*
+                                 * =================================================
+                                 * SAVE OPPORTUNITY
+                                 * =================================================
+                                 */
                                 return Mono.fromRunnable(() -> {
 
                                             log.info(
@@ -1237,7 +1317,6 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                             opportunityService.save(
                                                     signal,
                                                     entity.getId());
-
 
                                             tradingFunnelStatisticsService
                                                     .recordOpportunitySaved();
@@ -1253,13 +1332,32 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         .thenReturn(entity);
                             })
 
-
                             /*
                              * =================================================
                              * PAPER TRADE
+                             *
+                             * IMPORTANT:
+                             *
+                             * riskBasedQuantity is now explicitly passed
+                             * into PaperTradingService.
+                             *
+                             * PaperTradingService remains responsible for:
+                             *
+                             * 1. Margin calculation
+                             * 2. Capital validation
+                             * 3. Broker margin constraint
+                             * 4. Final quantity
+                             * 5. PaperTrade persistence
+                             *
+                             * Therefore:
+                             *
+                             * Risk Quantity
+                             *        ↓
+                             * Margin Quantity
+                             *        ↓
+                             * Final Quantity
                              * =================================================
                              */
-
                             .flatMap(entity ->
 
                                     Mono.fromRunnable(() -> {
@@ -1267,12 +1365,20 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                                 log.info(
                                                         "Creating Paper Trade...");
 
+                                                log.info(
+                                                        "PAPER TRADE RISK QUANTITY | " +
+                                                                "Symbol={} | " +
+                                                                "RiskQuantity={}",
+                                                        entity.getSymbol(),
+                                                        riskBasedQuantity);
+
                                                 tradingFunnelStatisticsService
                                                         .recordPaperTradeAttempted();
 
                                                 paperTradingService.createTrade(
                                                         entity,
-                                                        indicator);
+                                                        indicator,
+                                                        riskBasedQuantity);
 
                                             })
 

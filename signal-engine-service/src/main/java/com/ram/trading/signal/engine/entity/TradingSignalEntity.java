@@ -37,6 +37,7 @@ public class TradingSignalEntity {
 
     private Integer confidence;
 
+    @Column(name = "reason", columnDefinition = "TEXT")
     private String reason;
 
     private LocalDateTime signalTime;

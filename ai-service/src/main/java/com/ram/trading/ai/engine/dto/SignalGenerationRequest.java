@@ -32,5 +32,4 @@ public class SignalGenerationRequest {
     private Long volume;
 
     private MarketContext marketContext;
-
 }

@@ -1,13 +1,19 @@
 package com.ram.trading.ai.engine.prompt;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.ram.trading.ai.engine.dto.NewsArticle;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class AiDecisionPromptBuilder {
+
+    private final ObjectMapper objectMapper;
 
     public String buildPrompt(TradingDecisionRequest request) {
 
@@ -15,24 +21,35 @@ public class AiDecisionPromptBuilder {
                 buildNewsSection(request.getNews());
 
         String portfolioSection =
-                request.getPortfolioContext() != null
-                        ? request.getPortfolioContext().toString()
-                        : "No portfolio context available.";
+                toJson(
+                        request.getPortfolioContext(),
+                        "No portfolio context available."
+                );
 
         String openPositionSection =
-                request.getOpenPositionContext() != null
-                        ? request.getOpenPositionContext().toString()
-                        : "No open position context available.";
+                toJson(
+                        request.getOpenPositionContext(),
+                        "No open position context available."
+                );
 
+        /*
+         * IMPORTANT:
+         * Never use object.toString() here.
+         *
+         * These objects contain the actual Engineering/Trading information
+         * that the AI must see.
+         */
         String technicalDecisionSection =
-                request.getTechnicalDecision() != null
-                        ? request.getTechnicalDecision().toString()
-                        : "No technical decision available.";
+                toJson(
+                        request.getTechnicalDecision(),
+                        "No technical decision available."
+                );
 
         String signalRequestSection =
-                request.getSignalRequest() != null
-                        ? request.getSignalRequest().toString()
-                        : "No signal request available.";
+                toJson(
+                        request.getSignalRequest(),
+                        "No signal request available."
+                );
 
         String sectorSummary =
                 request.getSectorSummary() != null
@@ -60,15 +77,33 @@ public class AiDecisionPromptBuilder {
             Therefore:
 
             - Do NOT independently replace the technical strategy.
-            - Do NOT reject a valid Engineering BUY or SELL merely
-              because optional contextual information is unavailable.
-            - Do NOT recommend HOLD simply because news is missing,
-              insufficient, stale, neutral or unavailable.
-            - Do NOT treat missing optional data as negative evidence.
+            - Do NOT invent technical indicators.
+            - Do NOT invent prices.
+            - Do NOT convert BUY to SELL or SELL to BUY without
+              explicit supplied evidence.
+            - Treat BUY and SELL symmetrically.
+            - Missing optional data is NOT evidence for changing
+              the Engineering direction.
 
-            If Engineering recommends BUY or SELL and there is no
-            explicit material contradictory evidence, CONFIRM the
-            Engineering Decision.
+            If Engineering recommends BUY or SELL, first validate
+            that direction using the supplied evidence.
+
+            =======================================================
+            DIRECTION INTEGRITY RULE
+            =======================================================
+
+            Engineering BUY:
+              - AI may CONFIRM BUY.
+              - AI may reject it and return HOLD.
+              - AI MUST NOT convert BUY directly into SELL.
+
+            Engineering SELL:
+              - AI may CONFIRM SELL.
+              - AI may reject it and return HOLD.
+              - AI MUST NOT convert SELL directly into BUY.
+
+            The AI is a validation/filter layer.
+            It is NOT an independent strategy generator.
 
             =======================================================
             DECISION PRIORITY
@@ -80,19 +115,16 @@ public class AiDecisionPromptBuilder {
             2. Conflicting Open Position
             3. Explicit Portfolio Constraint
             4. Material Contradictory News
-            5. Engineering Decision
-
-            Engineering BUY or SELL should remain unchanged unless
-            one of the higher-priority conditions contains explicit
-            evidence that prevents the trade.
-
-            Uncertainty alone is NOT evidence.
-
-            Missing information alone is NOT evidence.
+            5. Original JUDAS/ORB Direction
+            6. Engineering Decision
+            7. Optional Market/Sector Context
 
             =======================================================
             SIGNAL REQUEST
             =======================================================
+
+            The following is the COMPLETE structured Signal Request
+            supplied by the trading engine.
 
             %s
 
@@ -100,74 +132,57 @@ public class AiDecisionPromptBuilder {
             ORIGINAL ENTRY STRATEGY CONTEXT
             =======================================================
 
-            The Signal Request contains the original strategy setup
-            that passed the Strategy Gate before Engineering and AI.
+            The Signal Request contains the original strategy setup.
 
-            The setup information is:
+            Expected fields include:
 
             - setupStrategy = JUDAS or ORB
             - setupDirection = BUY or SELL
 
             IMPORTANT:
 
-            The setupDirection represents the ORIGINAL direction
-            generated by the validated JUDAS or ORB strategy.
+            setupDirection represents the original direction generated
+            by the validated JUDAS or ORB strategy.
 
-            Treat this as important contextual evidence.
-
-            Do NOT silently ignore the original setup direction.
-
-            Engineering is still the PRIMARY technical decision,
-            but compare it with the original strategy direction.
+            Treat it as important contextual evidence.
 
             If setupDirection and Engineering direction MATCH:
 
-            - This provides directional alignment.
-            - Consider the setup and Engineering evidence mutually
-              supportive.
+            - This is directional alignment.
+            - Consider the evidence mutually supportive.
 
             If setupDirection and Engineering direction DIFFER:
 
-            - Recognize that Engineering has produced a direction
-              different from the original JUDAS/ORB setup.
-            - Treat this as a meaningful directional conflict.
-            - Do NOT automatically change the Engineering direction.
-            - Do NOT automatically approve the Engineering direction.
-            - Evaluate whether the supplied technical evidence
-              provides a strong and explicit reason for the
-              Engineering direction to differ from the original setup.
+            - Recognize the directional conflict.
+            - Do NOT automatically change Engineering direction.
+            - Do NOT automatically approve Engineering direction.
+            - Evaluate the supplied technical evidence.
+            - If the supplied evidence does not sufficiently justify
+              the difference, prefer HOLD.
 
-            The AI must NOT invent a reason for the disagreement.
-
-            If the supplied information does not provide sufficient
-            evidence to justify the directional difference, prefer
-            HOLD rather than assuming that either direction is correct.
-
-            IMPORTANT:
-
-            The original strategy direction is NOT an instruction to
-            force BUY or SELL.
-
-            It is contextual evidence that must be considered before
-            confirming the Engineering Decision.
+            Never invent a reason for the disagreement.
 
             =======================================================
             ENGINEERING / TECHNICAL DECISION
             =======================================================
 
+            The following is the COMPLETE structured Engineering
+            Decision supplied by the trading engine.
+
             %s
 
             IMPORTANT:
 
-            Treat the Engineering Decision as the primary
-            recommendation.
+            Use the actual supplied:
 
-            Do not invent technical indicator values.
+            - signal
+            - confidence
+            - confidenceLevel
+            - reasons
 
-            Do not independently recalculate the technical signal.
+            Do NOT assume missing values.
 
-            Use the Engineering signal and confidence supplied in
-            the request.
+            Do NOT recalculate the technical signal.
 
             =======================================================
             SECTOR CONTEXT
@@ -185,12 +200,12 @@ public class AiDecisionPromptBuilder {
             NEWS RULES
             =======================================================
 
-            Analyze only the news that is explicitly supplied.
+            Analyze only the news explicitly supplied.
 
             News can override Engineering ONLY when the supplied
             news provides clear, material and relevant evidence.
 
-            Examples include:
+            Examples:
 
             - Major regulatory action
             - Serious legal action
@@ -199,10 +214,7 @@ public class AiDecisionPromptBuilder {
             - Major contract cancellation
             - Major merger or acquisition event
             - Severe company-specific adverse event
-            - Other clearly material event that invalidates the
-              Engineering setup
-
-            IMPORTANT NEWS DEFAULT:
+            - Other clearly material event invalidating the setup
 
             If news is:
 
@@ -214,15 +226,14 @@ public class AiDecisionPromptBuilder {
             - unrelated
             - unreliable
 
-            then treat the news context as NEUTRAL.
+            treat it as NEUTRAL.
 
-            NEUTRAL news MUST NOT change BUY to HOLD.
+            Neutral news MUST NOT change BUY to HOLD.
 
-            NEUTRAL news MUST NOT change SELL to HOLD.
+            Neutral news MUST NOT change SELL to HOLD.
 
-            Absence of news is NOT negative evidence.
-
-            Stale news is NOT automatically negative evidence.
+            Neutral or missing news MUST NOT convert BUY to SELL
+            or SELL to BUY.
 
             =======================================================
             PORTFOLIO CONTEXT
@@ -237,6 +248,28 @@ public class AiDecisionPromptBuilder {
             %s
 
             =======================================================
+            MARKET REGIME RULE
+            =======================================================
+
+            Market context is contextual evidence.
+
+            Do NOT automatically convert:
+
+            Market BULLISH + Engineering SELL -> BUY
+
+            or:
+
+            Market BEARISH + Engineering BUY -> SELL
+
+            Evaluate the individual stock setup first.
+
+            A bullish market does not automatically invalidate
+            a valid SELL setup.
+
+            A bearish market does not automatically invalidate
+            a valid BUY setup.
+
+            =======================================================
             WHEN TO CONFIRM BUY
             =======================================================
 
@@ -246,14 +279,11 @@ public class AiDecisionPromptBuilder {
             - There is no explicit unacceptable risk.
             - There is no conflicting open position.
             - There is no explicit portfolio restriction.
-            - There is no material bearish news that clearly
-              invalidates the Engineering setup.
+            - There is no material bearish news invalidating the setup.
+            - Original JUDAS/ORB direction does not create an
+              unresolved material conflict.
 
-            Missing news MUST NOT prevent BUY.
-
-            Neutral news MUST NOT prevent BUY.
-
-            If no strong contradictory evidence exists:
+            If these conditions are satisfied:
 
             recommendation = BUY
             tradeAllowed = true
@@ -266,16 +296,13 @@ public class AiDecisionPromptBuilder {
 
             - Engineering recommendation is SELL.
             - There is no explicit unacceptable risk.
-            - There is no conflicting position.
+            - There is no conflicting open position.
             - There is no explicit portfolio restriction.
-            - There is no material bullish news that clearly
-              invalidates the Engineering setup.
+            - There is no material bullish news invalidating the setup.
+            - Original JUDAS/ORB direction does not create an
+              unresolved material conflict.
 
-            Missing news MUST NOT prevent SELL.
-
-            Neutral news MUST NOT prevent SELL.
-
-            If no strong contradictory evidence exists:
+            If these conditions are satisfied:
 
             recommendation = SELL
             tradeAllowed = true
@@ -284,45 +311,24 @@ public class AiDecisionPromptBuilder {
             WHEN TO RECOMMEND HOLD
             =======================================================
 
-            Recommend HOLD ONLY when at least one explicit condition
-            below exists:
+            Recommend HOLD when:
 
             - Engineering recommendation is HOLD.
-            - An explicit risk constraint prevents the trade.
-            - A conflicting open position prevents the trade.
-            - An explicit portfolio constraint prevents the trade.
-            - Material supplied news clearly invalidates the
-              Engineering recommendation.
-            - There is strong explicit contradictory evidence.
-            - The original JUDAS/ORB setup direction conflicts with
-              Engineering and the supplied evidence does not
-              sufficiently justify the Engineering direction.
+            - Explicit risk constraint blocks the trade.
+            - Conflicting open position blocks the trade.
+            - Explicit portfolio constraint blocks the trade.
+            - Material supplied news invalidates the setup.
+            - Strong explicit contradictory evidence exists.
+            - Original JUDAS/ORB direction conflicts with Engineering
+              and supplied evidence does not sufficiently justify
+              Engineering direction.
 
-            Do NOT recommend HOLD because:
+            Do NOT recommend HOLD merely because:
 
             - news is unavailable
-            - news is empty
-            - news is stale
             - news is neutral
-            - optional contextual data is missing
-            - information is incomplete
-            - there is general uncertainty alone
-
-            Missing information is NOT the same as contradictory
-            information.
-
-            =======================================================
-            OPEN POSITION RULE
-            =======================================================
-
-            If an existing position explicitly conflicts with opening
-            another position, do not recommend a duplicate or
-            conflicting trade.
-
-            Only use HOLD for this reason when the supplied position
-            context clearly indicates an actual conflict.
-
-            If no open position exists, do not invent one.
+            - optional context is missing
+            - there is general uncertainty
 
             =======================================================
             CONFIDENCE RULES
@@ -330,55 +336,71 @@ public class AiDecisionPromptBuilder {
 
             Confidence must be an integer between 0 and 100.
 
-            When confirming a strong Engineering BUY or SELL,
-            confidence should remain reasonably aligned with the
-            Engineering confidence.
+            When confirming Engineering BUY or SELL:
 
-            Do not reduce confidence to a neutral level merely
-            because optional news or contextual data is unavailable.
+            - Keep confidence reasonably aligned with Engineering
+              confidence.
+            - Do not arbitrarily increase confidence.
+            - Do not arbitrarily reduce confidence because optional
+              information is unavailable.
 
-            When the original JUDAS/ORB setup direction and
-            Engineering direction conflict, confidence should reflect
-            the quality of the evidence supporting the Engineering
-            direction.
-
-            Do not assign high confidence merely because Engineering
-            produced BUY or SELL when the original strategy direction
-            materially conflicts and the supporting evidence is weak.
+            When Engineering and JUDAS/ORB directions conflict,
+            confidence must reflect the quality of the evidence.
 
             =======================================================
-            FINAL DECISION CONSISTENCY RULE
+            FINAL DECISION CONSISTENCY
             =======================================================
 
-            If recommendation is BUY:
+            If recommendation = BUY:
 
-            tradeAllowed MUST be true unless an explicit constraint
-            prevents execution.
+            tradeAllowed MUST be true.
 
-            If recommendation is SELL:
+            If recommendation = SELL:
 
-            tradeAllowed MUST be true unless an explicit constraint
-            prevents execution.
+            tradeAllowed MUST be true.
 
-            If recommendation is HOLD:
+            If recommendation = HOLD:
 
             tradeAllowed MUST be false.
 
-            Do not return:
+            Never return:
 
-            recommendation = BUY
-            tradeAllowed = false
+            recommendation = HOLD
+            tradeAllowed = true
 
-            unless the reason explicitly identifies the exact
-            constraint preventing execution.
+            =======================================================
+            EXECUTION PLAN RULES
+            =======================================================
 
-            Do not return:
+            For BUY:
 
-            recommendation = SELL
-            tradeAllowed = false
+              stopLoss < entry < target
 
-            unless the reason explicitly identifies the exact
-            constraint preventing execution.
+            For SELL:
+
+              target < entry < stopLoss
+
+            Entry MUST equal the supplied current price.
+
+            Never return:
+
+              entry == target
+
+            Never return:
+
+              entry == stopLoss
+
+            Never return an execution plan that contradicts
+            the recommendation.
+
+            Position size is NOT decided by the AI.
+
+            The Risk/Position Sizing service is responsible
+            for final quantity.
+
+            Therefore:
+
+            positionSize should be 0.
 
             =======================================================
             RESPONSE FORMAT
@@ -388,7 +410,7 @@ public class AiDecisionPromptBuilder {
 
             Do not return Markdown.
 
-            Do not return explanations outside the JSON.
+            Do not return explanations outside JSON.
 
             Return exactly this structure:
 
@@ -398,52 +420,96 @@ public class AiDecisionPromptBuilder {
                 "recommendation": "BUY",
                 "confidence": 75,
                 "decisionStrength": "HIGH",
-                "reason": "Engineering BUY confirmed because no explicit material contradictory evidence or execution constraint was found."
-              }
+                "reason": "Engineering BUY confirmed because no explicit material contradictory evidence was found."
+              },
+              "executionPlan": {
+                "entry": 245.35,
+                "target": 251.20,
+                "stopLoss": 242.80,
+                "positionSize": 0,
+                "holdingPeriod": "INTRADAY",
+                "exitStrategy": "Target or Stop Loss"
+              },
+              "aiReasoning": "Engineering decision validated using supplied technical, strategy, risk and contextual information."
             }
 
             =======================================================
             FINAL INSTRUCTION
             =======================================================
 
-            The default action is to FOLLOW the Engineering Decision.
-
-            However, the original JUDAS/ORB setup direction is
-            important contextual evidence and MUST be considered.
-
-            When the original strategy direction and Engineering
-            direction agree, this is directional alignment.
-
-            When they disagree, explicitly evaluate the disagreement
-            using only the supplied evidence.
+            The default action is to validate the Engineering Decision.
 
             Do not invent evidence.
 
-            Do not automatically follow the original strategy.
+            Do not invent market information.
 
-            Do not automatically follow Engineering when a material
-            directional conflict exists without sufficient support.
+            Do not invent news.
 
-            Override Engineering only with explicit, material,
-            contextual evidence or when a material unresolved
-            conflict between the original strategy direction and
-            Engineering direction remains.
+            Do not independently create a new trading strategy.
 
-            Missing, neutral, stale or unavailable news is NOT
-            sufficient evidence to override Engineering.
+            BUY and SELL must be evaluated symmetrically.
 
-            When Engineering recommends BUY or SELL and no explicit
-            blocking condition or material unresolved directional
-            conflict exists, CONFIRM the Engineering Decision.
-            """
-                .formatted(
-                        signalRequestSection,
-                        technicalDecisionSection,
-                        sectorSummary,
-                        newsSection,
-                        portfolioSection,
-                        openPositionSection
-                );
+            If Engineering BUY is valid, confirm BUY.
+
+            If Engineering SELL is valid, confirm SELL.
+
+            If Engineering cannot be safely validated because of
+            explicit contradictory evidence, return HOLD.
+
+            HOLD MUST always have tradeAllowed=false.
+
+            =======================================================
+            STRUCTURED INPUTS USED BY THIS DECISION
+            =======================================================
+
+            SIGNAL_REQUEST:
+            %s
+
+            ENGINEERING_DECISION:
+            %s
+
+            """.formatted(
+                signalRequestSection,
+                technicalDecisionSection,
+                sectorSummary,
+                newsSection,
+                portfolioSection,
+                openPositionSection,
+                signalRequestSection,
+                technicalDecisionSection
+        );
+    }
+
+    /**
+     * Serialize DTOs as real JSON.
+     *
+     * IMPORTANT:
+     * Never use Object.toString() for AI prompt data.
+     */
+    private String toJson(
+            Object object,
+            String fallback) {
+
+        if (object == null) {
+            return fallback;
+        }
+
+        try {
+            return objectMapper
+                    .writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(object);
+
+        } catch (Exception ex) {
+
+            return """
+                    DATA_SERIALIZATION_ERROR
+
+                    The supplied context could not be serialized.
+
+                    Do NOT infer or invent missing values.
+                    Treat this context as unavailable.
+                    """;
+        }
     }
 
     private String buildNewsSection(
@@ -458,13 +524,13 @@ public class AiDecisionPromptBuilder {
 
                 Treat this as NEUTRAL context.
 
-                This is NOT negative evidence.
-
-                This MUST NOT override an Engineering BUY or SELL.
+                This MUST NOT convert BUY to SELL.
+                This MUST NOT convert SELL to BUY.
                 """;
         }
 
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder =
+                new StringBuilder();
 
         builder.append("NEWS STATUS: AVAILABLE\n");
 
@@ -484,7 +550,8 @@ public class AiDecisionPromptBuilder {
                     builder.append("\nSource: ")
                             .append(article.getSource());
 
-                    builder.append("\n-------------------------\n");
+                    builder.append(
+                            "\n-------------------------\n");
                 });
 
         return builder.toString();

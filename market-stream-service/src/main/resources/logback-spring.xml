@@ -28,9 +28,10 @@
                 ${LOG_PATH}/market-stream-service-%d{yyyy-MM-dd}.%i.log
             </fileNamePattern>
 
+            <!-- Keep the same diagnostic detail while preventing unbounded disk growth. -->
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>10GB</totalSizeCap>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
 
         </rollingPolicy>
 
@@ -40,6 +41,11 @@
 
     </appender>
 
+    <!--
+     * Normal operational logs remain INFO.
+     * High-frequency market-feed diagnostics are already DEBUG in the Java code.
+     * WARN/ERROR remain visible for actual feed and service problems.
+     -->
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>

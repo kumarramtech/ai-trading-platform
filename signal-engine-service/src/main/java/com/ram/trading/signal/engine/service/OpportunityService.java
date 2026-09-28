@@ -9,6 +9,8 @@ import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
 import com.ram.trading.signal.engine.repo.OpportunityRepository;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
+import com.ram.trading.signal.engine.risk.PositionSizingResult;
+import com.ram.trading.signal.engine.risk.PositionSizingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,7 @@ public class OpportunityService {
     private final PaperTradingService paperTradingService;
     private final PaperTradeRepository paperTradeRepository;
     private final TechnicalIndicatorService technicalIndicatorService;
+    private final PositionSizingService positionSizingService;
 
     public Opportunity save(TradingSignal signal,Long signalId) {
         Opportunity opportunity =
@@ -97,61 +100,219 @@ public class OpportunityService {
 
     public Mono<Void> executeSelectedOpportunities() {
 
+        log.info("Starting execution of selected opportunities");
+
+        /*
+         * ============================================================
+         * STEP 1 : GET SELECTED OPPORTUNITIES
+         * ============================================================
+         */
         List<Opportunity> opportunities =
                 opportunityRepository.findBySelectedTrue();
-        log.info("Executing {} selected opportunities", opportunities.size());
-        return Flux.fromIterable(opportunities)
 
-                .filter(opportunity -> {
+        if (opportunities == null || opportunities.isEmpty()) {
 
-                    boolean exists =
-                            paperTradeRepository.existsBySymbolAndStatus(
-                                    opportunity.getSymbol(),
-                                    SignalStatus.OPEN);
+            log.info("No selected opportunities found");
 
-                    if (exists) {
+            return Mono.empty();
+        }
 
+        /*
+         * ============================================================
+         * STEP 2 : PROCESS EACH OPPORTUNITY
+         * ============================================================
+         */
+        for (Opportunity opportunity : opportunities) {
+
+            /*
+             * --------------------------------------------------------
+             * Validate Signal ID
+             * --------------------------------------------------------
+             */
+            if (opportunity.getSignalId() == null) {
+
+                log.warn(
+                        "OPPORTUNITY EXECUTION SKIPPED | " +
+                                "Symbol={} | Reason=SignalId is null",
+                        opportunity.getSymbol());
+
+                continue;
+            }
+
+            String symbol =
+                    opportunity.getSymbol();
+
+            Long signalId =
+                    opportunity.getSignalId();
+
+            log.info(
+                    "Executing selected opportunity | " +
+                            "Symbol={} | SignalId={}",
+                    symbol,
+                    signalId);
+
+            /*
+             * ========================================================
+             * STEP 3 : CHECK EXISTING OPEN PAPER TRADE
+             * ========================================================
+             */
+            boolean openTradeExists =
+                    paperTradeRepository
+                            .findTopBySymbolAndStatusOrderByEntryTimeDesc(
+                                    symbol,
+                                    SignalStatus.OPEN)
+                            .isPresent();
+
+            if (openTradeExists) {
+
+                log.warn(
+                        "OPPORTUNITY EXECUTION SKIPPED | " +
+                                "Symbol={} | Reason=Open trade already exists",
+                        symbol);
+
+                continue;
+            }
+
+            /*
+             * ========================================================
+             * STEP 4 : LOAD TRADING SIGNAL
+             * ========================================================
+             *
+             * IMPORTANT:
+             *
+             * findById() returns TradingSignalEntity directly.
+             * It does NOT return Mono<TradingSignalEntity>.
+             *
+             * Therefore DO NOT use flatMap() here.
+             */
+            TradingSignalEntity savedSignal =
+                    tradingSignalService.findById(signalId);
+
+            if (savedSignal == null) {
+
+                log.warn(
+                        "OPPORTUNITY EXECUTION SKIPPED | " +
+                                "Symbol={} | SignalId={} | " +
+                                "Reason=Trading signal not found",
+                        symbol,
+                        signalId);
+
+                continue;
+            }
+
+            /*
+             * ========================================================
+             * STEP 5 : CALCULATE TECHNICAL INDICATORS
+             * ========================================================
+             */
+            technicalIndicatorService
+                    .calculate(symbol)
+
+                    .doOnNext(indicator -> {
+
+                        /*
+                         * ====================================================
+                         * STEP 6 : POSITION SIZING
+                         * ====================================================
+                         *
+                         * Use the SAME risk-based position sizing
+                         * used by SignalGenerationServiceImpl.
+                         */
+                        PositionSizingResult sizingResult =
+                                positionSizingService
+                                        .calculate(convertToTradingSignal(savedSignal));
+
+                        /*
+                         * ----------------------------------------------------
+                         * Position sizing validation
+                         * ----------------------------------------------------
+                         */
+                        if (!sizingResult.isValid()) {
+
+                            log.warn(
+                                    "POSITION SIZING REJECTED | " +
+                                            "Symbol={} | Reason={}",
+                                    savedSignal.getSymbol(),
+                                    sizingResult.getRejectionReason());
+
+                            return;
+                        }
+
+                        /*
+                         * ----------------------------------------------------
+                         * Get risk-based quantity
+                         * ----------------------------------------------------
+                         */
+                        int riskBasedQuantity =
+                                sizingResult.getRiskBasedQuantity();
+
+                        if (riskBasedQuantity <= 0) {
+
+                            log.warn(
+                                    "POSITION SIZING REJECTED | " +
+                                            "Symbol={} | RiskQuantity={}",
+                                    savedSignal.getSymbol(),
+                                    riskBasedQuantity);
+
+                            return;
+                        }
+
+                        /*
+                         * ====================================================
+                         * POSITION SIZING LOG
+                         * ====================================================
+                         */
                         log.info(
-                                "Skipping {} - OPEN trade already exists",
-                                opportunity.getSymbol());
+                                "OPPORTUNITY EXECUTION POSITION SIZING | " +
+                                        "Symbol={} | Entry={} | StopLoss={} | " +
+                                        "RiskPerShare={} | MaxRisk={} | " +
+                                        "RiskQuantity={} | ExpectedRisk={}",
 
-                    } else {
+                                savedSignal.getSymbol(),
 
-                        log.info(
-                                "Creating trade for {}",
-                                opportunity.getSymbol());
-                    }
+                                savedSignal.getEntryPrice(),
 
-                    return !exists;
-                })
+                                savedSignal.getStopLoss(),
 
-                .filter(opportunity ->
-                        opportunity.getSignalId() != null)
+                                sizingResult.getRiskPerShare(),
 
-                .flatMap(opportunity -> {
+                                sizingResult.getMaxRiskPerTrade(),
 
-                    TradingSignalEntity savedSignal =
-                            tradingSignalService.findById(
-                                    opportunity.getSignalId());
+                                riskBasedQuantity,
 
-                    if (savedSignal == null) {
+                                sizingResult.getExpectedRisk());
 
-                        log.warn(
-                                "Signal not found for opportunity {}",
-                                opportunity.getId());
+                        /*
+                         * ====================================================
+                         * STEP 7 : CREATE PAPER TRADE
+                         * ====================================================
+                         */
+                        paperTradingService.createTrade(
+                                savedSignal,
+                                indicator,
+                                riskBasedQuantity);
+                    })
 
-                        return Mono.empty();
-                    }
+                    /*
+                     * ========================================================
+                     * STEP 8 : ERROR HANDLING
+                     * ========================================================
+                     */
+                    .doOnError(error ->
+                            log.error(
+                                    "OPPORTUNITY EXECUTION FAILED | " +
+                                            "Symbol={} | SignalId={} | Error={}",
+                                    symbol,
+                                    signalId,
+                                    error.getMessage(),
+                                    error))
 
-                    return technicalIndicatorService
-                            .calculate(opportunity.getSymbol())
-                            .doOnNext(indicator ->
-                                    paperTradingService.createTrade(
-                                            savedSignal,
-                                            indicator));
-                })
+                    .onErrorResume(error -> Mono.empty())
 
-                .then();
+                    .subscribe();
+        }
+
+        return Mono.empty();
     }
 
     public List<TradeLifecycleDto> getTradeLifecycle() {
@@ -227,6 +388,19 @@ public class OpportunityService {
                 .exitTime(
                         trade.getExitTime())
 
+                .build();
+    }
+
+    private TradingSignal convertToTradingSignal(
+            TradingSignalEntity entity) {
+
+        return TradingSignal.builder()
+                .symbol(entity.getSymbol())
+                .signal(entity.getSignal())
+                .entryPrice(entity.getEntryPrice())
+                .stopLoss(entity.getStopLoss())
+                .targetPrice(entity.getTargetPrice())
+                .confidence(entity.getConfidence())
                 .build();
     }
 

@@ -14,9 +14,13 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class PaperTradingAccountServiceImpl implements PaperTradingAccountService {
+public class PaperTradingAccountServiceImpl
+        implements PaperTradingAccountService {
 
     private final PaperTradingAccountRepository accountRepository;
+
+    private final PaperTradingAccountTransactionService
+            accountTransactionService;
 
     @Value("${paper.trading.initial-balance}")
     private Double initialBalance;
@@ -49,94 +53,43 @@ public class PaperTradingAccountServiceImpl implements PaperTradingAccountServic
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * The actual balance mutation is executed inside a separate
+     * transactional service. The transaction must remain open while
+     * the pessimistic row lock is held.
+     */
     @Override
     public Mono<Void> reserveMargin(Double requiredMargin) {
 
-        return Mono.<Void>fromRunnable(() -> {
-
-            PaperTradingAccount account =
-                    accountRepository.findFirstByOrderByIdAsc()
-                            .orElseThrow(() ->
-                                    new IllegalStateException(
-                                            "Paper trading account not found"));
-
-            double availableBalance =
-                    account.getAvailableBalance();
-
-            if (availableBalance < requiredMargin) {
-
-                throw new IllegalStateException(
-                        "Insufficient balance. Available = "
-                                + availableBalance
-                                + ", Required Margin = "
-                                + requiredMargin);
-            }
-
-            account.setAvailableBalance(
-                    availableBalance - requiredMargin);
-
-            account.setUsedMargin(
-                    account.getUsedMargin() + requiredMargin);
-
-            account.setUpdatedAt(LocalDateTime.now());
-
-            accountRepository.save(account);
-
-            log.info(
-                    "Margin Reserved | Required Margin = {} | "
-                            + "Available Balance = {} | Used Margin = {}",
-                    requiredMargin,
-                    account.getAvailableBalance(),
-                    account.getUsedMargin());
-
-        }).subscribeOn(Schedulers.boundedElastic());
+        return Mono.fromRunnable(() ->
+                        accountTransactionService
+                                .reserveMargin(requiredMargin))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then();
     }
 
+    /**
+     * Releases the reserved margin and applies the realized P/L.
+     *
+     * The margin is returned first and the realized P/L is then applied:
+     *
+     * available = available + requiredMargin + profitLoss
+     *
+     * The operation is performed atomically while the account row is
+     * pessimistically locked.
+     */
     @Override
     public Mono<Void> releaseMargin(
             Double requiredMargin,
             Double profitLoss) {
 
-        return Mono.<Void>fromRunnable(() -> {
-
-            PaperTradingAccount account =
-                    accountRepository.findFirstByOrderByIdAsc()
-                            .orElseThrow(() ->
-                                    new IllegalStateException(
-                                            "Paper trading account not found"));
-
-            double newAvailableBalance =
-                    account.getAvailableBalance()
-                            + requiredMargin
-                            + profitLoss;
-
-            account.setAvailableBalance(newAvailableBalance);
-
-            account.setUsedMargin(
-                    Math.max(
-                            0.0,
-                            account.getUsedMargin() - requiredMargin));
-
-            account.setRealizedPnl(
-                    account.getRealizedPnl() + profitLoss);
-
-            account.setUpdatedAt(LocalDateTime.now());
-
-            accountRepository.save(account);
-
-            log.info(
-                    "Margin Released | Required Margin = {} | "
-                            + "Profit/Loss = {} | "
-                            + "Available Balance = {} | "
-                            + "Used Margin = {} | "
-                            + "Realized PnL = {}",
-                    requiredMargin,
-                    profitLoss,
-                    account.getAvailableBalance(),
-                    account.getUsedMargin(),
-                    account.getRealizedPnl());
-
-        }).subscribeOn(Schedulers.boundedElastic());
+        return Mono.fromRunnable(() ->
+                        accountTransactionService
+                                .releaseMargin(
+                                        requiredMargin,
+                                        profitLoss))
+                .subscribeOn(Schedulers.boundedElastic())
+                .then();
     }
 
     @Override

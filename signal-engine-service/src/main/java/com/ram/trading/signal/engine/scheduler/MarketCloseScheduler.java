@@ -16,7 +16,10 @@ public class MarketCloseScheduler {
 
     private final TradingSessionService tradingSessionService;
 
-    @Scheduled(cron = "0 20-29 15 * * MON-FRI")
+    @Scheduled(
+            cron = "0 20-29 15 * * MON-FRI",
+            zone = "Asia/Kolkata"
+    )
     public void autoSquareOff() {
 
         if (!tradingSessionService.shouldForceCloseTrades()) {

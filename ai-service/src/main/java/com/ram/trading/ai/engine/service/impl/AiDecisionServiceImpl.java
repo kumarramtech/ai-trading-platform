@@ -58,6 +58,7 @@ public class AiDecisionServiceImpl implements AiDecisionService {
          * STEP 1 : READ AI EVALUATION STATE ONCE
          * ============================================================
          */
+
         AiEvaluationState previousState =
                 aiCallControlService
                         .getEvaluationState(request);
@@ -67,6 +68,7 @@ public class AiDecisionServiceImpl implements AiDecisionService {
          * STEP 2 : REDIS AI CALL CONTROL
          * ============================================================
          */
+
         AiDecisionResponse validatedPreviousResponse =
                 previousState != null
                         ? aiDecisionValidator.validate(
@@ -76,14 +78,14 @@ public class AiDecisionServiceImpl implements AiDecisionService {
         boolean previousResponseInvalid =
                 previousState != null
                         && previousState.getAiDecisionResponse() != null
-                        && validatedPreviousResponse != previousState.getAiDecisionResponse();
+                        && validatedPreviousResponse
+                        != previousState.getAiDecisionResponse();
 
         boolean shouldCallAi =
                 previousResponseInvalid
-                        || aiCallControlService
-                        .shouldCallAi(
-                                request,
-                                previousState);
+                        || aiCallControlService.shouldCallAi(
+                        request,
+                        previousState);
 
         if (!shouldCallAi) {
 
@@ -96,13 +98,6 @@ public class AiDecisionServiceImpl implements AiDecisionService {
                 return validatedPreviousResponse;
             }
 
-            /*
-             * Safety fallback.
-             *
-             * Normally this should never happen because
-             * a state is recorded only after a successful AI
-             * evaluation.
-             */
             log.warn(
                     "AI CALL SKIPPED | {} | Previous AI response unavailable | FALLBACK",
                     symbol);
@@ -112,14 +107,12 @@ public class AiDecisionServiceImpl implements AiDecisionService {
 
         /*
          * ============================================================
-         * STEP 3 : EXISTING EXACT REQUEST CACHE
+         * STEP 3 : EXACT REQUEST CACHE
          * ============================================================
-         *
-         * V2 logic remains unchanged.
          */
+
         String cacheKey =
-                CacheKeyBuilder
-                        .buildAiDecisionKey(request);
+                CacheKeyBuilder.buildAiDecisionKey(request);
 
         AiDecisionResponse cachedResponse =
                 redisCacheService.get(
@@ -134,32 +127,19 @@ public class AiDecisionServiceImpl implements AiDecisionService {
             if (validatedCachedResponse == cachedResponse) {
 
                 log.info(
-                        "=========================================");
-
-                log.info(
-                        "AI CACHE HIT");
-
-                log.info(
-                        "KEY : {}",
+                        "AI CACHE HIT | {} | KEY={}",
+                        symbol,
                         cacheKey);
 
-                log.info(
-                        "Returning cached AI Decision for {}",
-                        symbol);
-
-                log.info(
-                        "=========================================");
-
-                aiCallControlService
-                        .recordAiEvaluation(
-                                request,
-                                validatedCachedResponse);
+                aiCallControlService.recordAiEvaluation(
+                        request,
+                        validatedCachedResponse);
 
                 return validatedCachedResponse;
             }
 
             log.warn(
-                    "AI CACHE ENTRY INVALID | {} | Ignoring cached response and requesting a fresh AI decision",
+                    "AI CACHE ENTRY INVALID | {} | Requesting fresh AI decision",
                     symbol);
         }
 
@@ -175,72 +155,106 @@ public class AiDecisionServiceImpl implements AiDecisionService {
             log.info(
                     "AI CACHE MISS");
 
-            log.info(
-                    "Invoking AI Gateway...");
-
-            log.info(
-                    "=========================================");
+            /*
+             * ========================================================
+             * BUILD STRUCTURED AI PROMPT
+             * ========================================================
+             */
 
             String prompt =
-                    promptBuilder
-                            .buildPrompt(request);
+                    promptBuilder.buildPrompt(request);
 
-            String aiResponse =
-                    aiGatewayService
-                            .analyze(prompt);
+            /*
+             * IMPORTANT:
+             * Keep this temporarily while testing.
+             *
+             * This lets us verify that the AI receives real JSON
+             * instead of Java object references.
+             */
 
             log.info(
-                    "AI RAW RESPONSE:\n{}",
+                    "AI PROMPT | {}:\n{}",
+                    symbol,
+                    prompt);
+
+            /*
+             * ========================================================
+             * CALL AI
+             * ========================================================
+             */
+
+            String aiResponse =
+                    aiGatewayService.analyze(prompt);
+
+            log.info(
+                    "AI RAW RESPONSE | {}:\n{}",
+                    symbol,
                     aiResponse);
+
+            /*
+             * ========================================================
+             * PARSE + VALIDATE
+             * ========================================================
+             */
+
+            AiDecisionResponse parsedResponse =
+                    parser.parse(aiResponse);
 
             AiDecisionResponse response =
                     aiDecisionValidator.validate(
-                            parser.parse(aiResponse));
+                            parsedResponse);
 
             log.info(
-                    "Parsed Response : {}",
-                    response);
+                    "AI FINAL DECISION | {} | recommendation={} | tradeAllowed={} | confidence={}",
+                    symbol,
+                    response.getDecision() != null
+                            ? response.getDecision().getRecommendation()
+                            : null,
+                    response.getDecision() != null
+                            ? response.getDecision().getTradeAllowed()
+                            : null,
+                    response.getDecision() != null
+                            ? response.getDecision().getConfidence()
+                            : null);
 
             /*
-             * Existing exact-request cache.
+             * ========================================================
+             * CACHE
+             * ========================================================
              */
+
             redisCacheService.put(
                     cacheKey,
                     response,
                     CacheConstants.AI_DECISION_TTL);
 
             /*
-             * Record successful AI evaluation state.
+             * ========================================================
+             * RECORD AI EVALUATION
+             * ========================================================
              */
-            aiCallControlService
-                    .recordAiEvaluation(
-                            request,
-                            response);
+
+            aiCallControlService.recordAiEvaluation(
+                    request,
+                    response);
 
             return response;
 
-        } catch (LLMProviderException | CircuitBreakerOpenException ex) {
+        } catch (LLMProviderException |
+                 CircuitBreakerOpenException ex) {
 
             log.error(
-                    "=========================================");
-
-            log.error(
-                    "AI PROVIDERS UNAVAILABLE.");
-
-            log.error(
-                    "Using Engineering Decision as availability fallback.");
-
-            log.error(
-                    "=========================================",
+                    "AI PROVIDERS UNAVAILABLE. "
+                            + "Using Engineering Decision as availability fallback.",
                     ex);
 
             /*
-             * IMPORTANT:
+             * Do NOT record AI evaluation state.
              *
-             * Do NOT record AI evaluation state here.
-             * The AI provider path failed, therefore the next
-             * evaluation must remain eligible for AI.
+             * AI failed, so the next evaluation should remain
+             * eligible for another AI call.
              */
+
             return buildFallbackResponse(request);
 
         } catch (Exception ex) {
@@ -251,10 +265,10 @@ public class AiDecisionServiceImpl implements AiDecisionService {
                     ex);
 
             /*
-             * Parser/validation/unexpected processing errors must NOT
-             * fall back to a directional Engineering trade.
-             * Use a safe HOLD response instead.
+             * Parser/validation/unexpected processing errors
+             * must result in HOLD.
              */
+
             return buildSafeFallbackResponse();
         }
     }

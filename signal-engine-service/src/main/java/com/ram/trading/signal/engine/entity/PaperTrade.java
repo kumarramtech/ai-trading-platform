@@ -72,4 +72,16 @@ public class PaperTrade {
 
     @Enumerated(EnumType.STRING)
     private ExitReason exitReason;
+
+    @Column(name = "target_extended")
+    private Boolean targetExtended = false;
+
+    @Column(name = "original_target_price")
+    private Double originalTargetPrice;
+
+    @Column(name = "target_extended_time")
+    private LocalDateTime targetExtendedTime;
+
+    @Column(name = "target_extension_reason")
+    private String targetExtensionReason;
 }
