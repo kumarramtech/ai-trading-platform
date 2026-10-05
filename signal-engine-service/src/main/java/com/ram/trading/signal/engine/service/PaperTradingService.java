@@ -21,6 +21,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.entity.TradingSignalEntity;
 import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
+import com.ram.trading.signal.engine.risk.PositionSizingResult;
 import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import com.ram.trading.signal.engine.util.TradeUtil;
@@ -32,10 +33,6 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-import com.ram.trading.signal.engine.dto.InstrumentResponse;
-import com.ram.trading.signal.engine.dto.MarginCalculationResponse;
-import com.ram.trading.signal.engine.dto.MarginInstrumentRequest;
-import com.ram.trading.signal.engine.dto.UpstoxMarginRequest;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -77,12 +74,6 @@ public class PaperTradingService {
     private long reentryCooldownMinutes;
 
 
-    @Value("${trading.capital-per-trade}")
-    private double capitalPerTrade;
-
-    @Value("${trading.margin-per-trade:${trading.capital-per-trade}}")
-    private double targetMarginPerTrade;
-
     @Value("${trading.total-capital}")
     private double totalCapital;
 
@@ -92,7 +83,7 @@ public class PaperTradingService {
     public synchronized void createTrade(
             TradingSignalEntity signal,
             TechnicalIndicatorResponse indicatorResponse,
-            int riskBasedQuantity) {
+            PositionSizingResult sizingResult) {
 
         /*
          * ============================================================
@@ -161,27 +152,39 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 5 : RISK-BASED QUANTITY
+         * STEP 5 : APPROVED MARGIN-BASED POSITION SIZE
          * ============================================================
+         *
+         * PositionSizingService has already calculated the quantity
+         * using the broker's actual margin requirement and the
+         * configured ₹10,000 target margin.
+         *
+         * PaperTradingService must not recalculate or reduce the
+         * quantity based on the old ₹250 risk-sizing rule.
          */
-
-        if (riskBasedQuantity <= 0) {
+        if (sizingResult == null || !sizingResult.isValid()) {
 
             log.info(
-                    "Risk based quantity is zero. "
-                            + "Skipping trade | Symbol={} | RiskQuantity={}",
+                    "Position sizing is invalid. Skipping trade | Symbol={} | Reason={}",
                     signal.getSymbol(),
-                    riskBasedQuantity);
+                    sizingResult != null
+                            ? sizingResult.getRejectionReason()
+                            : "Sizing result is null");
 
             return;
         }
 
-        int quantity = riskBasedQuantity;
+        int quantity = sizingResult.getMarginBasedQuantity();
 
-        log.info(
-                "RISK BASED QUANTITY | Symbol={} | RiskQuantity={}",
-                signal.getSymbol(),
-                riskBasedQuantity);
+        if (quantity <= 0) {
+            log.info(
+                    "Approved quantity is zero. Skipping trade | Symbol={}",
+                    signal.getSymbol());
+            return;
+        }
+
+        double requiredMargin = sizingResult.getRequiredMargin();
+        double leverage = sizingResult.getLeverage();
 
         /*
          * ============================================================
@@ -201,7 +204,7 @@ public class PaperTradingService {
                 "Used Capital        : {}",
                 totalCapital - availableCapital);
         log.info("Available Capital   : {}", availableCapital);
-        log.info("Required Capital    : {}", investmentAmount);
+        log.info("Required Margin     : {}", requiredMargin);
         log.info("Minimum Capital     : {}", minAvailableCapital);
         log.info("======================================");
 
@@ -220,6 +223,17 @@ public class PaperTradingService {
             log.warn(
                     "Existing open trades will continue to be monitored.");
             log.warn("======================================");
+
+            return;
+        }
+
+        if (availableCapital < requiredMargin) {
+
+            log.warn(
+                    "INSUFFICIENT PAPER MARGIN | Symbol={} | RequiredMargin={} | AvailableMargin={}",
+                    signal.getSymbol(),
+                    requiredMargin,
+                    availableCapital);
 
             return;
         }
@@ -317,248 +331,41 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 11 : GET INSTRUMENT KEY
+         * STEP 11 : APPROVED EXECUTION DATA
          * ============================================================
+         *
+         * Instrument/margin lookup was already performed by the
+         * position-sizing layer. No duplicate broker lookup is needed.
          */
-        long instrumentStart = System.currentTimeMillis();
 
-        InstrumentResponse instrumentResponse =
-                stockServiceClient
-                        .getInstrument(signal.getSymbol())
-                        .block();
-
+        /*
+         * ============================================================
+         * STEP 12 : USE APPROVED BROKER MARGIN RESULT
+         * ============================================================
+         *
+         * Margin calculation and quantity sizing were completed by
+         * PositionSizingService. This service only consumes the result.
+         */
         log.info(
-                "INSTRUMENT LOOKUP COMPLETED | Symbol={} | DurationMs={}",
+                "APPROVED TRADE SIZING | Symbol={} | TargetMargin={} | " +
+                        "RequiredMargin={} | Qty={} | Exposure={} | Leverage={}",
                 signal.getSymbol(),
-                System.currentTimeMillis() - instrumentStart);
-
-        if (instrumentResponse == null
-                || instrumentResponse.getInstrumentKey() == null
-                || instrumentResponse.getInstrumentKey().isBlank()) {
-
-            log.error(
-                    "Instrument Key not found | Symbol={}",
-                    signal.getSymbol());
-
-            return;
-        }
-
-        String instrumentKey =
-                instrumentResponse.getInstrumentKey();
-
-        log.info(
-                "Instrument Resolved | Symbol={} | InstrumentKey={}",
-                signal.getSymbol(),
-                instrumentKey);
-
-        /*
-         * ============================================================
-         * STEP 12 : BROKER-AWARE MARGIN CHECK
-         *
-         * IMPORTANT:
-         *
-         * PositionSizingService owns the risk-based quantity.
-         *
-         * PaperTradingService can REDUCE quantity when margin is
-         * insufficient.
-         *
-         * PaperTradingService MUST NEVER INCREASE quantity.
-         * ============================================================
-         */
-        final double targetMargin = targetMarginPerTrade;
-
-        int sizingQuantity = quantity;
-
-        MarginCalculationResponse marginResponse = null;
-
-        for (int attempt = 1; attempt <= 4; attempt++) {
-
-            MarginInstrumentRequest marginInstrument =
-                    MarginInstrumentRequest.builder()
-                            .instrumentKey(instrumentKey)
-                            .quantity(sizingQuantity)
-                            .transactionType(signal.getSignal())
-                            .product("I")
-                            .price(
-                                    BigDecimal.valueOf(
-                                            signal.getEntryPrice()))
-                            .build();
-
-            UpstoxMarginRequest marginRequest =
-                    UpstoxMarginRequest.builder()
-                            .instruments(
-                                    List.of(marginInstrument))
-                            .build();
-
-            try {
-
-                marginResponse =
-                        balanceMarginClient
-                                .calculateMargin(marginRequest)
-                                .block();
-
-            } catch (Exception ex) {
-
-                log.error(
-                        "MARGIN CALCULATION FAILED | Symbol={} | Attempt={}",
-                        signal.getSymbol(),
-                        attempt,
-                        ex);
-
-                log.warn(
-                        "TRADE NOT CREATED | " +
-                                "Reason=MARGIN_UNAVAILABLE | Symbol={}",
-                        signal.getSymbol());
-
-                return;
-            }
-
-            if (marginResponse == null
-                    || marginResponse.getRequiredMargin() == null
-                    || marginResponse.getRequiredMargin() <= 0) {
-
-                log.error(
-                        "Invalid margin response - trade skipped | Symbol={}",
-                        signal.getSymbol());
-
-                return;
-            }
-
-            double required =
-                    marginResponse.getRequiredMargin();
-
-            log.info(
-                    "RISK QUANTITY MARGIN CHECK | " +
-                            "Symbol={} | Attempt={} | " +
-                            "RiskQuantity={} | Qty={} | " +
-                            "Required={} | Target={}",
-                    signal.getSymbol(),
-                    attempt,
-                    riskBasedQuantity,
-                    sizingQuantity,
-                    required,
-                    targetMargin);
-
-            /*
-             * ============================================================
-             * RISK PROTECTION
-             *
-             * If current risk-based quantity fits within target margin,
-             * accept it immediately.
-             *
-             * DO NOT increase quantity just because there is unused
-             * margin available.
-             * ============================================================
-             */
-            if (required <= targetMargin) {
-                break;
-            }
-
-            /*
-             * Margin is too high.
-             *
-             * Reduce quantity only.
-             */
-            int nextQuantity =
-                    (int) Math.floor(
-                            sizingQuantity
-                                    * (targetMargin / required));
-
-            /*
-             * NEVER increase quantity.
-             */
-            nextQuantity =
-                    Math.min(
-                            nextQuantity,
-                            sizingQuantity - 1);
-
-            if (nextQuantity <= 0) {
-
-                log.warn(
-                        "Unable to fit target margin | " +
-                                "Symbol={} | Required={} | Target={} | " +
-                                "RiskQuantity={}",
-                        signal.getSymbol(),
-                        required,
-                        targetMargin,
-                        riskBasedQuantity);
-
-                return;
-            }
-
-            sizingQuantity = nextQuantity;
-        }
-
-        /*
-         * ============================================================
-         * FINAL RISK SAFETY
-         *
-         * Final quantity can NEVER exceed the quantity calculated by
-         * PositionSizingService.
-         * ============================================================
-         */
-        quantity =
-                Math.min(
-                        sizingQuantity,
-                        riskBasedQuantity);
-
-        /*
-         * Recalculate investment based on FINAL quantity.
-         */
-        investmentAmount =
-                quantity * signal.getEntryPrice();
-
-        Double requiredMargin =
-                marginResponse.getRequiredMargin();
-
-        Double leverage =
-                marginResponse.getLeverage();
-
-        /*
-         * ============================================================
-         * FINAL MARGIN VALIDATION
-         * ============================================================
-         */
-        if (requiredMargin > targetMargin) {
-
-            log.warn(
-                    "TRADE NOT CREATED | " +
-                            "Final required margin exceeds target | " +
-                            "Symbol={} | Required={} | Target={}",
-                    signal.getSymbol(),
-                    requiredMargin,
-                    targetMargin);
-
-            return;
-        }
-
-        if (!Boolean.TRUE.equals(
-                marginResponse.getSufficientBalance())) {
-
-            log.warn(
-                    "INSUFFICIENT MARGIN FOR TRADE | " +
-                            "Symbol={} | Required={} | Available={}",
-                    signal.getSymbol(),
-                    requiredMargin,
-                    marginResponse.getAvailableBalance());
-
-            return;
-        }
-
-        log.info(
-                "TARGET MARGIN SIZING COMPLETED | " +
-                        "Symbol={} | Target={} | Required={} | " +
-                        "Qty={} | TradeValue={} | Leverage={}",
-                signal.getSymbol(),
-                targetMargin,
+                sizingResult.getTargetMargin(),
                 requiredMargin,
                 quantity,
-                marginResponse.getTradeValue(),
+                sizingResult.getTradeValue(),
                 leverage);
+
+        if (requiredMargin <= 0) {
+            log.warn(
+                    "TRADE NOT CREATED | Invalid required margin | Symbol={}",
+                    signal.getSymbol());
+            return;
+        }
 
         /*
          * ============================================================
-         * STEP 14 : RESERVE MARGIN
+         * STEP 13 : RESERVE MARGIN
          * ============================================================
          */
         long reserveStart =
@@ -592,7 +399,7 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 15 : CREATE PAPER TRADE
+         * STEP 14 : CREATE PAPER TRADE
          * ============================================================
          */
         PaperTrade saved;
@@ -803,7 +610,7 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 16 : UPDATE PORTFOLIO
+         * STEP 15 : UPDATE PORTFOLIO
          * ============================================================
          */
         portfolioClient
@@ -831,7 +638,7 @@ public class PaperTradingService {
 
         /*
          * ============================================================
-         * STEP 17 : NOTIFICATION
+         * STEP 16 : NOTIFICATION
          * ============================================================
          */
         NotificationRequest request =
@@ -2560,21 +2367,6 @@ public class PaperTradingService {
 
         return Math.max(availableCapital, 0.0);
     }
-
-    private int calculateQuantity(
-            TradingSignalEntity signal) {
-
-        int quantity =
-                (int) (targetMarginPerTrade
-                        / signal.getEntryPrice());
-
-        log.info("Calculated Quantity : {}",
-                quantity);
-
-        return Math.max(quantity, 0);
-    }
-
-
 
     public ClosedPositionResponse getClosedPositions() {
 

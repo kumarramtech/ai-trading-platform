@@ -215,82 +215,106 @@ public class OpportunityService {
                          * STEP 6 : POSITION SIZING
                          * ====================================================
                          *
-                         * Use the SAME risk-based position sizing
-                         * used by SignalGenerationServiceImpl.
+                         * Position sizing is based on the broker's actual
+                         * margin requirement and the configured target
+                         * margin per trade.
+                         *
+                         * IMPORTANT:
+                         * - ₹10,000 target margin determines entry size.
+                         * - Actual broker leverage is used.
+                         * - ₹250 max loss is an EXIT trigger only.
+                         * - ₹250 must NOT reduce entry quantity.
                          */
-                        PositionSizingResult sizingResult =
-                                positionSizingService
-                                        .calculate(convertToTradingSignal(savedSignal));
+                        positionSizingService
+                                .calculate(convertToTradingSignal(savedSignal))
+                                .subscribe(
+                                        sizingResult -> {
 
-                        /*
-                         * ----------------------------------------------------
-                         * Position sizing validation
-                         * ----------------------------------------------------
-                         */
-                        if (!sizingResult.isValid()) {
+                                            /*
+                                             * ------------------------------------------------
+                                             * Position sizing validation
+                                             * ------------------------------------------------
+                                             */
+                                            if (!sizingResult.isValid()) {
 
-                            log.warn(
-                                    "POSITION SIZING REJECTED | " +
-                                            "Symbol={} | Reason={}",
-                                    savedSignal.getSymbol(),
-                                    sizingResult.getRejectionReason());
+                                                log.warn(
+                                                        "POSITION SIZING REJECTED | " +
+                                                                "Symbol={} | Reason={}",
+                                                        savedSignal.getSymbol(),
+                                                        sizingResult.getRejectionReason());
 
-                            return;
-                        }
+                                                return;
+                                            }
 
-                        /*
-                         * ----------------------------------------------------
-                         * Get risk-based quantity
-                         * ----------------------------------------------------
-                         */
-                        int riskBasedQuantity =
-                                sizingResult.getRiskBasedQuantity();
+                                            /*
+                                             * ------------------------------------------------
+                                             * Get broker-margin based quantity
+                                             * ------------------------------------------------
+                                             */
+                                            int approvedQuantity =
+                                                    sizingResult.getMarginBasedQuantity();
 
-                        if (riskBasedQuantity <= 0) {
+                                            if (approvedQuantity <= 0) {
 
-                            log.warn(
-                                    "POSITION SIZING REJECTED | " +
-                                            "Symbol={} | RiskQuantity={}",
-                                    savedSignal.getSymbol(),
-                                    riskBasedQuantity);
+                                                log.warn(
+                                                        "POSITION SIZING REJECTED | " +
+                                                                "Symbol={} | MarginQuantity={}",
+                                                        savedSignal.getSymbol(),
+                                                        approvedQuantity);
 
-                            return;
-                        }
+                                                return;
+                                            }
 
-                        /*
-                         * ====================================================
-                         * POSITION SIZING LOG
-                         * ====================================================
-                         */
-                        log.info(
-                                "OPPORTUNITY EXECUTION POSITION SIZING | " +
-                                        "Symbol={} | Entry={} | StopLoss={} | " +
-                                        "RiskPerShare={} | MaxRisk={} | " +
-                                        "RiskQuantity={} | ExpectedRisk={}",
+                                            /*
+                                             * ====================================================
+                                             * POSITION SIZING LOG
+                                             * ====================================================
+                                             */
+                                            log.info(
+                                                    "OPPORTUNITY EXECUTION POSITION SIZING | " +
+                                                            "Symbol={} | Entry={} | StopLoss={} | " +
+                                                            "TargetMargin={} | RequiredMargin={} | " +
+                                                            "TradeValue={} | Leverage={} | " +
+                                                            "MarginQuantity={} | TechnicalStopRisk={} | " +
+                                                            "MaxLossTrigger={}",
 
-                                savedSignal.getSymbol(),
+                                                    savedSignal.getSymbol(),
 
-                                savedSignal.getEntryPrice(),
+                                                    savedSignal.getEntryPrice(),
 
-                                savedSignal.getStopLoss(),
+                                                    savedSignal.getStopLoss(),
 
-                                sizingResult.getRiskPerShare(),
+                                                    sizingResult.getTargetMargin(),
 
-                                sizingResult.getMaxRiskPerTrade(),
+                                                    sizingResult.getRequiredMargin(),
 
-                                riskBasedQuantity,
+                                                    sizingResult.getTradeValue(),
 
-                                sizingResult.getExpectedRisk());
+                                                    sizingResult.getLeverage(),
 
-                        /*
-                         * ====================================================
-                         * STEP 7 : CREATE PAPER TRADE
-                         * ====================================================
-                         */
-                        paperTradingService.createTrade(
-                                savedSignal,
-                                indicator,
-                                riskBasedQuantity);
+                                                    approvedQuantity,
+
+                                                    sizingResult.getExpectedRisk(),
+
+                                                    sizingResult.getMaxRiskPerTrade());
+
+                                            /*
+                                             * ====================================================
+                                             * STEP 7 : CREATE PAPER TRADE
+                                             * ====================================================
+                                             */
+                                            paperTradingService.createTrade(
+                                                    savedSignal,
+                                                    indicator,
+                                                    sizingResult);
+                                        },
+                                        error -> log.error(
+                                                "POSITION SIZING FAILED | " +
+                                                        "Symbol={} | SignalId={} | Error={}",
+                                                savedSignal.getSymbol(),
+                                                savedSignal.getId(),
+                                                error.getMessage(),
+                                                error));
                     })
 
                     /*

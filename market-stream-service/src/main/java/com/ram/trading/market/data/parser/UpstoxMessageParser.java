@@ -43,10 +43,6 @@ public class UpstoxMessageParser {
 
             response.getFeedsMap().forEach((instrumentKey, feed) -> {
 
-                /*
-                 * IMPORTANT DIAGNOSTIC LOG
-                 * Shows what type of feed Upstox actually delivered.
-                 */
                 log.debug(
                         "UPSTOX FEED -> instrumentKey={}, hasLtpc={}, hasFullFeed={}",
                         instrumentKey,
@@ -54,18 +50,23 @@ public class UpstoxMessageParser {
                         feed.hasFullFeed()
                 );
 
+                if (instrumentKey.contains("Nifty 50")
+                        || instrumentKey.contains("Nifty Bank")) {
+
+                    log.warn(
+                            "INDEX FEED DEBUG -> instrumentKey={}, feed={}",
+                            instrumentKey,
+                            feed
+                    );
+                }
+
                 var ltpc = extractLtpc(feed);
 
-                /*
-                 * We cannot create a valid Tick without LTP.
-                 */
                 if (ltpc == null) {
-
                     log.warn(
                             "UPSTOX FEED SKIPPED -> instrumentKey={} | LTPC not available",
                             instrumentKey
                     );
-
                     return;
                 }
 

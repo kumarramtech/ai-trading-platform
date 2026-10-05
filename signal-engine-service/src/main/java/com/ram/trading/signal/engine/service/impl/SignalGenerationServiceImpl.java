@@ -92,8 +92,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     @Override
     public Mono<TradingSignal> generateSignal(String symbol) {
 
-        log.info("========== SIGNAL GENERATION STARTED ==========");
-        log.info("Symbol : {}", symbol);
+        log.debug("GENERIC SIGNAL ANALYSIS STARTED | Symbol={}", symbol);
 
         /*
          * ============================================================
@@ -244,8 +243,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     @Override
     public Mono<TradingSignal> generateSignal(Tick tick) {
 
-        log.info(
-                "========== LIVE SIGNAL GENERATION STARTED ==========");
+        log.debug(
+                "LIVE SIGNAL GENERATION STARTED | Symbol={}",
+                tick != null ? tick.getSymbol() : "UNKNOWN");
 
         if (tick == null) {
 
@@ -391,11 +391,6 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                             recordStrategySetup(entrySetup);
 
-                            log.info(
-                                    "ENTRY STRATEGY GATE PASSED | " +
-                                            "Symbol={} | Candle={}",
-                                    tick.getSymbol(),
-                                    finalCompletedCandle.getMinute());
 
                             return technicalIndicatorService
                                     .calculate(
@@ -1208,187 +1203,119 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * ====================================================
                      * POSITION SIZING
                      *
-                     * PositionSizingService calculates the maximum
-                     * quantity allowed based on configured risk per trade.
-                     *
-                     * Example:
-                     *
-                     * Entry      = 1279.20
-                     * Stop Loss  = 1266.41
-                     * Risk/share = 12.79
-                     * Max Risk   = 300
-                     *
-                     * Risk Quantity = floor(300 / 12.79)
-                     *               = 23
-                     *
-                     * PaperTradingService will then apply its own
-                     * broker/margin constraints.
+                     * ₹10,000 is the target margin per trade.
+                     * Broker leverage is used to determine the final
+                     * exposure/quantity. The ₹250 value is NOT used to
+                     * reduce entry quantity; it is an exit loss trigger.
                      * ====================================================
                      */
-                    PositionSizingResult sizingResult =
-                            positionSizingService.calculate(signal);
+                    return positionSizingService
+                            .calculate(signal)
+                            .flatMap(sizingResult -> {
 
-                    if (!sizingResult.isValid()) {
+                                if (!sizingResult.isValid()) {
 
-                        log.warn(
-                                "POSITION SIZING REJECTED | " +
-                                        "Symbol={} | " +
-                                        "Entry={} | " +
-                                        "StopLoss={} | " +
-                                        "Reason={}",
-                                signal.getSymbol(),
-                                signal.getEntryPrice(),
-                                signal.getStopLoss(),
-                                sizingResult.getRejectionReason());
+                                    log.warn(
+                                            "POSITION SIZING REJECTED | " +
+                                                    "Symbol={} | Entry={} | " +
+                                                    "StopLoss={} | Reason={}",
+                                            signal.getSymbol(),
+                                            signal.getEntryPrice(),
+                                            signal.getStopLoss(),
+                                            sizingResult.getRejectionReason());
 
-                        return Mono.empty();
-                    }
+                                    return Mono.empty();
+                                }
 
-                    int riskBasedQuantity =
-                            sizingResult.getRiskBasedQuantity();
+                                int approvedQuantity =
+                                        sizingResult.getMarginBasedQuantity();
 
-                    if (riskBasedQuantity <= 0) {
+                                if (approvedQuantity <= 0) {
 
-                        log.warn(
-                                "POSITION SIZING REJECTED | " +
-                                        "Risk quantity is zero | " +
-                                        "Symbol={} | " +
-                                        "Entry={} | " +
-                                        "StopLoss={}",
-                                signal.getSymbol(),
-                                signal.getEntryPrice(),
-                                signal.getStopLoss());
+                                    log.warn(
+                                            "POSITION SIZING REJECTED | " +
+                                                    "Quantity is zero | Symbol={}",
+                                            signal.getSymbol());
 
-                        return Mono.empty();
-                    }
-
-                    log.info(
-                            "RISK BASED POSITION SIZING | " +
-                                    "Symbol={} | " +
-                                    "Entry={} | " +
-                                    "StopLoss={} | " +
-                                    "RiskPerShare={} | " +
-                                    "MaxRisk={} | " +
-                                    "RiskQuantity={} | " +
-                                    "ExpectedRisk={}",
-                            signal.getSymbol(),
-                            sizingResult.getEntryPrice(),
-                            sizingResult.getStopLoss(),
-                            sizingResult.getRiskPerShare(),
-                            sizingResult.getMaxRiskPerTrade(),
-                            riskBasedQuantity,
-                            sizingResult.getExpectedRisk());
-
-                    /*
-                     * ====================================================
-                     * SAVE TRADING SIGNAL
-                     * ====================================================
-                     */
-                    log.info(
-                            "Saving Trading Signal...");
-
-                    return Mono.fromCallable(
-                                    () ->
-                                            tradingSignalService
-                                                    .save(signal))
-
-                            .subscribeOn(
-                                    Schedulers.boundedElastic())
-
-                            .flatMap(entity -> {
-
-                                tradingFunnelStatisticsService
-                                        .recordSignalSaved();
+                                    return Mono.empty();
+                                }
 
                                 log.info(
-                                        "Trading Signal Saved : {}",
-                                        entity.getId());
+                                        "MARGIN BASED POSITION SIZING | " +
+                                                "Symbol={} | Entry={} | StopLoss={} | " +
+                                                "RiskPerShare={} | TargetMargin={} | " +
+                                                "Quantity={} | RequiredMargin={} | " +
+                                                "Exposure={} | Leverage={} | " +
+                                                "StopLossRisk={} | MaxLossTrigger={}",
+                                        signal.getSymbol(),
+                                        sizingResult.getEntryPrice(),
+                                        sizingResult.getStopLoss(),
+                                        sizingResult.getRiskPerShare(),
+                                        sizingResult.getTargetMargin(),
+                                        approvedQuantity,
+                                        sizingResult.getRequiredMargin(),
+                                        sizingResult.getTradeValue(),
+                                        sizingResult.getLeverage(),
+                                        sizingResult.getExpectedRisk(),
+                                        sizingResult.getMaxRiskPerTrade());
 
                                 /*
-                                 * =================================================
-                                 * SAVE OPPORTUNITY
-                                 * =================================================
+                                 * ====================================================
+                                 * SAVE TRADING SIGNAL
+                                 * ====================================================
                                  */
-                                return Mono.fromRunnable(() -> {
+                                log.info("Saving Trading Signal...");
 
-                                            log.info(
-                                                    "Saving Opportunity...");
-
-                                            opportunityService.save(
-                                                    signal,
-                                                    entity.getId());
+                                return Mono.fromCallable(
+                                                () -> tradingSignalService.save(signal))
+                                        .subscribeOn(Schedulers.boundedElastic())
+                                        .flatMap(entity -> {
 
                                             tradingFunnelStatisticsService
-                                                    .recordOpportunitySaved();
+                                                    .recordSignalSaved();
 
                                             log.info(
-                                                    "Opportunity Saved Successfully.");
+                                                    "Trading Signal Saved : {}",
+                                                    entity.getId());
 
+                                            return Mono.fromRunnable(() -> {
+
+                                                        log.info("Saving Opportunity...");
+
+                                                        opportunityService.save(
+                                                                signal,
+                                                                entity.getId());
+
+                                                        tradingFunnelStatisticsService
+                                                                .recordOpportunitySaved();
+
+                                                        log.info(
+                                                                "Opportunity Saved Successfully.");
+
+                                                    })
+                                                    .subscribeOn(Schedulers.boundedElastic())
+                                                    .thenReturn(entity);
                                         })
+                                        .flatMap(entity ->
+                                                Mono.fromRunnable(() -> {
 
-                                        .subscribeOn(
-                                                Schedulers.boundedElastic())
+                                                    log.info(
+                                                            "Creating Paper Trade | ApprovedQuantity={}",
+                                                            approvedQuantity);
 
-                                        .thenReturn(entity);
-                            })
+                                                    tradingFunnelStatisticsService
+                                                            .recordPaperTradeAttempted();
 
-                            /*
-                             * =================================================
-                             * PAPER TRADE
-                             *
-                             * IMPORTANT:
-                             *
-                             * riskBasedQuantity is now explicitly passed
-                             * into PaperTradingService.
-                             *
-                             * PaperTradingService remains responsible for:
-                             *
-                             * 1. Margin calculation
-                             * 2. Capital validation
-                             * 3. Broker margin constraint
-                             * 4. Final quantity
-                             * 5. PaperTrade persistence
-                             *
-                             * Therefore:
-                             *
-                             * Risk Quantity
-                             *        ↓
-                             * Margin Quantity
-                             *        ↓
-                             * Final Quantity
-                             * =================================================
-                             */
-                            .flatMap(entity ->
+                                                    paperTradingService.createTrade(
+                                                            entity,
+                                                            indicator,
+                                                            sizingResult);
 
-                                    Mono.fromRunnable(() -> {
-
-                                                log.info(
-                                                        "Creating Paper Trade...");
-
-                                                log.info(
-                                                        "PAPER TRADE RISK QUANTITY | " +
-                                                                "Symbol={} | " +
-                                                                "RiskQuantity={}",
-                                                        entity.getSymbol(),
-                                                        riskBasedQuantity);
-
-                                                tradingFunnelStatisticsService
-                                                        .recordPaperTradeAttempted();
-
-                                                paperTradingService.createTrade(
-                                                        entity,
-                                                        indicator,
-                                                        riskBasedQuantity);
-
-                                            })
-
-                                            .subscribeOn(
-                                                    Schedulers.boundedElastic())
-
-                                            .thenReturn(signal)
-                            );
+                                                })
+                                                        .subscribeOn(Schedulers.boundedElastic())
+                                                        .thenReturn(signal));
+                            });
                 })
-
                 .doOnSuccess(
                         s ->
                                 log.info(
@@ -1476,7 +1403,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         if (openingRange == null
                 || !openingRange.isComplete()) {
 
-            log.info(
+            log.debug(
                     "ENTRY STRATEGY GATE | {} | " +
                             "Opening range unavailable/incomplete",
                     symbol);

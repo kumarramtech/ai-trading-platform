@@ -57,7 +57,7 @@ public class TradeExitServiceImpl implements TradeExitService {
      * Default = ₹400
      * ============================================================
      */
-    @Value("${trading.risk.max-per-trade:400}")
+    @Value("${trading.risk.max-loss-per-trade:250}")
     private double maxLossPerTrade;
 
     @Value("${trading.exit.dynamic-target.enabled:true}")

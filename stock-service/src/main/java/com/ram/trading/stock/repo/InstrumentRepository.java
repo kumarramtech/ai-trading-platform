@@ -39,17 +39,28 @@ public interface InstrumentRepository
             String instrumentType, Pageable pageable);
 
     @Query("""
-       SELECT new com.ram.trading.stock.dto.InstrumentSubscriptionResponse(
-            i.tradingSymbol,
-            i.instrumentKey
-       )
-       FROM Instrument i
-       WHERE i.isActive = true
-         AND i.exchange = 'NSE'
-         AND i.segment = 'NSE_EQ'
-         AND i.instrumentType = 'EQ'
-       ORDER BY i.tradingSymbol
-       """)
+   SELECT new com.ram.trading.stock.dto.InstrumentSubscriptionResponse(
+        i.tradingSymbol,
+        i.instrumentKey
+   )
+   FROM Instrument i
+   WHERE i.isActive = true
+     AND (
+          (
+              i.exchange = 'NSE'
+              AND i.segment = 'NSE_EQ'
+              AND i.instrumentType = 'EQ'
+          )
+          OR
+          (
+              i.exchange = 'NSE'
+              AND i.segment = 'NSE_INDEX'
+              AND i.instrumentType = 'INDEX'
+              AND i.tradingSymbol IN ('NIFTY', 'BANKNIFTY')
+          )
+     )
+   ORDER BY i.tradingSymbol
+   """)
     List<InstrumentSubscriptionResponse> findSubscriptionInstruments();
 
     @Query("""
