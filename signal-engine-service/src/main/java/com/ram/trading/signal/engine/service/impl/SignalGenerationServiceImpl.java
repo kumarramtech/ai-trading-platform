@@ -241,6 +241,115 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     }
 
     @Override
+    public Mono<TradingSignal> generateMiddaySignal(
+            com.ram.trading.signal.engine.dto.watchlist.MiddayRevalidationResult result) {
+
+        if (result == null) {
+            log.warn("MIDDAY PIPELINE SKIPPED | Result is null");
+            return Mono.empty();
+        }
+
+        String symbol = result.getTradingSymbol();
+
+        if (symbol == null || symbol.isBlank()) {
+            log.warn("MIDDAY PIPELINE SKIPPED | Invalid symbol");
+            return Mono.empty();
+        }
+
+        if (!"QUALIFIED".equalsIgnoreCase(result.getStatus())) {
+            log.info(
+                    "MIDDAY PIPELINE SKIPPED | Symbol={} | Status={}",
+                    symbol,
+                    result.getStatus());
+            return Mono.empty();
+        }
+
+        if (!tradingSessionService.canCreateTrade()) {
+            log.info(
+                    "MIDDAY PIPELINE SKIPPED | Symbol={} | Trading session does not allow new trades",
+                    symbol);
+            return Mono.empty();
+        }
+
+        String direction = normalizeStrategyDirection(result.getDirection());
+
+        if (!"BUY".equals(direction) && !"SELL".equals(direction)) {
+            log.warn(
+                    "MIDDAY PIPELINE SKIPPED | Symbol={} | Invalid direction={} | Status={}",
+                    symbol,
+                    result.getDirection(),
+                    result.getStatus());
+            return Mono.empty();
+        }
+
+        if (result.getCurrentPrice() == null || result.getCurrentPrice() <= 0) {
+            log.warn(
+                    "MIDDAY PIPELINE SKIPPED | Symbol={} | Invalid current price={}",
+                    symbol,
+                    result.getCurrentPrice());
+            return Mono.empty();
+        }
+
+        try {
+            TechnicalIndicatorResponse indicator = new TechnicalIndicatorResponse();
+            indicator.setSymbol(symbol);
+            indicator.setClosePrice(result.getCurrentPrice());
+            indicator.setRsi14(result.getRsi());
+            indicator.setEma20(result.getEma20());
+            indicator.setEma50(result.getEma50());
+            indicator.setMacd(result.getMacd());
+            indicator.setSignalLine(result.getSignalLine());
+
+            SignalGenerationRequest request = SignalGenerationRequest.builder()
+                    .symbol(symbol)
+                    .currentPrice(result.getCurrentPrice())
+                    .rsi(result.getRsi())
+                    .ema20(result.getEma20())
+                    .ema50(result.getEma50())
+                    .macd(result.getMacd())
+                    .signalLine(result.getSignalLine())
+                    .setupStrategy("MIDDAY")
+                    .setupDirection(SignalType.valueOf(direction))
+.marketContext(MarketContext.builder()
+                            .marketTime(LocalDateTime.now())
+                            .build())
+                    .build();
+
+            log.info(
+                    "MIDDAY ENTRY SETUP PASSED | Symbol={} | Strategy=MIDDAY | Direction={} | Score={} | Price={} | RSI={} | EMA20={} | EMA50={} | MACD={}",
+                    symbol,
+                    direction,
+                    result.getScore(),
+                    result.getCurrentPrice(),
+                    result.getRsi(),
+                    result.getEma20(),
+                    result.getEma50(),
+                    result.getMacd());
+
+            return generateTradingSignal(request, indicator)
+                    .doOnSuccess(signal ->
+                            log.info(
+                                    "MIDDAY PIPELINE COMPLETED | Symbol={} | Result={}",
+                                    symbol,
+                                    signal != null ? signal.getSignal() : "NULL"))
+                    .doOnError(error ->
+                            log.error(
+                                    "MIDDAY PIPELINE FAILED | Symbol={} | Error={}",
+                                    symbol,
+                                    error.getMessage(),
+                                    error));
+
+        } catch (Exception ex) {
+            log.error(
+                    "MIDDAY PIPELINE BUILD FAILED | Symbol={} | Direction={}",
+                    symbol,
+                    direction,
+                    ex);
+            return Mono.error(ex);
+        }
+    }
+
+    @Override
     public Mono<TradingSignal> generateSignal(Tick tick) {
 
         log.debug(

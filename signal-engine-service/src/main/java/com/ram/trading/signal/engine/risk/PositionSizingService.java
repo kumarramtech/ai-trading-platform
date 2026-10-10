@@ -90,13 +90,17 @@ public class PositionSizingService {
         }
 
         String instrumentKey = instrumentResponse.getInstrumentKey();
+
         int quantity = 1;
         MarginCalculationResponse marginResponse = null;
 
         /*
-         * First determine broker margin for one share. Then iteratively
-         * move quantity toward the configured target margin. Every final
-         * quantity is rechecked with the broker margin API.
+         * First determine broker margin for one share.
+         * Then iteratively move quantity toward the configured
+         * target margin.
+         *
+         * Every final quantity is rechecked with the broker
+         * margin API.
          */
         for (int attempt = 1; attempt <= 5; attempt++) {
 
@@ -131,6 +135,14 @@ public class PositionSizingService {
                     targetMarginPerTrade,
                     marginResponse.getLeverage());
 
+            /*
+             * Accept the quantity when the broker margin is
+             * between 95% and 100% of the configured target.
+             *
+             * Example:
+             * Target = ₹10,000
+             * Acceptable range = ₹9,500 to ₹10,000
+             */
             if (requiredMargin <= targetMarginPerTrade
                     && requiredMargin >= targetMarginPerTrade * 0.95) {
                 break;
@@ -145,15 +157,26 @@ public class PositionSizingService {
                 nextQuantity = 1;
             }
 
+            /*
+             * Do not exceed the maximum quantity that can be
+             * supported by the currently available balance.
+             */
             if (Boolean.TRUE.equals(marginResponse.getSufficientBalance())
                     && marginResponse.getMaximumQuantity() > 0) {
+
                 nextQuantity = Math.min(
                         nextQuantity,
                         marginResponse.getMaximumQuantity());
             }
 
+            /*
+             * If the current margin is already above the target,
+             * quantity must be reduced.
+             */
             if (requiredMargin > targetMarginPerTrade) {
-                nextQuantity = Math.min(nextQuantity, quantity - 1);
+                nextQuantity = Math.min(
+                        nextQuantity,
+                        quantity - 1);
             }
 
             if (nextQuantity <= 0 || nextQuantity == quantity) {
@@ -163,8 +186,12 @@ public class PositionSizingService {
             quantity = nextQuantity;
         }
 
+        /*
+         * Final broker margin response must be available.
+         */
         if (marginResponse == null
                 || marginResponse.getRequiredMargin() == null) {
+
             return rejected(
                     signal,
                     entryPrice,
@@ -173,9 +200,14 @@ public class PositionSizingService {
                     "Final broker margin response unavailable");
         }
 
-        double requiredMargin = marginResponse.getRequiredMargin();
+        double requiredMargin =
+                marginResponse.getRequiredMargin();
 
+        /*
+         * Do not allow a trade above the configured margin allocation.
+         */
         if (requiredMargin > targetMarginPerTrade) {
+
             return rejected(
                     signal,
                     entryPrice,
@@ -184,7 +216,39 @@ public class PositionSizingService {
                     "Required margin exceeds target margin");
         }
 
-        if (!Boolean.TRUE.equals(marginResponse.getSufficientBalance())) {
+        /*
+         * IMPORTANT:
+         * Do not allow very small trades when the system could not
+         * allocate approximately the configured ₹10,000 margin.
+         *
+         * Target = ₹10,000
+         * Minimum acceptable = ₹9,500
+         *
+         * This prevents trades such as:
+         * ₹701 margin
+         * ₹306 margin
+         * etc.
+         */
+        double minimumAcceptableMargin =
+                targetMarginPerTrade * 0.95;
+
+        if (requiredMargin < minimumAcceptableMargin) {
+
+            return rejected(
+                    signal,
+                    entryPrice,
+                    stopLoss,
+                    riskPerShare,
+                    "Required margin is below minimum target allocation");
+        }
+
+        /*
+         * Verify that the paper/broker account has sufficient
+         * available margin.
+         */
+        if (!Boolean.TRUE.equals(
+                marginResponse.getSufficientBalance())) {
+
             return rejected(
                     signal,
                     entryPrice,
@@ -193,7 +257,15 @@ public class PositionSizingService {
                     "Insufficient available margin");
         }
 
-        double expectedStopLossRisk = quantity * riskPerShare;
+        /*
+         * Expected stop-loss risk is calculated only for reporting.
+         *
+         * IMPORTANT:
+         * The ₹250 max-loss value is NOT used for quantity sizing.
+         * It remains an EXIT trigger handled by the exit service.
+         */
+        double expectedStopLossRisk =
+                quantity * riskPerShare;
 
         log.info(
                 "FINAL MARGIN SIZING | Symbol={} | Margin={} | " +
@@ -213,7 +285,7 @@ public class PositionSizingService {
                 .stopLoss(stopLoss)
                 .riskPerShare(riskPerShare)
                 .maxRiskPerTrade(maxLossPerTrade)
-                .riskBasedQuantity(quantity) // backward compatibility
+                .riskBasedQuantity(quantity)
                 .marginBasedQuantity(quantity)
                 .expectedRisk(expectedStopLossRisk)
                 .targetMargin(targetMarginPerTrade)

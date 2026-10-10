@@ -309,7 +309,7 @@ public class TradeExitServiceImpl implements TradeExitService {
                                 ExitDecision.builder()
                                         .exit(true)
                                         .reason(
-                                                ExitReason.STRUCTURE_FAILURE)
+                                                ExitReason.HARD_LOSS)
                                         .exitPrice(currentPrice)
                                         .exitType(
                                                 ExitType.STOP_LOSS)

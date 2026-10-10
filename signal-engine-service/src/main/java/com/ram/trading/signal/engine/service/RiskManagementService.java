@@ -20,11 +20,7 @@ public class RiskManagementService {
 
     private final PaperTradeRepository repository;
 
-    private static final double CAPITAL = 100000;
-
     private static final double MAX_DAILY_LOSS = 2000;
-
-    private static final double MAX_EXPOSURE_PERCENT = 60;
 
     private static final int MAX_OPEN_TRADES = 20;
 
@@ -38,10 +34,6 @@ public class RiskManagementService {
         List<String> violations = new ArrayList<>();
 
         if (maxTradesPerSymbolPerDayReached(symbol)) {
-            log.info(
-                    "Max trades per symbol per day configured as: {}",
-                    maxTradesPerSymbolPerDay
-            );
             violations.add(
                     "Maximum daily trades reached for symbol: " + symbol);
         }
@@ -56,18 +48,12 @@ public class RiskManagementService {
                     "Maximum open trades reached.");
         }
 
-        if (exposureExceeded()) {
-            violations.add(
-                    "Capital exposure limit exceeded.");
-        }
-
         if (consecutiveLossesExceeded()) {
             violations.add(
                     "Maximum consecutive losses reached.");
         }
 
-        boolean allowed =
-                violations.isEmpty();
+        boolean allowed = violations.isEmpty();
 
         return RiskCheckResponse.builder()
                 .allowed(allowed)
@@ -137,34 +123,6 @@ public class RiskManagementService {
                 openTrades);
 
         return openTrades >= MAX_OPEN_TRADES;
-    }
-
-    private boolean exposureExceeded() {
-
-        double exposure =
-                repository.findByStatus(
-                                SignalStatus.OPEN)
-                        .stream()
-                        .mapToDouble(
-                                PaperTrade::getInvestedAmount)
-                        .sum();
-
-        double maxAllowedExposure =
-                CAPITAL
-                        * MAX_EXPOSURE_PERCENT
-                        / 100;
-
-        log.info(
-                "Current Exposure = {}",
-                exposure);
-
-        log.info(
-                "Exposure={}, MaxAllowedExposure={}, MaxPercent={}",
-                exposure,
-                maxAllowedExposure,
-                MAX_EXPOSURE_PERCENT);
-
-        return exposure >= maxAllowedExposure;
     }
 
     private boolean consecutiveLossesExceeded() {

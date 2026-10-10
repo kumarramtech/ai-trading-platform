@@ -2,6 +2,7 @@ package com.ram.trading.signal.engine.service.rules;
 
 import com.ram.trading.signal.engine.contant.ConfidenceLevel;
 import com.ram.trading.signal.engine.contant.SignalType;
+import com.ram.trading.signal.engine.contant.Trend;
 import com.ram.trading.signal.engine.dto.rules.RuleResult;
 import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
@@ -22,6 +23,7 @@ public class TradingDecisionEngine {
     private final RuleEngine ruleEngine;
     private final RuleConfidenceCalculator confidenceCalculator;
 
+
     public TradingDecision generateDecision(SignalGenerationRequest request) {
 
         if (request == null) {
@@ -39,46 +41,66 @@ public class TradingDecisionEngine {
 
         int buyScore = score(results, SignalType.BUY);
         int sellScore = score(results, SignalType.SELL);
+
         int totalPossibleScore = results.stream()
                 .filter(Objects::nonNull)
                 .mapToInt(RuleResult::getMaxScore)
                 .sum();
 
         SignalType setupDirection = request.getSetupDirection();
+
+        // Determine the technical signal and preserve setup-direction integrity.
         SignalType signal = determineSignal(results, setupDirection);
 
         int confidence = confidenceCalculator.calculateScore(results);
         ConfidenceLevel level = confidenceCalculator.determineLevel(confidence);
 
-        int netScore = buyScore - sellScore;
-        double dominanceRatio = totalPossibleScore > 0
-                ? Math.abs(netScore) / (double) totalPossibleScore
-                : 0.0;
-
-        if (setupDirection != null && (signal == SignalType.BUY || signal == SignalType.SELL)) {
-            log.info("V2.2 DIRECTION INTEGRITY | Symbol={} | Setup={} | Technical={} | Result=CONFIRMED",
-                    request.getSymbol(), setupDirection, signal);
-        } else if (setupDirection != null && signal == SignalType.HOLD) {
-            log.debug("V2.2 DIRECTION INTEGRITY | Symbol={} | Setup={} | TechnicalEvidence=BUY:{} SELL:{} | Result=HOLD",
-                    request.getSymbol(), setupDirection, buyScore, sellScore);
-        }
-
-        log.info("V2.2 TECHNICAL DECISION | Symbol={} | Setup={} | MarketRegime={} | BUY={} | SELL={} | Confidence={} | Signal={}",
+        log.info(
+                "V2.2 TECHNICAL DECISION | Symbol={} | Setup={} | MarketRegime={} | BUY={} | SELL={} | Confidence={} | Signal={}",
                 request.getSymbol(),
                 setupDirection,
-                request.getMarketContext() != null ? request.getMarketContext().getMarketTrend() : null,
+                request.getMarketContext() != null
+                        ? request.getMarketContext().getMarketTrend()
+                        : null,
                 buyScore,
                 sellScore,
                 confidence,
-                signal);
+                signal
+        );
+
+        if (setupDirection != null
+                && (signal == SignalType.BUY || signal == SignalType.SELL)) {
+
+            log.info(
+                    "V2.2 DIRECTION INTEGRITY | Symbol={} | Setup={} | Technical={} | Result=CONFIRMED",
+                    request.getSymbol(),
+                    setupDirection,
+                    signal
+            );
+
+        } else if (setupDirection != null && signal == SignalType.HOLD) {
+
+            log.debug(
+                    "V2.2 DIRECTION INTEGRITY | Symbol={} | Setup={} | TechnicalEvidence=BUY:{} SELL:{} | Result=HOLD",
+                    request.getSymbol(),
+                    setupDirection,
+                    buyScore,
+                    sellScore
+            );
+        }
 
         if (log.isDebugEnabled()) {
             results.stream()
                     .filter(Objects::nonNull)
                     .forEach(result -> log.debug(
                             "V2.2 RULE | Symbol={} | Rule={} | Signal={} | Score={} | Max={} | Reason={}",
-                            request.getSymbol(), result.getRuleName(), result.getSignal(),
-                            result.getScore(), result.getMaxScore(), result.getReason()));
+                            request.getSymbol(),
+                            result.getRuleName(),
+                            result.getSignal(),
+                            result.getScore(),
+                            result.getMaxScore(),
+                            result.getReason()
+                    ));
         }
 
         return TradingDecision.builder()
@@ -89,6 +111,7 @@ public class TradingDecisionEngine {
                 .ruleResults(results)
                 .build();
     }
+
 
     private SignalType determineSignal(List<RuleResult> results, SignalType setupDirection) {
         int buyScore = score(results, SignalType.BUY);
@@ -158,5 +181,70 @@ public class TradingDecisionEngine {
                 .filter(Objects::nonNull)
                 .map(RuleResult::getReason)
                 .toList();
+    }
+
+    private SignalType applyMarketRegimeGuard(
+            SignalGenerationRequest request,
+            SignalType signal) {
+
+        if (signal == null || signal == SignalType.HOLD) {
+            return SignalType.HOLD;
+        }
+
+        if (request.getMarketContext() == null
+                || request.getMarketContext().getMarketTrend() == null) {
+
+            log.warn(
+                    "MARKET REGIME GUARD | Symbol={} | Regime unavailable | "
+                            + "Signal={} changed to HOLD",
+                    request.getSymbol(),
+                    signal);
+
+            return SignalType.HOLD;
+        }
+
+        Trend marketTrend =
+                request.getMarketContext().getMarketTrend();
+
+        if (marketTrend == Trend.BULLISH
+                && signal == SignalType.SELL) {
+
+            log.warn(
+                    "MARKET REGIME GUARD REJECTED | Symbol={} | "
+                            + "Regime=BULLISH | Signal=SELL | Decision=HOLD",
+                    request.getSymbol());
+
+            return SignalType.HOLD;
+        }
+
+        if (marketTrend == Trend.BEARISH
+                && signal == SignalType.BUY) {
+
+            log.warn(
+                    "MARKET REGIME GUARD REJECTED | Symbol={} | "
+                            + "Regime=BEARISH | Signal=BUY | Decision=HOLD",
+                    request.getSymbol());
+
+            return SignalType.HOLD;
+        }
+
+        if (marketTrend == Trend.SIDEWAYS) {
+
+            log.info(
+                    "MARKET REGIME GUARD | Symbol={} | "
+                            + "Regime=SIDEWAYS | Decision=HOLD",
+                    request.getSymbol());
+
+            return SignalType.HOLD;
+        }
+
+        log.debug(
+                "MARKET REGIME GUARD PASSED | Symbol={} | "
+                        + "Regime={} | Signal={}",
+                request.getSymbol(),
+                marketTrend,
+                signal);
+
+        return signal;
     }
 }

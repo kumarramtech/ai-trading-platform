@@ -16,7 +16,9 @@ public enum ExitReason {
 
     MARKET_CLOSE,
 
-    STRUCTURE_FAILURE
+    STRUCTURE_FAILURE,
+
+    HARD_LOSS
 
 
 }

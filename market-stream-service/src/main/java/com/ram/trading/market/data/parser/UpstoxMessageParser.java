@@ -178,14 +178,29 @@ public class UpstoxMessageParser {
     private MarketDataFeed.LTPC extractLtpc(
             MarketDataFeed.Feed feed) {
 
+        // 1. Direct LTPC
         if (feed.hasLtpc()) {
             return feed.getLtpc();
         }
 
-        if (feed.hasFullFeed()
-                && feed.getFullFeed().hasMarketFF()
-                && feed.getFullFeed().getMarketFF().hasLtpc()) {
-            return feed.getFullFeed().getMarketFF().getLtpc();
+        // 2. Full Feed
+        if (feed.hasFullFeed()) {
+
+            var fullFeed = feed.getFullFeed();
+
+            // 2a. Normal stock / F&O feed
+            if (fullFeed.hasMarketFF()
+                    && fullFeed.getMarketFF().hasLtpc()) {
+
+                return fullFeed.getMarketFF().getLtpc();
+            }
+
+            // 2b. Index feed - NIFTY / BANKNIFTY
+            if (fullFeed.hasIndexFF()
+                    && fullFeed.getIndexFF().hasLtpc()) {
+
+                return fullFeed.getIndexFF().getLtpc();
+            }
         }
 
         return null;

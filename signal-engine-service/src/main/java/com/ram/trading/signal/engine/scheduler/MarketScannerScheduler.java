@@ -255,11 +255,14 @@ public class MarketScannerScheduler {
         log.info(
                 "MIDDAY SIGNAL HANDOFF | " +
                         "Symbol={} | " +
+                        "Direction={} | " +
                         "Score={} | " +
-                        "Status={}",
+                        "Status={} | CurrentPrice={}",
                 symbol,
+                result.getDirection(),
                 result.getScore(),
-                result.getStatus()
+                result.getStatus(),
+                result.getCurrentPrice()
         );
 
         if (symbol == null || symbol.isBlank()) {
@@ -273,7 +276,7 @@ public class MarketScannerScheduler {
         }
 
         return signalGenerationService
-                .generateSignal(symbol)
+                .generateMiddaySignal(result)
 
                 .doOnSuccess(signal -> {
 
@@ -292,7 +295,8 @@ public class MarketScannerScheduler {
                             "MIDDAY SIGNAL RESULT | " +
                                     "Symbol={} | " +
                                     "Signal={} | " +
-                                    "Confidence={}",
+                                    "Confidence={} | " +
+                                    "Pipeline=COMMON",
                             symbol,
                             signal.getSignal(),
                             signal.getConfidence()
