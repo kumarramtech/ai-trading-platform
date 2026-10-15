@@ -55,6 +55,23 @@ public class ORBValidator {
      */
     public ORBResult validate(
             OpeningRange openingRange) {
+        return validate(openingRange, ANALYSIS_START);
+    }
+
+    /**
+     * Validate an ORB while requiring the confirmation candle to be
+     * at or after the supplied earliest eligible confirmation time.
+     * Earlier candles remain available as breakout/retest structure,
+     * but cannot themselves trigger an entry.
+     */
+    public ORBResult validate(
+            OpeningRange openingRange,
+            LocalTime earliestConfirmationTime) {
+
+        LocalTime eligibleConfirmationTime =
+                earliestConfirmationTime != null
+                        ? earliestConfirmationTime
+                        : ANALYSIS_START;
 
         if (openingRange == null
                 || openingRange.getSymbol() == null
@@ -147,7 +164,8 @@ public class ORBValidator {
                 detectBullishORB(
                         openingRange,
                         candles,
-                        averageOpeningRangeVolume
+                        averageOpeningRangeVolume,
+                        eligibleConfirmationTime
                 );
 
         if (bullish.isValid()) {
@@ -164,7 +182,8 @@ public class ORBValidator {
                 detectBearishORB(
                         openingRange,
                         candles,
-                        averageOpeningRangeVolume
+                        averageOpeningRangeVolume,
+                        eligibleConfirmationTime
                 );
 
         if (bearish.isValid()) {
@@ -187,7 +206,8 @@ public class ORBValidator {
     private ORBResult detectBullishORB(
             OpeningRange openingRange,
             List<MinuteCandle> candles,
-            double averageVolume) {
+            double averageVolume,
+            LocalTime earliestConfirmationTime) {
 
         double rangeHigh =
                 openingRange.getHigh();
@@ -207,6 +227,12 @@ public class ORBValidator {
                     || !validCandle(retest)
                     || !validCandle(confirmation)) {
 
+                continue;
+            }
+            // Do not trigger from a confirmation before the entry cutoff.
+            // Earlier breakout/retest candles may still form the setup.
+            if (confirmation.getMinute().toLocalTime()
+                    .isBefore(earliestConfirmationTime)) {
                 continue;
             }
 
@@ -335,7 +361,8 @@ public class ORBValidator {
     private ORBResult detectBearishORB(
             OpeningRange openingRange,
             List<MinuteCandle> candles,
-            double averageVolume) {
+            double averageVolume,
+            LocalTime earliestConfirmationTime) {
 
         double rangeLow =
                 openingRange.getLow();
@@ -355,6 +382,12 @@ public class ORBValidator {
                     || !validCandle(retest)
                     || !validCandle(confirmation)) {
 
+                continue;
+            }
+            // Do not trigger from a confirmation before the entry cutoff.
+            // Earlier breakout/retest candles may still form the setup.
+            if (confirmation.getMinute().toLocalTime()
+                    .isBefore(earliestConfirmationTime)) {
                 continue;
             }
 

@@ -1,6 +1,8 @@
 package com.ram.trading.signal.engine.service.impl;
 
 import com.ram.trading.signal.engine.contant.SignalType;
+import com.ram.trading.signal.engine.client.StockServiceClient;
+import com.ram.trading.signal.engine.client.TradeExecutionClient;
 
 import com.ram.trading.signal.engine.dto.EntryQualityResult;
 import com.ram.trading.signal.engine.dto.StockResponse;
@@ -33,12 +35,15 @@ import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.dto.ai.decision.TradingPipelineResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -48,6 +53,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private final MarketDataProvider marketDataProvider;
+
+    private final StockServiceClient stockServiceClient;
+
+    private final TradeExecutionClient tradeExecutionClient;
 
     private final TradingOrchestratorService tradingOrchestratorService;
 
@@ -80,6 +89,29 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final ORBValidator orbValidator;
 
     private final PositionSizingService positionSizingService;
+
+    /**
+     * Selects the entry execution path. PAPER remains the default;
+     * LIVE stays fail-closed until the Trade Execution client is wired.
+     */
+    @Value("${execution.trade:paper}")
+    private String executionTradeMode;
+
+    /** Independent Signal Service safety gate; defaults to disabled. */
+    @Value("${execution.live-enabled:false}")
+    private boolean liveExecutionEnabled;
+
+    @PostConstruct
+    private void validateExecutionTradeMode() {
+        if (executionTradeMode == null
+                || (!"paper".equalsIgnoreCase(executionTradeMode.trim())
+                && !"live".equalsIgnoreCase(executionTradeMode.trim()))) {
+            throw new IllegalStateException("Invalid execution.trade value: "
+                    + executionTradeMode + ". Allowed values are paper or live.");
+        }
+        log.info("ENTRY EXECUTION MODE CONFIGURED | execution.trade={}",
+                executionTradeMode.trim().toLowerCase());
+    }
 
     private final Map<String, String> processedStrategySetups = new ConcurrentHashMap<>();
 
@@ -264,7 +296,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             return Mono.empty();
         }
 
-        if (!tradingSessionService.canCreateTrade()) {
+        if (!tradingSessionService.canCreateStrategyEntry()) {
             log.info(
                     "MIDDAY PIPELINE SKIPPED | Symbol={} | Trading session does not allow new trades",
                     symbol);
@@ -310,7 +342,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     .signalLine(result.getSignalLine())
                     .setupStrategy("MIDDAY")
                     .setupDirection(SignalType.valueOf(direction))
-.marketContext(MarketContext.builder()
+                    .marketContext(MarketContext.builder()
                             .marketTime(LocalDateTime.now())
                             .build())
                     .build();
@@ -444,7 +476,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .then(
                         Mono.defer(() -> {
 
-                            if (!tradingSessionService.canCreateTrade()) {
+                            if (!tradingSessionService.canCreateStrategyEntry()) {
 
                                 log.debug(
                                         "ENTRY SESSION CLOSED | Symbol={} | Entry cutoff reached | Skipping setup/AI",
@@ -621,37 +653,47 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                      * =====================================================
                      */
 
-                    AiDecisionResponse aiResponse =
-                            pipelineResult.getAiDecision();
 
-                    log.debug(
-                            "******** AI RESPONSE RECEIVED ********");
+                    AiDecisionResponse aiResponse = pipelineResult.getAiDecision();
+
+                    log.debug("******** AI RESPONSE RECEIVED ********");
 
                     if (aiResponse.getDecision() == null) {
-
                         log.warn(
                                 "AI decision is null for {}",
                                 request.getSymbol());
 
-                        return Mono.empty();
+                        return Mono.just(
+                                TradingSignal.builder()
+                                        .symbol(request.getSymbol())
+                                        .signal(SignalType.HOLD.name())
+                                        .build());
+                    }
+
+                    if (aiResponse.getDecision().getRecommendation() == null) {
+                        log.warn(
+                                "AI recommendation is null. Returning HOLD | Symbol={}",
+                                request.getSymbol());
+
+                        return Mono.just(
+                                TradingSignal.builder()
+                                        .symbol(request.getSymbol())
+                                        .signal(SignalType.HOLD.name())
+                                        .build());
                     }
 
                     /*
-                     * =====================================================
-                     * FUNNEL : AI DECISION
-                     * =====================================================
+                     * FUNNEL: AI DECISION
                      */
-
                     String recommendation =
-                            aiResponse
-                                    .getDecision()
+                            aiResponse.getDecision()
                                     .getRecommendation()
                                     .name();
 
                     Boolean tradeAllowed =
-                            aiResponse
-                                    .getDecision()
+                            aiResponse.getDecision()
                                     .getTradeAllowed();
+
 
                     if (SignalType.BUY.name()
                             .equalsIgnoreCase(recommendation)) {
@@ -1215,119 +1257,86 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
         log.info("========== POST PROCESSING ==========");
 
-        /*
-         * ============================================================
-         * HOLD SIGNAL
-         * ============================================================
-         */
-        if (SignalType.HOLD.name().equals(signal.getSignal())) {
-
+        // Final entry-window check before any entry processing or persistence.
+        if (!tradingSessionService.canCreateStrategyEntry()) {
             log.info(
-                    "Signal is HOLD. Nothing to persist.");
+                    "STRATEGY ENTRY WINDOW BLOCKED | Symbol={} | No new trade allowed",
+                    signal.getSymbol());
 
+            signal.setSignal(SignalType.HOLD.name());
             return Mono.just(signal);
         }
 
         /*
-         * ============================================================
-         * ENTRY QUALITY
+         * HOLD SIGNAL
+         */
+        if (SignalType.HOLD.name().equals(signal.getSignal())) {
+            log.info("Signal is HOLD. Nothing to persist.");
+            return Mono.just(signal);
+        }
+
+        /*
+         * ENTRY QUALITY — diagnostic only; EXTENDED is not a rejection gate.
          *
-         * Measurement ONLY.
-         *
-         * IMPORTANT:
-         * No trade is rejected in this phase.
-         * ============================================================
+         * EXTENDED is rejected before position sizing, signal persistence,
+         * opportunity persistence, or paper-trade creation. CAUTION and
+         * UNAVAILABLE remain observable only; this change does not introduce
+         * unvalidated filters for those states or alter JUDAS/ORB/AI/RiskGuard.
          */
         return marketDataProvider
                 .getStockPrice(signal.getSymbol())
+                .switchIfEmpty(Mono.defer(() -> {
+                    log.warn(
+                            "ENTRY QUALITY | Fresh market price unavailable | "
+                                    + "Symbol={} | Direction={} | SignalPrice={}",
+                            signal.getSymbol(),
+                            signal.getSignal(),
+                            signalPrice);
 
-                .switchIfEmpty(
-                        Mono.defer(() -> {
-
-                            log.warn(
-                                    "ENTRY QUALITY | " +
-                                            "Fresh market price unavailable | " +
-                                            "Symbol={} | " +
-                                            "Direction={} | " +
-                                            "SignalPrice={}",
-                                    signal.getSymbol(),
-                                    signal.getSignal(),
-                                    signalPrice);
-
-                            return Mono.just(
-                                    StockResponse.builder()
-                                            .symbol(signal.getSymbol())
-                                            .price(
-                                                    signalPrice != null
-                                                            ? signalPrice
-                                                            : 0.0)
-                                            .build());
-                        })
-                )
-
+                    return Mono.just(
+                            StockResponse.builder()
+                                    .symbol(signal.getSymbol())
+                                    .price(signalPrice != null ? signalPrice : 0.0)
+                                    .build());
+                }))
                 .flatMap(stock -> {
 
-                    double freshMarketPrice =
-                            stock.getPrice();
+                    double freshMarketPrice = stock.getPrice();
 
-                    /*
-                     * ====================================================
-                     * ENTRY QUALITY SERVICE
-                     * ====================================================
-                     */
                     EntryQualityResult entryQuality =
                             entryQualityService.evaluate(
                                     signal.getSymbol(),
                                     SignalType.valueOf(
-                                            signal.getSignal()
-                                                    .toUpperCase()),
+                                            signal.getSignal().toUpperCase()),
                                     signalPrice,
                                     freshMarketPrice,
                                     indicator);
 
-                    /*
-                     * ====================================================
-                     * ENTRY QUALITY LOG
-                     *
-                     * Measurement only.
-                     * We do NOT reject the trade here.
-                     * ====================================================
-                     */
                     log.info(
-                            "ENTRY QUALITY RESULT | " +
-                                    "Symbol={} | " +
-                                    "Status={} | " +
-                                    "DirectionalMove={}% | " +
-                                    "PriceVsEMA20={}% | " +
-                                    "PriceVsEMA50={}% | " +
-                                    "PriceVsHistoricalClose={}%",
+                            "ENTRY QUALITY RESULT | Symbol={} | Direction={} | Status={} | "
+                                    + "DirectionalMove={}% | PriceVsEMA20={}% | "
+                                    + "PriceVsEMA50={}% | PriceVsHistoricalClose={}% | Reason={}",
                             entryQuality.getSymbol(),
+                            entryQuality.getDirection(),
                             entryQuality.getStatus(),
                             entryQuality.getDirectionalMovementPct(),
                             entryQuality.getPriceVsEma20Pct(),
                             entryQuality.getPriceVsEma50Pct(),
-                            entryQuality.getPriceVsHistoricalClosePct());
+                            entryQuality.getPriceVsHistoricalClosePct(),
+                            entryQuality.getReason());
 
                     /*
-                     * ====================================================
                      * POSITION SIZING
-                     *
-                     * ₹10,000 is the target margin per trade.
-                     * Broker leverage is used to determine the final
-                     * exposure/quantity. The ₹250 value is NOT used to
-                     * reduce entry quantity; it is an exit loss trigger.
-                     * ====================================================
                      */
                     return positionSizingService
                             .calculate(signal)
                             .flatMap(sizingResult -> {
 
                                 if (!sizingResult.isValid()) {
-
                                     log.warn(
-                                            "POSITION SIZING REJECTED | " +
-                                                    "Symbol={} | Entry={} | " +
-                                                    "StopLoss={} | Reason={}",
+                                            "POSITION SIZING REJECTED | "
+                                                    + "Symbol={} | Entry={} | "
+                                                    + "StopLoss={} | Reason={}",
                                             signal.getSymbol(),
                                             signal.getEntryPrice(),
                                             signal.getStopLoss(),
@@ -1340,22 +1349,21 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         sizingResult.getMarginBasedQuantity();
 
                                 if (approvedQuantity <= 0) {
-
                                     log.warn(
-                                            "POSITION SIZING REJECTED | " +
-                                                    "Quantity is zero | Symbol={}",
+                                            "POSITION SIZING REJECTED | "
+                                                    + "Quantity is zero | Symbol={}",
                                             signal.getSymbol());
 
                                     return Mono.empty();
                                 }
 
                                 log.info(
-                                        "MARGIN BASED POSITION SIZING | " +
-                                                "Symbol={} | Entry={} | StopLoss={} | " +
-                                                "RiskPerShare={} | TargetMargin={} | " +
-                                                "Quantity={} | RequiredMargin={} | " +
-                                                "Exposure={} | Leverage={} | " +
-                                                "StopLossRisk={} | MaxLossTrigger={}",
+                                        "MARGIN BASED POSITION SIZING | "
+                                                + "Symbol={} | Entry={} | StopLoss={} | "
+                                                + "RiskPerShare={} | TargetMargin={} | "
+                                                + "Quantity={} | RequiredMargin={} | "
+                                                + "Exposure={} | Leverage={} | "
+                                                + "StopLossRisk={} | MaxLossTrigger={}",
                                         signal.getSymbol(),
                                         sizingResult.getEntryPrice(),
                                         sizingResult.getStopLoss(),
@@ -1369,10 +1377,18 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         sizingResult.getMaxRiskPerTrade());
 
                                 /*
-                                 * ====================================================
-                                 * SAVE TRADING SIGNAL
-                                 * ====================================================
+                                 * Recheck immediately before signal persistence.
                                  */
+                                if (!tradingSessionService.canCreateStrategyEntry()) {
+                                    log.warn(
+                                            "STRATEGY ENTRY WINDOW BLOCKED BEFORE PERSISTENCE | "
+                                                    + "Symbol={}",
+                                            signal.getSymbol());
+
+                                    signal.setSignal(SignalType.HOLD.name());
+                                    return Mono.just(signal);
+                                }
+
                                 log.info("Saving Trading Signal...");
 
                                 return Mono.fromCallable(
@@ -1388,7 +1404,6 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                                     entity.getId());
 
                                             return Mono.fromRunnable(() -> {
-
                                                         log.info("Saving Opportunity...");
 
                                                         opportunityService.save(
@@ -1400,41 +1415,324 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
                                                         log.info(
                                                                 "Opportunity Saved Successfully.");
-
                                                     })
                                                     .subscribeOn(Schedulers.boundedElastic())
                                                     .thenReturn(entity);
                                         })
-                                        .flatMap(entity ->
-                                                Mono.fromRunnable(() -> {
+                                        .flatMap(entity -> {
 
-                                                    log.info(
-                                                            "Creating Paper Trade | ApprovedQuantity={}",
-                                                            approvedQuantity);
+                                            /*
+                                             * Final check immediately before the
+                                             * PAPER/LIVE execution branch.
+                                             *
+                                             * Note: signal/opportunity records may
+                                             * already have been saved at this point.
+                                             */
+                                            if (!tradingSessionService.canCreateStrategyEntry()) {
+                                                log.warn(
+                                                        "STRATEGY ENTRY WINDOW BLOCKED BEFORE EXECUTION | "
+                                                                + "Symbol={} | SignalId={}",
+                                                        entity.getSymbol(),
+                                                        entity.getId());
 
-                                                    tradingFunnelStatisticsService
-                                                            .recordPaperTradeAttempted();
+                                                signal.setSignal(
+                                                        SignalType.HOLD.name());
 
-                                                    paperTradingService.createTrade(
-                                                            entity,
-                                                            indicator,
-                                                            sizingResult);
+                                                return Mono.just(signal);
+                                            }
 
-                                                })
-                                                        .subscribeOn(Schedulers.boundedElastic())
-                                                        .thenReturn(signal));
+                                            String mode = executionTradeMode == null
+                                                    ? ""
+                                                    : executionTradeMode.trim();
+
+                                            /*
+                                             * PAPER EXECUTION
+                                             */
+                                            if ("paper".equalsIgnoreCase(mode)) {
+                                                return Mono.fromRunnable(() -> {
+                                                            log.info(
+                                                                    "Creating Paper Trade | "
+                                                                            + "ApprovedQuantity={}",
+                                                                    approvedQuantity);
+
+                                                            tradingFunnelStatisticsService
+                                                                    .recordPaperTradeAttempted();
+
+                                                            paperTradingService.createTrade(
+                                                                    entity,
+                                                                    indicator,
+                                                                    sizingResult);
+                                                        })
+                                                        .subscribeOn(
+                                                                Schedulers.boundedElastic())
+                                                        .thenReturn(signal);
+                                            }
+
+                                            /*
+                                             * LIVE EXECUTION — fail closed.
+                                             */
+                                            if ("live".equalsIgnoreCase(mode)) {
+
+                                                if (!liveExecutionEnabled) {
+                                                    log.warn(
+                                                            "LIVE ENTRY BLOCKED | Symbol={} | "
+                                                                    + "execution.live-enabled=false | "
+                                                                    + "No broker request sent",
+                                                            entity.getSymbol());
+
+                                                    return Mono.error(
+                                                            new IllegalStateException(
+                                                                    "LIVE execution is disabled "
+                                                                            + "in Signal Service. "
+                                                                            + "No broker request "
+                                                                            + "or paper trade was created."));
+                                                }
+
+                                                String symbol = entity.getSymbol();
+                                                String direction = entity.getSignal();
+
+                                                if (symbol == null
+                                                        || symbol.isBlank()
+                                                        || direction == null
+                                                        || !("BUY".equalsIgnoreCase(direction)
+                                                        || "SELL".equalsIgnoreCase(direction))) {
+
+                                                    return Mono.error(
+                                                            new IllegalStateException(
+                                                                    "LIVE entry rejected: symbol "
+                                                                            + "or BUY/SELL direction "
+                                                                            + "is invalid. No broker "
+                                                                            + "request or paper trade "
+                                                                            + "was created."));
+                                                }
+
+                                                return stockServiceClient
+                                                        .getInstrument(symbol)
+                                                        .switchIfEmpty(Mono.error(
+                                                                new IllegalStateException(
+                                                                        "LIVE entry rejected: Stock "
+                                                                                + "Service returned no "
+                                                                                + "instrument for "
+                                                                                + symbol
+                                                                                + ". No broker request "
+                                                                                + "was sent.")))
+                                                        .flatMap(instrument -> {
+
+                                                            String instrumentKey =
+                                                                    instrument.getInstrumentKey();
+
+                                                            if (instrumentKey == null
+                                                                    || instrumentKey.isBlank()) {
+                                                                return Mono.error(
+                                                                        new IllegalStateException(
+                                                                                "LIVE entry rejected: "
+                                                                                        + "instrumentKey "
+                                                                                        + "is missing for "
+                                                                                        + symbol
+                                                                                        + ". No broker "
+                                                                                        + "request was sent."));
+                                                            }
+
+                                                            BigDecimal requiredMargin =
+                                                                    sizingResult.getRequiredMargin()
+                                                                            != null
+                                                                            ? BigDecimal.valueOf(
+                                                                            sizingResult
+                                                                                    .getRequiredMargin())
+                                                                            : BigDecimal.valueOf(
+                                                                            sizingResult
+                                                                                    .getTargetMargin());
+
+                                                            TradeExecutionClient.TradeExecutionRequest
+                                                                    executionRequest =
+                                                                    new TradeExecutionClient
+                                                                            .TradeExecutionRequest(
+                                                                            entity.getId(),
+                                                                            symbol,
+                                                                            instrumentKey,
+                                                                            direction.toUpperCase(),
+                                                                            BigDecimal.valueOf(
+                                                                                    sizingResult
+                                                                                            .getEntryPrice()),
+                                                                            approvedQuantity,
+                                                                            requiredMargin,
+                                                                            BigDecimal.valueOf(
+                                                                                    sizingResult
+                                                                                            .getStopLoss()),
+                                                                            entity.getTargetPrice() != null
+                                                                                    ? BigDecimal.valueOf(
+                                                                                    entity.getTargetPrice())
+                                                                                    : null,
+                                                                            "MARKET");
+
+                                                            log.info(
+                                                                    "LIVE ENTRY REQUEST | SignalId={} | "
+                                                                            + "Symbol={} | Direction={} | "
+                                                                            + "Quantity={} | "
+                                                                            + "InstrumentKeyPresent=true",
+                                                                    entity.getId(),
+                                                                    symbol,
+                                                                    direction,
+                                                                    approvedQuantity);
+
+                                                            return tradeExecutionClient
+                                                                    .executeTrade(executionRequest)
+                                                                    .switchIfEmpty(Mono.error(
+                                                                            new IllegalStateException(
+                                                                                    "Trade Execution "
+                                                                                            + "Service returned "
+                                                                                            + "an empty response "
+                                                                                            + "for " + symbol
+                                                                                            + ". Reconcile broker "
+                                                                                            + "state before retrying.")))
+                                                                    .flatMap(response -> {
+
+                                                                        if (response == null) {
+                                                                            return Mono.error(
+                                                                                    new IllegalStateException(
+                                                                                            "LIVE entry returned "
+                                                                                                    + "a null response "
+                                                                                                    + "for signalId="
+                                                                                                    + entity.getId()
+                                                                                                    + ". Reconcile broker "
+                                                                                                    + "state before retrying."));
+                                                                        }
+
+                                                                        if (!entity.getId().equals(
+                                                                                response.signalId())
+                                                                                || response.symbol() == null
+                                                                                || !symbol.equalsIgnoreCase(
+                                                                                response.symbol())) {
+
+                                                                            return Mono.error(
+                                                                                    new IllegalStateException(
+                                                                                            "LIVE entry response "
+                                                                                                    + "identity mismatch. "
+                                                                                                    + "Requested signalId="
+                                                                                                    + entity.getId()
+                                                                                                    + ", response signalId="
+                                                                                                    + response.signalId()
+                                                                                                    + ", requested symbol="
+                                                                                                    + symbol
+                                                                                                    + ", response symbol="
+                                                                                                    + response.symbol()
+                                                                                                    + ". Reconcile broker "
+                                                                                                    + "state before retrying."));
+                                                                        }
+
+                                                                        String status =
+                                                                                response.status() == null
+                                                                                        ? ""
+                                                                                        : response.status()
+                                                                                        .trim()
+                                                                                        .toUpperCase();
+
+                                                                        if ("FILLED".equals(status)) {
+
+                                                                            if (!response.success()) {
+                                                                                return Mono.error(
+                                                                                        new IllegalStateException(
+                                                                                                "Trade Execution "
+                                                                                                        + "Service returned "
+                                                                                                        + "status FILLED "
+                                                                                                        + "without success=true. "
+                                                                                                        + "SignalId="
+                                                                                                        + entity.getId()
+                                                                                                        + ". Reconcile broker "
+                                                                                                        + "and execution records."));
+                                                                            }
+
+                                                                            Integer filledQuantity =
+                                                                                    response.filledQuantity();
+
+                                                                            BigDecimal executedPrice =
+                                                                                    response.executedPrice();
+
+                                                                            if (response.orderId() == null
+                                                                                    || response.orderId().isBlank()
+                                                                                    || filledQuantity == null
+                                                                                    || filledQuantity <= 0
+                                                                                    || filledQuantity > approvedQuantity
+                                                                                    || executedPrice == null
+                                                                                    || executedPrice.compareTo(
+                                                                                    BigDecimal.ZERO) <= 0
+                                                                                    || filledQuantity
+                                                                                    != approvedQuantity) {
+
+                                                                                return Mono.error(
+                                                                                        new IllegalStateException(
+                                                                                                "Trade Execution "
+                                                                                                        + "Service reported "
+                                                                                                        + "FILLED with invalid "
+                                                                                                        + "or incomplete fill "
+                                                                                                        + "details. SignalId="
+                                                                                                        + entity.getId()
+                                                                                                        + ". Reconcile broker "
+                                                                                                        + "and execution records."));
+                                                                            }
+
+                                                                            log.info(
+                                                                                    "LIVE ENTRY CONFIRMED FILLED | "
+                                                                                            + "SignalId={} | Symbol={} | "
+                                                                                            + "Status={} | OrderId={} | "
+                                                                                            + "FilledQuantity={} | "
+                                                                                            + "ExecutedPrice={}",
+                                                                                    response.signalId(),
+                                                                                    response.symbol(),
+                                                                                    status,
+                                                                                    response.orderId(),
+                                                                                    filledQuantity,
+                                                                                    executedPrice);
+
+                                                                            return Mono.just(signal);
+                                                                        }
+
+                                                                        String reason =
+                                                                                response.rejectionReason() != null
+                                                                                        ? response.rejectionReason()
+                                                                                        : response.message();
+
+                                                                        log.warn(
+                                                                                "LIVE ENTRY NOT CONFIRMED FILLED | "
+                                                                                        + "SignalId={} | Symbol={} | "
+                                                                                        + "Status={} | OrderId={} | "
+                                                                                        + "FilledQuantity={} | Reason={}",
+                                                                                response.signalId(),
+                                                                                response.symbol(),
+                                                                                status,
+                                                                                response.orderId(),
+                                                                                response.filledQuantity(),
+                                                                                reason);
+
+                                                                        return Mono.error(
+                                                                                new IllegalStateException(
+                                                                                        "LIVE entry is not confirmed "
+                                                                                                + "as fully FILLED. "
+                                                                                                + "SignalId="
+                                                                                                + entity.getId()
+                                                                                                + ", status=" + status
+                                                                                                + ", orderId="
+                                                                                                + response.orderId()
+                                                                                                + ", filledQuantity="
+                                                                                                + response.filledQuantity()
+                                                                                                + ", reason=" + reason
+                                                                                                + ". Do not retry until "
+                                                                                                + "broker state is reconciled."));
+                                                                    });
+                                                        });
+                                            }
+
+                                            return Mono.error(
+                                                    new IllegalStateException(
+                                                            "Unsupported execution.trade value: "
+                                                                    + mode));
+                                        });
                             });
                 })
-                .doOnSuccess(
-                        s ->
-                                log.info(
-                                        "Post Processing Completed Successfully."))
-
-                .doOnError(
-                        ex ->
-                                log.error(
-                                        "Post Processing Failed",
-                                        ex));
+                .doOnSuccess(s ->
+                        log.info("Post Processing Completed Successfully."))
+                .doOnError(ex ->
+                        log.error("Post Processing Failed", ex));
     }
 
 
@@ -1525,10 +1823,10 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * JUDAS
          * ============================================================
          *
-         * 09:30 - 10:30
+         * 09:30 - 14:30 (selection window; entries still gated by session)
          */
-        if (!candleTime.isBefore(LocalTime.of(9, 30))
-                && candleTime.isBefore(LocalTime.of(10, 30))) {
+        if (!candleTime.isBefore(LocalTime.of(10, 0))
+                && candleTime.isBefore(LocalTime.of(14, 30))) {
 
             JudasSwingResult judas =
                     judasSwingDetector.detect(openingRange);
@@ -1579,16 +1877,20 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * ORB
          * ============================================================
          *
-         * 09:30 - 11:30
+         * 09:30 - 14:30 (selection window; entries still gated by session)
          */
-        if (!candleTime.isBefore(LocalTime.of(9, 30))
-                && candleTime.isBefore(LocalTime.of(11, 30))) {
+        if (!candleTime.isBefore(LocalTime.of(10, 0))
+                && candleTime.isBefore(LocalTime.of(14, 30))) {
 
             ORBResult orb =
-                    orbValidator.validate(openingRange);
+                    orbValidator.validate(
+                            openingRange,
+                            LocalTime.of(10, 0));
 
             if (orb != null
-                    && orb.isValid()) {
+                    && orb.isValid()
+                    && orb.getConfirmationTime() != null
+                    && !orb.getConfirmationTime().toLocalTime().isBefore(LocalTime.of(10, 0))) {
 
                 String setupKey =
                         symbol

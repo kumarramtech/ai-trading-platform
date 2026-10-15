@@ -20,35 +20,47 @@ import java.util.List;
 public class JudasSwingDetector {
 
     private static final LocalTime ANALYSIS_START =
-            LocalTime.of(9, 30);
+            LocalTime.of(10, 0);
 
-    /*
-     * We analyse the first post-opening candles.
-     *
-     * This is deliberately limited rather than allowing
-     * a Judas setup to appear at any random time during
-     * the trading session.
-     */
     private static final LocalTime ANALYSIS_END =
-            LocalTime.of(10, 30);
+            LocalTime.of(14, 30);
 
     /*
-     * Confirmation must close back inside the opening range.
+     * Minimum distance price must penetrate the OR level.
+     *
+     * Example:
+     *
+     * OR High = 100
+     * Minimum sweep depth = 0.10%
+     * Required high >= 100.10
      */
-    private static final double MIN_REENTRY_PERCENT =
-            0.0;
+    private static final double MIN_SWEEP_DEPTH_PERCENT = 0.10;
+
+    /*
+     * Rejection wick must be meaningful relative to candle body.
+     *
+     * Bearish:
+     * upper wick >= body
+     *
+     * Bullish:
+     * lower wick >= body
+     */
+    private static final double MIN_REJECTION_WICK_BODY_RATIO = 1.0;
+
+    /*
+     * Confirmation candle volume must be at least 1.2x
+     * today's opening-range average volume.
+     */
+    private static final double MIN_CONFIRMATION_VOLUME_RATIO = 1.20;
 
     private final MinuteCandleStore minuteCandleStore;
 
 
     /**
-     * Detect a possible Judas Swing after the opening range.
+     * Detect a confirmed Judas Swing after the
+     * 09:15-09:30 opening range; selection starts at 10:00.
      *
-     * IMPORTANT:
-     *
-     * This method does NOT generate a BUY/SELL signal.
-     *
-     * It only identifies a confirmed opening-range reversal.
+     * This method does NOT generate the final trading signal.
      */
     public JudasSwingResult detect(
             OpeningRange openingRange) {
@@ -114,11 +126,20 @@ public class JudasSwingDetector {
 
         /*
          * --------------------------------------------------------
-         * First look for a HIGH sweep.
+         * HIGH SWEEP
          * --------------------------------------------------------
          *
-         * Price trades above the opening-range high and then
-         * closes back below it.
+         * Expected structure:
+         *
+         * Price trades above OR High
+         *       ↓
+         * Meaningful penetration
+         *       ↓
+         * Strong rejection
+         *       ↓
+         * Close below OR High
+         *       ↓
+         * Confirmation candle continues lower
          */
         JudasSwingResult bearish =
                 detectHighSweep(
@@ -133,11 +154,20 @@ public class JudasSwingDetector {
 
         /*
          * --------------------------------------------------------
-         * Then look for a LOW sweep.
+         * LOW SWEEP
          * --------------------------------------------------------
          *
-         * Price trades below the opening-range low and then
-         * closes back above it.
+         * Expected structure:
+         *
+         * Price trades below OR Low
+         *       ↓
+         * Meaningful penetration
+         *       ↓
+         * Strong rejection
+         *       ↓
+         * Close above OR Low
+         *       ↓
+         * Confirmation candle continues higher
          */
         JudasSwingResult bullish =
                 detectLowSweep(
@@ -158,15 +188,13 @@ public class JudasSwingDetector {
 
 
     /**
-     * Detect bearish Judas Swing:
+     * Bearish Judas:
      *
-     * Opening Range High
-     *          ↓
-     * Price sweeps above it
-     *          ↓
-     * Candle closes back below it
-     *          ↓
-     * Confirmation candle also remains below level
+     * Sweep OR High
+     * + rejection
+     * + close below OR High
+     * + next candle closes lower
+     * + confirmation volume
      */
     private JudasSwingResult detectHighSweep(
             OpeningRange openingRange,
@@ -174,6 +202,16 @@ public class JudasSwingDetector {
 
         double rangeHigh =
                 openingRange.getHigh();
+
+        double minimumSweepDepth =
+                rangeHigh
+                        * MIN_SWEEP_DEPTH_PERCENT
+                        / 100.0;
+
+        double averageVolume =
+                calculateOpeningRangeAverageVolume(
+                        openingRange.getSymbol()
+                );
 
         for (int i = 0; i < candles.size() - 1; i++) {
 
@@ -190,37 +228,114 @@ public class JudasSwingDetector {
             }
 
             /*
-             * Initial liquidity sweep above OR high.
+             * STEP 1
+             *
+             * Price must meaningfully trade above OR High.
              */
-            boolean swept =
-                    sweep.getHigh() > rangeHigh;
+            double sweepDepth =
+                    sweep.getHigh() - rangeHigh;
 
-            if (!swept) {
+            if (sweepDepth < minimumSweepDepth) {
+
                 continue;
             }
 
             /*
-             * Sweep candle must reject the breakout
-             * and close back below the OR high.
+             * STEP 2
+             *
+             * Sweep candle must close back below OR High.
              */
-            boolean rejected =
-                    sweep.getClose() < rangeHigh;
+            if (sweep.getClose() >= rangeHigh) {
 
-            if (!rejected) {
                 continue;
             }
 
             /*
-             * Confirmation candle must continue to close
-             * below the opening-range high.
+             * STEP 3
+             *
+             * Strong upper rejection wick.
              */
-            boolean confirmed =
-                    confirmation.getClose() < rangeHigh
-                            - MIN_REENTRY_PERCENT;
+            double body =
+                    Math.abs(
+                            sweep.getClose()
+                                    - sweep.getOpen()
+                    );
 
-            if (!confirmed) {
+            double upperWick =
+                    sweep.getHigh()
+                            - Math.max(
+                            sweep.getOpen(),
+                            sweep.getClose()
+                    );
+
+            if (!hasStrongRejection(
+                    upperWick,
+                    body)) {
+
                 continue;
             }
+
+            /*
+             * STEP 4
+             *
+             * Confirmation must continue in bearish direction.
+             */
+            if (confirmation.getClose()
+                    >= sweep.getClose()) {
+
+                continue;
+            }
+
+            /*
+             * STEP 5
+             *
+             * Confirmation must remain below OR High.
+             */
+            if (confirmation.getClose()
+                    >= rangeHigh) {
+
+                continue;
+            }
+
+            /*
+             * STEP 6
+             *
+             * Confirmation volume.
+             */
+            double volumeRatio =
+                    calculateVolumeRatio(
+                            confirmation,
+                            averageVolume
+                    );
+
+            if (volumeRatio
+                    < MIN_CONFIRMATION_VOLUME_RATIO) {
+
+                continue;
+            }
+
+            log.info(
+                    "JUDAS HIGH SWEEP CONFIRMED | " +
+                            "Symbol={} | Sweep={} | ORHigh={} | " +
+                            "SweepDepth={} | UpperWick={} | Body={} | " +
+                            "Confirmation={} | VolumeRatio={}",
+                    openingRange.getSymbol(),
+                    sweep.getHigh(),
+                    rangeHigh,
+                    round(
+                            sweepDepth
+                    ),
+                    round(
+                            upperWick
+                    ),
+                    round(
+                            body
+                    ),
+                    confirmation.getClose(),
+                    round(
+                            volumeRatio
+                    )
+            );
 
             return buildResult(
                     openingRange,
@@ -228,7 +343,7 @@ public class JudasSwingDetector {
                     "HIGH_SWEEP",
                     sweep,
                     confirmation,
-                    "PRICE_SWEPT_OPENING_RANGE_HIGH_AND_CONFIRMED_REVERSAL"
+                    "HIGH_SWEEP_REJECTION_AND_BEARISH_FOLLOW_THROUGH"
             );
         }
 
@@ -240,15 +355,13 @@ public class JudasSwingDetector {
 
 
     /**
-     * Detect bullish Judas Swing:
+     * Bullish Judas:
      *
-     * Opening Range Low
-     *          ↓
-     * Price sweeps below it
-     *          ↓
-     * Candle closes back above it
-     *          ↓
-     * Confirmation candle remains above level
+     * Sweep OR Low
+     * + rejection
+     * + close above OR Low
+     * + next candle closes higher
+     * + confirmation volume
      */
     private JudasSwingResult detectLowSweep(
             OpeningRange openingRange,
@@ -256,6 +369,16 @@ public class JudasSwingDetector {
 
         double rangeLow =
                 openingRange.getLow();
+
+        double minimumSweepDepth =
+                rangeLow
+                        * MIN_SWEEP_DEPTH_PERCENT
+                        / 100.0;
+
+        double averageVolume =
+                calculateOpeningRangeAverageVolume(
+                        openingRange.getSymbol()
+                );
 
         for (int i = 0; i < candles.size() - 1; i++) {
 
@@ -272,37 +395,114 @@ public class JudasSwingDetector {
             }
 
             /*
-             * Initial liquidity sweep below OR low.
+             * STEP 1
+             *
+             * Price must meaningfully trade below OR Low.
              */
-            boolean swept =
-                    sweep.getLow() < rangeLow;
+            double sweepDepth =
+                    rangeLow - sweep.getLow();
 
-            if (!swept) {
+            if (sweepDepth < minimumSweepDepth) {
+
                 continue;
             }
 
             /*
-             * Sweep candle must reject the breakdown
-             * and close back above the OR low.
+             * STEP 2
+             *
+             * Sweep candle must close back above OR Low.
              */
-            boolean rejected =
-                    sweep.getClose() > rangeLow;
+            if (sweep.getClose() <= rangeLow) {
 
-            if (!rejected) {
                 continue;
             }
 
             /*
-             * Confirmation candle must continue to close
-             * above the opening-range low.
+             * STEP 3
+             *
+             * Strong lower rejection wick.
              */
-            boolean confirmed =
-                    confirmation.getClose() > rangeLow
-                            + MIN_REENTRY_PERCENT;
+            double body =
+                    Math.abs(
+                            sweep.getClose()
+                                    - sweep.getOpen()
+                    );
 
-            if (!confirmed) {
+            double lowerWick =
+                    Math.min(
+                            sweep.getOpen(),
+                            sweep.getClose()
+                    )
+                            - sweep.getLow();
+
+            if (!hasStrongRejection(
+                    lowerWick,
+                    body)) {
+
                 continue;
             }
+
+            /*
+             * STEP 4
+             *
+             * Confirmation must continue bullish.
+             */
+            if (confirmation.getClose()
+                    <= sweep.getClose()) {
+
+                continue;
+            }
+
+            /*
+             * STEP 5
+             *
+             * Confirmation remains above OR Low.
+             */
+            if (confirmation.getClose()
+                    <= rangeLow) {
+
+                continue;
+            }
+
+            /*
+             * STEP 6
+             *
+             * Confirmation volume.
+             */
+            double volumeRatio =
+                    calculateVolumeRatio(
+                            confirmation,
+                            averageVolume
+                    );
+
+            if (volumeRatio
+                    < MIN_CONFIRMATION_VOLUME_RATIO) {
+
+                continue;
+            }
+
+            log.info(
+                    "JUDAS LOW SWEEP CONFIRMED | " +
+                            "Symbol={} | Sweep={} | ORLow={} | " +
+                            "SweepDepth={} | LowerWick={} | Body={} | " +
+                            "Confirmation={} | VolumeRatio={}",
+                    openingRange.getSymbol(),
+                    sweep.getLow(),
+                    rangeLow,
+                    round(
+                            sweepDepth
+                    ),
+                    round(
+                            lowerWick
+                    ),
+                    round(
+                            body
+                    ),
+                    confirmation.getClose(),
+                    round(
+                            volumeRatio
+                    )
+            );
 
             return buildResult(
                     openingRange,
@@ -310,7 +510,7 @@ public class JudasSwingDetector {
                     "LOW_SWEEP",
                     sweep,
                     confirmation,
-                    "PRICE_SWEPT_OPENING_RANGE_LOW_AND_CONFIRMED_REVERSAL"
+                    "LOW_SWEEP_REJECTION_AND_BULLISH_FOLLOW_THROUGH"
             );
         }
 
@@ -321,6 +521,84 @@ public class JudasSwingDetector {
     }
 
 
+    private boolean hasStrongRejection(
+            double wick,
+            double body) {
+
+        /*
+         * Do not reject a valid rejection candle
+         * just because its body is extremely small.
+         */
+        if (wick <= 0) {
+            return false;
+        }
+
+        if (body <= 0) {
+            return true;
+        }
+
+        return wick / body
+                >= MIN_REJECTION_WICK_BODY_RATIO;
+    }
+
+
+    private double calculateOpeningRangeAverageVolume(
+            String symbol) {
+
+        LocalDate today =
+                LocalDate.now();
+
+        LocalDateTime start =
+                LocalDateTime.of(
+                        today,
+                        LocalTime.of(9, 15)
+                );
+
+        LocalDateTime end =
+                LocalDateTime.of(
+                        today,
+                        LocalTime.of(9, 30)
+                );
+
+        List<MinuteCandle> candles =
+                minuteCandleStore.getBetween(
+                        symbol,
+                        start,
+                        end
+                );
+
+        if (candles.isEmpty()) {
+            return 0.0;
+        }
+
+        return candles.stream()
+                .filter(this::validCandle)
+                .map(MinuteCandle::getVolume)
+                .filter(volume -> volume != null)
+                .mapToDouble(
+                        Long::doubleValue
+                )
+                .average()
+                .orElse(0.0);
+    }
+
+
+    private double calculateVolumeRatio(
+            MinuteCandle candle,
+            double averageVolume) {
+
+        if (candle == null
+                || candle.getVolume() == null
+                || averageVolume <= 0) {
+
+            return 0.0;
+        }
+
+        return candle.getVolume()
+                / averageVolume;
+    }
+
+
     private JudasSwingResult buildResult(
             OpeningRange openingRange,
             String direction,
@@ -328,6 +606,11 @@ public class JudasSwingDetector {
             MinuteCandle sweep,
             MinuteCandle confirmation,
             String reason) {
+
+        double averageVolume =
+                calculateOpeningRangeAverageVolume(
+                        openingRange.getSymbol()
+                );
 
         return JudasSwingResult.builder()
                 .symbol(openingRange.getSymbol())
@@ -352,9 +635,7 @@ public class JudasSwingDetector {
                         )
                 )
                 .averageVolume(
-                        calculateAverageVolume(
-                                openingRange.getSymbol()
-                        )
+                        averageVolume
                 )
                 .sweepTime(
                         sweep.getMinute()
@@ -364,26 +645,6 @@ public class JudasSwingDetector {
                 )
                 .reason(reason)
                 .build();
-    }
-
-
-    private Double calculateAverageVolume(
-            String symbol) {
-
-        List<MinuteCandle> candles =
-                minuteCandleStore.getToday(symbol);
-
-        if (candles.isEmpty()) {
-            return null;
-        }
-
-        return candles.stream()
-                .filter(this::validCandle)
-                .map(MinuteCandle::getVolume)
-                .filter(volume -> volume != null)
-                .mapToDouble(Long::doubleValue)
-                .average()
-                .orElse(0.0);
     }
 
 
@@ -399,15 +660,6 @@ public class JudasSwingDetector {
     }
 
 
-    private Double toDouble(
-            Long value) {
-
-        return value == null
-                ? null
-                : value.doubleValue();
-    }
-
-
     private JudasSwingResult rejected(
             String symbol,
             String reason) {
@@ -419,5 +671,23 @@ public class JudasSwingDetector {
                 .sweepSide("NONE")
                 .reason(reason)
                 .build();
+    }
+
+
+    private Double toDouble(
+            Long value) {
+
+        return value != null
+                ? value.doubleValue()
+                : null;
+    }
+
+
+    private double round(
+            double value) {
+
+        return Math.round(
+                value * 10000.0
+        ) / 10000.0;
     }
 }

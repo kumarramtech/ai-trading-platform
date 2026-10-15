@@ -1,5 +1,6 @@
 package com.ram.trading.ai.engine.service;
 
+import com.ram.trading.ai.engine.cache.CacheKeyBuilder;
 import com.ram.trading.ai.engine.cache.RedisCacheService;
 import com.ram.trading.ai.engine.dto.*;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,9 @@ public class AiCallControlService {
             "AI_EVALUATION_STATE:";
 
     private final RedisCacheService redisCacheService;
+
+    @Value("${ai.call-control.index-change-threshold:0.25}")
+    private double indexChangeThreshold;
 
     @Value("${ai.call-control.enabled:true}")
     private boolean enabled;
@@ -51,113 +55,128 @@ public class AiCallControlService {
      * - there is no meaningful market change
      */
 
+
+
     public boolean shouldCallAi(
             TradingDecisionRequest request,
             AiEvaluationState previousState) {
 
         if (!enabled) {
-
-            log.debug(
-                    "AI CALL CONTROL | DISABLED | AI allowed");
-
+            log.debug("AI CALL CONTROL | DISABLED | AI allowed");
             return true;
         }
 
-        if (request == null ||
-                request.getSignalRequest() == null) {
-
-            log.warn(
-                    "AI CALL CONTROL | Invalid request | AI allowed");
-
+        if (request == null || request.getSignalRequest() == null) {
+            log.warn("AI CALL CONTROL | Invalid request | AI allowed");
             return true;
         }
 
-        SignalGenerationRequest signalRequest =
-                request.getSignalRequest();
+        SignalGenerationRequest signalRequest = request.getSignalRequest();
+        TradingDecision technicalDecision = request.getTechnicalDecision();
 
-        TradingDecision technicalDecision =
-                request.getTechnicalDecision();
+        String symbol = signalRequest.getSymbol();
 
-        String symbol =
-                signalRequest.getSymbol();
-
-        if (symbol == null ||
-                symbol.isBlank()) {
-
-            log.warn(
-                    "AI CALL CONTROL | Missing symbol | AI allowed");
-
+        if (symbol == null || symbol.isBlank()) {
+            log.warn("AI CALL CONTROL | Missing symbol | AI allowed");
             return true;
         }
 
-        /*
-         * First evaluation for this symbol/session.
-         */
+        // First evaluation for this symbol.
         if (previousState == null) {
-
             log.info(
                     "AI CALL CONTROL | {} | ALLOWED | FIRST_EVALUATION",
                     symbol);
+            return true;
+        }
+
+        /*
+         * STEP 1: Check whether the strategy setup changed.
+         *
+         * A JUDAS-to-ORB change or BUY-to-SELL setup change
+         * must trigger a fresh AI evaluation.
+         */
+        String currentStrategy = signalRequest.getSetupStrategy();
+
+        String currentSetupDirection =
+                signalRequest.getSetupDirection() != null
+                        ? signalRequest.getSetupDirection()
+                        : null;
+
+        if (!sameValue(
+                previousState.getSetupStrategy(),
+                currentStrategy)
+                || !sameValue(
+                previousState.getSetupDirection() != null
+                        ? previousState.getSetupDirection()
+                        : null,
+                currentSetupDirection)) {
+
+            log.info(
+                    "AI CALL CONTROL | {} | ALLOWED | SETUP_CHANGED "
+                            + "| PreviousStrategy={} | CurrentStrategy={} "
+                            + "| PreviousDirection={} | CurrentDirection={}",
+                    symbol,
+                    previousState.getSetupStrategy(),
+                    currentStrategy,
+                    previousState.getSetupDirection(),
+                    currentSetupDirection);
 
             return true;
         }
 
-        String previousSignal =
-                previousState.getTechnicalSignal();
+        /*
+         * STEP 2: Check technical direction.
+         */
+        String previousSignal = previousState.getTechnicalSignal();
 
         String currentSignal =
-                technicalDecision != null &&
-                        technicalDecision.getSignal() != null
-                        ? technicalDecision
-                        .getSignal()
-                        .name()
+                technicalDecision != null
+                        && technicalDecision.getSignal() != null
+                        ? technicalDecision.getSignal().name()
                         : null;
 
-        /*
-         * Direction change must always trigger AI.
-         *
-         * BUY -> SELL
-         * SELL -> BUY
-         * HOLD -> BUY
-         * etc.
-         */
-        if (!sameValue(
-                previousSignal,
-                currentSignal)) {
-
+        if (!sameValue(previousSignal, currentSignal)) {
             log.info(
                     "AI CALL CONTROL | {} | ALLOWED | SIGNAL_CHANGED | {} -> {}",
                     symbol,
                     previousSignal,
                     currentSignal);
-
             return true;
         }
 
-        long elapsedMillis =
-                System.currentTimeMillis()
-                        - previousState.getEvaluatedAt();
+        /*
+         * STEP 3: Check market context BEFORE cooldown.
+         */
+        if (hasMarketContextChanged(
+                signalRequest.getMarketContext(),
+                previousState)) {
 
-        long minimumIntervalMillis =
-                minRecheckSeconds * 1000L;
+            log.info(
+                    "AI CALL CONTROL | {} | ALLOWED | MARKET_CONTEXT_CHANGED",
+                    symbol);
+            return true;
+        }
 
         /*
-         * Don't repeatedly evaluate an unchanged market
-         * inside the cooldown period.
+         * STEP 4: Preserve existing cooldown behavior.
          */
-        if (elapsedMillis <
-                minimumIntervalMillis) {
+        long elapsedMillis =
+                System.currentTimeMillis() - previousState.getEvaluatedAt();
+
+        long minimumIntervalMillis = minRecheckSeconds * 1000L;
+
+        if (elapsedMillis >= 0
+                && elapsedMillis < minimumIntervalMillis) {
 
             log.debug(
                     "AI CALL CONTROL | {} | SKIPPED | COOLDOWN | elapsed={}ms",
                     symbol,
                     elapsedMillis);
-
             return false;
         }
 
         /*
-         * Significant price movement.
+         * STEP 5: Significant price movement.
          */
         if (hasSignificantPriceChange(
                 previousState.getCurrentPrice(),
@@ -166,12 +185,11 @@ public class AiCallControlService {
             log.info(
                     "AI CALL CONTROL | {} | ALLOWED | PRICE_CHANGED",
                     symbol);
-
             return true;
         }
 
         /*
-         * Significant RSI movement.
+         * STEP 6: Significant RSI movement.
          */
         if (hasSignificantRsiChange(
                 previousState.getRsi(),
@@ -180,12 +198,11 @@ public class AiCallControlService {
             log.info(
                     "AI CALL CONTROL | {} | ALLOWED | RSI_CHANGED",
                     symbol);
-
             return true;
         }
 
         /*
-         * Significant MACD movement.
+         * STEP 7: Significant MACD movement.
          */
         if (hasSignificantMacdChange(
                 previousState.getMacd(),
@@ -194,16 +211,19 @@ public class AiCallControlService {
             log.info(
                     "AI CALL CONTROL | {} | ALLOWED | MACD_CHANGED",
                     symbol);
-
             return true;
         }
 
+        /*
+         * STEP 8: No meaningful change.
+         */
         log.debug(
                 "AI CALL CONTROL | {} | SKIPPED | NO_MEANINGFUL_CHANGE",
                 symbol);
 
         return false;
     }
+
 
     public AiEvaluationState getEvaluationState(
             TradingDecisionRequest request) {
@@ -273,14 +293,15 @@ public class AiCallControlService {
      * Records the market state and successful AI response
      * AFTER the actual LLM call succeeds.
      */
+
+
     public void recordAiEvaluation(
             TradingDecisionRequest request,
             AiDecisionResponse response) {
 
-        if (request == null ||
-                request.getSignalRequest() == null ||
-                response == null) {
-
+        if (request == null
+                || request.getSignalRequest() == null
+                || response == null) {
             return;
         }
 
@@ -290,52 +311,106 @@ public class AiCallControlService {
         TradingDecision technicalDecision =
                 request.getTechnicalDecision();
 
-        String symbol =
-                signalRequest.getSymbol();
+        MarketContext marketContext =
+                signalRequest.getMarketContext();
 
-        if (symbol == null ||
-                symbol.isBlank()) {
+        String symbol = signalRequest.getSymbol();
 
+        if (symbol == null || symbol.isBlank()) {
             return;
         }
 
-        AiEvaluationState state =
-                AiEvaluationState.builder()
-                        .symbol(symbol)
-                        .currentPrice(
-                                signalRequest.getCurrentPrice())
-                        .rsi(
-                                signalRequest.getRsi())
-                        .ema20(
-                                signalRequest.getEma20())
-                        .ema50(
-                                signalRequest.getEma50())
-                        .macd(
-                                signalRequest.getMacd())
-                        .signalLine(
-                                signalRequest.getSignalLine())
-                        .volume(
-                                signalRequest.getVolume())
-                        .technicalSignal(
-                                technicalDecision != null &&
-                                        technicalDecision
-                                                .getSignal() != null
-                                        ? technicalDecision
-                                        .getSignal()
-                                        .name()
-                                        : null)
-                        .confidenceLevel(
-                                technicalDecision != null &&
-                                        technicalDecision
-                                                .getConfidenceLevel() != null
-                                        ? technicalDecision
-                                        .getConfidenceLevel()
-                                        .name()
-                                        : null)
-                        .evaluatedAt(
-                                System.currentTimeMillis())
-                        .aiDecisionResponse(response)
-                        .build();
+        // Store the exact request key with the evaluation state.
+        // If key generation fails, do not trust this state for reuse.
+        String cacheKey = null;
+
+        try {
+            cacheKey = CacheKeyBuilder.buildAiDecisionKey(request);
+        } catch (IllegalArgumentException ex) {
+            log.warn(
+                    "AI CALL CONTROL | {} | Unable to build evaluation cache key; response reuse must be rejected",
+                    symbol,
+                    ex);
+        }
+
+        AiEvaluationState state = AiEvaluationState.builder()
+                .symbol(symbol)
+                .cacheKey(cacheKey)
+
+                // Technical indicator snapshot
+                .currentPrice(signalRequest.getCurrentPrice())
+                .rsi(signalRequest.getRsi())
+                .ema20(signalRequest.getEma20())
+                .ema50(signalRequest.getEma50())
+                .macd(signalRequest.getMacd())
+                .signalLine(signalRequest.getSignalLine())
+                .volume(signalRequest.getVolume())
+
+                .technicalSignal(
+                        technicalDecision != null
+                                && technicalDecision.getSignal() != null
+                                ? technicalDecision.getSignal().name()
+                                : null)
+
+                .confidenceLevel(
+                        technicalDecision != null
+                                && technicalDecision.getConfidenceLevel() != null
+                                ? technicalDecision.getConfidenceLevel().name()
+                                : null)
+
+                // Market context snapshot
+                .niftyChange(
+                        marketContext != null
+                                ? marketContext.getNiftyChange()
+                                : null)
+                .setupStrategy(signalRequest.getSetupStrategy())
+                .setupDirection(
+                        signalRequest.getSetupDirection() != null
+                                ? signalRequest.getSetupDirection()
+                                : null)
+                .bankNiftyChange(
+                        marketContext != null
+                                ? marketContext.getBankNiftyChange()
+                                : null)
+
+                .volatilityIndex(
+                        marketContext != null
+                                ? marketContext.getVolatilityIndex()
+                                : null)
+
+                .marketTrend(
+                        marketContext != null
+                                ? marketContext.getMarketTrend()
+                                : null)
+
+                .sectorTrend(
+                        marketContext != null
+                                ? marketContext.getSectorTrend()
+                                : null)
+
+                .newsSentiment(
+                        marketContext != null
+                                ? marketContext.getNewsSentiment()
+                                : null)
+
+                .tradingSession(
+                        marketContext != null
+                                ? marketContext.getTradingSession()
+                                : null)
+
+                .averageVolume(
+                        marketContext != null
+                                ? marketContext.getAverageVolume()
+                                : null)
+
+                .averageTrueRange(
+                        marketContext != null
+                                ? marketContext.getAverageTrueRange()
+                                : null)
+
+                .evaluatedAt(System.currentTimeMillis())
+                .aiDecisionResponse(response)
+                .build();
 
         redisCacheService.put(
                 buildKey(symbol),
@@ -343,11 +418,14 @@ public class AiCallControlService {
                 Duration.ofHours(stateTtlHours));
 
         log.info(
-                "AI CALL CONTROL | {} | STATE_RECORDED | price={} | signal={}",
+                "AI CALL CONTROL | {} | STATE_RECORDED | price={} | signal={} | cacheKeyPresent={}",
                 symbol,
                 signalRequest.getCurrentPrice(),
-                state.getTechnicalSignal());
+                state.getTechnicalSignal(),
+                cacheKey != null);
     }
+
+
 
     private String buildKey(
             String symbol) {
@@ -436,4 +514,85 @@ public class AiCallControlService {
 
         return first.equalsIgnoreCase(second);
     }
+
+    private boolean hasMarketContextChanged(
+            MarketContext current,
+            AiEvaluationState previous) {
+
+        if (current == null) {
+            // Missing current context must not cause repeated calls.
+            return false;
+        }
+
+        // A newly available context should be evaluated once.
+        if (previous.getMarketTrend() == null
+                && previous.getSectorTrend() == null
+                && previous.getNewsSentiment() == null
+                && previous.getTradingSession() == null
+                && previous.getNiftyChange() == null
+                && previous.getBankNiftyChange() == null
+                && previous.getVolatilityIndex() == null) {
+
+            return current.getMarketTrend() != null
+                    || current.getSectorTrend() != null
+                    || current.getNewsSentiment() != null
+                    || current.getTradingSession() != null
+                    || current.getNiftyChange() != null
+                    || current.getBankNiftyChange() != null
+                    || current.getVolatilityIndex() != null;
+        }
+
+        if (!sameValue(
+                previous.getMarketTrend() == null
+                        ? null : previous.getMarketTrend().name(),
+                current.getMarketTrend() == null
+                        ? null : current.getMarketTrend().name())) {
+            return true;
+        }
+
+        if (!sameValue(
+                previous.getSectorTrend() == null
+                        ? null : previous.getSectorTrend().name(),
+                current.getSectorTrend() == null
+                        ? null : current.getSectorTrend().name())) {
+            return true;
+        }
+
+        if (!sameValue(
+                previous.getNewsSentiment() == null
+                        ? null : previous.getNewsSentiment().name(),
+                current.getNewsSentiment() == null
+                        ? null : current.getNewsSentiment().name())) {
+            return true;
+        }
+
+        if (!sameValue(
+                previous.getTradingSession() == null
+                        ? null : previous.getTradingSession().name(),
+                current.getTradingSession() == null
+                        ? null : current.getTradingSession().name())) {
+            return true;
+        }
+
+        return hasSignificantIndexChange(
+                previous.getNiftyChange(),
+                current.getNiftyChange())
+                || hasSignificantIndexChange(
+                previous.getBankNiftyChange(),
+                current.getBankNiftyChange());
+    }
+
+    private boolean hasSignificantIndexChange(
+            Double previous,
+            Double current) {
+
+        // Avoid treating unavailable data as a market movement.
+        if (previous == null || current == null) {
+            return false;
+        }
+
+        return Math.abs(current - previous)
+                >= indexChangeThreshold;
+    }
+
 }
