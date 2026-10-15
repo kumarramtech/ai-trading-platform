@@ -27,9 +27,17 @@ public class SignalGenerationRequest {
 
     private Double signalLine;
 
+    private Double previousMacd;
+
+    private Double previousSignalLine;
+
     private Double atr;
 
     private Long volume;
 
     private MarketContext marketContext;
+
+    private String setupStrategy;
+
+    private String setupDirection;
 }
