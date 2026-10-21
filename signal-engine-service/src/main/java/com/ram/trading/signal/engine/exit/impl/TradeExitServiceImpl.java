@@ -1,5 +1,6 @@
 package com.ram.trading.signal.engine.exit.impl;
 
+import com.ram.trading.signal.engine.client.TradeExecutionClient;
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.contant.SignalType;
 import com.ram.trading.signal.engine.dto.market.ExitReason;
@@ -17,10 +18,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.time.LocalTime;
 
 @Service
@@ -29,6 +32,8 @@ import java.time.LocalTime;
 public class TradeExitServiceImpl implements TradeExitService {
 
     private final PaperTradeRepository paperTradeRepository;
+
+    private final TradeExecutionClient tradeExecutionClient;
 
     private final ExitOrchestrator exitOrchestrator;
 
@@ -69,9 +74,50 @@ public class TradeExitServiceImpl implements TradeExitService {
     @Value("${trading.exit.dynamic-target.extension-percent:25}")
     private double targetExtensionPercent;
 
+    /**
+     * Must stay aligned with SignalGenerationServiceImpl. PAPER remains the
+     * default and preserves the existing PaperTradingService exit path.
+     */
+    @Value("${execution.trade:paper}")
+    private String executionTradeMode;
+
+    /** Independent safety gate. Keep false until live lifecycle testing passes. */
+    @Value("${execution.live-enabled:false}")
+    private boolean liveExecutionEnabled;
 
     @Override
     public Mono<Void> evaluateExit(Tick tick) {
+        if (tick == null || tick.getSymbol() == null
+                || tick.getLastTradedPrice() == null
+                || !Double.isFinite(tick.getLastTradedPrice())
+                || tick.getLastTradedPrice() <= 0) {
+            log.debug("Skipping exit evaluation because tick data is invalid");
+            return Mono.empty();
+        }
+
+        String mode = executionTradeMode == null
+                ? "paper" : executionTradeMode.trim().toLowerCase(java.util.Locale.ROOT);
+
+        if ("paper".equals(mode)) {
+            return evaluatePaperExit(tick);
+        }
+
+        if (!"live".equals(mode)) {
+            return Mono.error(new IllegalStateException(
+                    "Invalid execution.trade value for exit evaluation: " + executionTradeMode));
+        }
+
+        if (!liveExecutionEnabled) {
+            log.debug("Live exit evaluation blocked: execution.live-enabled=false | symbol={}",
+                    tick.getSymbol());
+            return Mono.empty();
+        }
+
+        return evaluateLiveExit(tick);
+    }
+
+    /** Existing paper exit implementation is intentionally kept unchanged. */
+    private Mono<Void> evaluatePaperExit(Tick tick) {
 
         log.debug("==========================================");
         log.debug("TRADE EXIT EVALUATION STARTED");
@@ -511,6 +557,271 @@ public class TradeExitServiceImpl implements TradeExitService {
                             decision,
                             tick);
                 });
+    }
+
+    /**
+     * Evaluates only positions owned by Trade Execution Service. It does not
+     * read or mutate PaperTrade rows. A submitted exit is never retried here;
+     * Trade Execution Service owns idempotency and broker reconciliation.
+     */
+    private Mono<Void> evaluateLiveExit(Tick tick) {
+        return tradeExecutionClient.getOpenTrades()
+                .flatMapMany(Flux::fromIterable)
+                .filter(position -> position != null
+                        && position.signalId() != null
+                        && position.symbol() != null
+                        && position.symbol().equalsIgnoreCase(tick.getSymbol())
+                        && "OPEN".equalsIgnoreCase(position.status()))
+                .concatMap(position -> evaluateLivePosition(position, tick))
+                .then()
+                .onErrorResume(error -> {
+                    log.error("Live position lookup/exit evaluation failed; no blind retry. "
+                                    + "Symbol={} | Error={}",
+                            tick.getSymbol(), error.toString());
+                    return Mono.empty();
+                });
+    }
+
+    private Mono<Void> evaluateLivePosition(
+            TradeExecutionClient.TradeExecutionPosition position,
+            Tick tick) {
+
+        Integer remaining = position.remainingQuantity();
+        Integer filled = position.filledQuantity();
+        if (remaining == null || remaining <= 0 || filled == null || filled <= 0
+                || position.averageEntryPrice() == null
+                || position.averageEntryPrice().signum() <= 0) {
+            log.error("Skipping invalid live position; manual reconciliation may be required. "
+                            + "signalId={} | symbol={} | filled={} | remaining={} | entryPrice={}",
+                    position.signalId(), position.symbol(), filled, remaining,
+                    position.averageEntryPrice());
+            return Mono.empty();
+        }
+
+        String side = position.side() == null ? "" : position.side().trim().toUpperCase(java.util.Locale.ROOT);
+        if (!"BUY".equals(side) && !"SELL".equals(side)) {
+            log.error("Skipping live position with invalid side. signalId={} | side={}",
+                    position.signalId(), position.side());
+            return Mono.empty();
+        }
+
+        double entry = position.averageEntryPrice().doubleValue();
+        double price = tick.getLastTradedPrice();
+
+        // The hard-loss guard must consider the whole position lifecycle.
+        // After a partial exit, realized P&L is already locked in; checking only
+        // the remaining shares can understate the trade's cumulative loss.
+        double unrealizedPnl = ("SELL".equals(side) ? entry - price : price - entry) * remaining;
+        double realizedPnl = position.realizedPnl() == null
+                ? 0.0d : position.realizedPnl().doubleValue();
+        double totalTradePnl = realizedPnl + unrealizedPnl;
+
+        double stop = position.currentStopLoss() != null
+                ? position.currentStopLoss().doubleValue()
+                : position.initialStopLoss() == null ? Double.NaN
+                : position.initialStopLoss().doubleValue();
+        Double target = position.targetPrice() == null
+                ? null : position.targetPrice().doubleValue();
+
+        String exitReason = null;
+        if (totalTradePnl <= -Math.abs(maxLossPerTrade)) {
+            exitReason = "HARD_MAX_LOSS";
+        } else if (Double.isFinite(stop)
+                && (("BUY".equals(side) && price <= stop)
+                || ("SELL".equals(side) && price >= stop))) {
+            exitReason = "STOP_LOSS";
+        } else if (target != null
+                && (("BUY".equals(side) && price >= target)
+                || ("SELL".equals(side) && price <= target))) {
+            if (shouldExtendLiveTarget(position, tick)) {
+                return extendLiveTarget(position, tick)
+                        .flatMap(extended -> extended
+                                ? Mono.empty()
+                                : submitLiveExit(position, tick, "TARGET", remaining,
+                                        entry, price, realizedPnl, unrealizedPnl, totalTradePnl));
+            }
+            exitReason = "TARGET";
+        }
+
+        if (exitReason == null) {
+            return updateLiveTrailingStop(position, tick, stop)
+                    .doOnSuccess(updated -> log.debug(
+                            "LIVE POSITION HOLD | signalId={} | symbol={} | price={} | realizedPnl={} | "
+                                    + "unrealizedPnl={} | totalTradePnl={} | stop={} | target={} | trailingUpdateConfirmed={}",
+                            position.signalId(), position.symbol(), price, realizedPnl,
+                            unrealizedPnl, totalTradePnl, stop, target, Boolean.TRUE.equals(updated)))
+                    .then();
+        }
+
+        return submitLiveExit(position, tick, exitReason, remaining,
+                entry, price, realizedPnl, unrealizedPnl, totalTradePnl);
+    }
+
+    /**
+     * Calculate a live trailing stop in Signal Engine and rely on it only when
+     * Trade Execution confirms the persisted OPEN position contains that exact
+     * stop. This updates internal trigger data only; no broker stop is placed.
+     */
+    private Mono<Boolean> updateLiveTrailingStop(
+            TradeExecutionClient.TradeExecutionPosition position,
+            Tick tick,
+            double currentStop) {
+
+        if (position.initialStopLoss() == null || !Double.isFinite(currentStop)
+                || position.averageEntryPrice() == null) {
+            return Mono.just(false);
+        }
+
+        java.util.Optional<BigDecimal> candidate = trailingStopService.calculateLiveTrailingStop(
+                position.side(),
+                position.averageEntryPrice(),
+                position.initialStopLoss(),
+                BigDecimal.valueOf(currentStop),
+                tick.getLastTradedPrice());
+        if (candidate.isEmpty()) {
+            return Mono.just(false);
+        }
+
+        BigDecimal proposedStop = candidate.get();
+        TradeExecutionClient.TradeProtectionUpdateRequest request =
+                new TradeExecutionClient.TradeProtectionUpdateRequest(
+                        position.signalId(), proposedStop, null, null);
+
+        return tradeExecutionClient.updateProtection(request)
+                .map(updated -> {
+                    boolean confirmed = updated != null
+                            && java.util.Objects.equals(position.signalId(), updated.signalId())
+                            && "OPEN".equalsIgnoreCase(updated.status())
+                            && updated.currentStopLoss() != null
+                            && updated.currentStopLoss().compareTo(proposedStop) == 0;
+                    if (confirmed) {
+                        log.info("LIVE TRAILING STOP CONFIRMED | signalId={} | symbol={} | side={} | oldStop={} | newStop={} | price={}",
+                                position.signalId(), position.symbol(), position.side(),
+                                currentStop, proposedStop, tick.getLastTradedPrice());
+                    } else {
+                        log.error("LIVE TRAILING STOP NOT CONFIRMED | signalId={} | symbol={} | proposedStop={} | responseStatus={} | responseStop={}",
+                                position.signalId(), position.symbol(), proposedStop,
+                                updated == null ? null : updated.status(),
+                                updated == null ? null : updated.currentStopLoss());
+                    }
+                    return confirmed;
+                })
+                .defaultIfEmpty(false)
+                .onErrorResume(error -> {
+                    log.error("LIVE TRAILING STOP UPDATE FAILED; previous persisted stop remains authoritative | signalId={} | symbol={} | proposedStop={} | error={}",
+                            position.signalId(), position.symbol(), proposedStop, error.toString());
+                    return Mono.just(false);
+                });
+    }
+
+    private boolean shouldExtendLiveTarget(
+            TradeExecutionClient.TradeExecutionPosition position,
+            Tick tick) {
+        if (!dynamicTargetEnabled || position == null || tick == null
+                || Boolean.TRUE.equals(position.targetExtended())
+                || position.targetPrice() == null
+                || position.averageEntryPrice() == null
+                || position.averageEntryPrice().signum() <= 0
+                || !Double.isFinite(targetExtensionPercent)
+                || targetExtensionPercent <= 0) {
+            return false;
+        }
+
+        LocalTime marketClose = LocalTime.of(15, 30);
+        LocalTime currentTime = LocalTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+        long minutesRemaining = java.time.Duration.between(currentTime, marketClose).toMinutes();
+        if (minutesRemaining < minMinutesRemainingForTargetExtension) {
+            return false;
+        }
+
+        String side = position.side() == null ? ""
+                : position.side().trim().toUpperCase(java.util.Locale.ROOT);
+        double price = tick.getLastTradedPrice();
+        double target = position.targetPrice().doubleValue();
+        return ("BUY".equals(side) && price >= target)
+                || ("SELL".equals(side) && price <= target);
+    }
+
+    /**
+     * Extends a live target at most once, using the same configured percentage and
+     * time window as the existing paper-trading feature. The update is persisted
+     * by Trade Execution before subsequent ticks evaluate the new target.
+     */
+    private Mono<Boolean> extendLiveTarget(
+            TradeExecutionClient.TradeExecutionPosition position,
+            Tick tick) {
+        double oldTarget = position.targetPrice().doubleValue();
+        double entry = position.averageEntryPrice().doubleValue();
+        double extension = Math.abs(oldTarget - entry) * (targetExtensionPercent / 100.0d);
+        double rawTarget = "BUY".equalsIgnoreCase(position.side())
+                ? oldTarget + extension : oldTarget - extension;
+        BigDecimal newTarget = BigDecimal.valueOf(Math.round(rawTarget * 100.0d) / 100.0d);
+        if (newTarget.signum() <= 0) {
+            log.warn("LIVE TARGET EXTENSION REJECTED: computed target is invalid | signalId={} | target={}",
+                    position.signalId(), newTarget);
+            return Mono.just(false);
+        }
+
+        TradeExecutionClient.TradeProtectionUpdateRequest request =
+                new TradeExecutionClient.TradeProtectionUpdateRequest(
+                        position.signalId(), null, newTarget, true);
+        return tradeExecutionClient.updateProtection(request)
+                .map(updated -> updated != null
+                        && "OPEN".equalsIgnoreCase(updated.status())
+                        && Boolean.TRUE.equals(updated.targetExtended())
+                        && updated.targetPrice() != null
+                        && updated.targetPrice().compareTo(newTarget) == 0)
+                .defaultIfEmpty(false)
+                .onErrorResume(error -> {
+                    log.error("LIVE TARGET EXTENSION COULD NOT BE CONFIRMED | signalId={} | target={} | error={}",
+                            position.signalId(), newTarget, error.toString());
+                    return Mono.just(false);
+                });
+    }
+
+    private Mono<Void> submitLiveExit(
+            TradeExecutionClient.TradeExecutionPosition position,
+            Tick tick,
+            String exitReason,
+            int remaining,
+            double entry,
+            double price,
+            double realizedPnl,
+            double unrealizedPnl,
+            double totalTradePnl) {
+        String side = position.side() == null ? "UNKNOWN" : position.side();
+        log.warn("LIVE EXIT TRIGGERED | signalId={} | symbol={} | side={} | reason={} | "
+                        + "entry={} | price={} | remainingQty={} | realizedPnl={} | "
+                        + "unrealizedPnl={} | totalTradePnl={}",
+                position.signalId(), position.symbol(), side, exitReason,
+                entry, price, remaining, realizedPnl, unrealizedPnl, totalTradePnl);
+
+        TradeExecutionClient.TradeExitRequest request =
+                new TradeExecutionClient.TradeExitRequest(position.signalId(), remaining, "MARKET");
+        // Deliberately no retry operator: a timeout may follow broker acceptance.
+        return tradeExecutionClient.exitTrade(request)
+                .doOnNext(response -> {
+                    String status = response.status() == null
+                            ? "UNKNOWN" : response.status().toUpperCase(java.util.Locale.ROOT);
+                    if ("CLOSED".equals(status)) {
+                        log.info("LIVE EXIT CONFIRMED CLOSED | signalId={} | symbol={} | orderId={}",
+                                position.signalId(), position.symbol(), response.orderId());
+                    } else if ("PARTIAL_EXIT".equals(status)) {
+                        log.warn("LIVE EXIT PARTIAL | signalId={} | symbol={} | orderId={} | "
+                                        + "filledQty={} | follow-up must use refreshed persisted position",
+                                position.signalId(), position.symbol(), response.orderId(),
+                                response.filledQuantity());
+                    } else if ("EXIT_PENDING".equals(status)) {
+                        log.warn("LIVE EXIT PENDING RECONCILIATION | signalId={} | symbol={} | orderId={}",
+                                position.signalId(), position.symbol(), response.orderId());
+                    } else {
+                        log.warn("LIVE EXIT RESPONSE REQUIRES REVIEW | signalId={} | symbol={} | "
+                                        + "status={} | success={} | message={}",
+                                position.signalId(), position.symbol(), status,
+                                response.success(), response.message());
+                    }
+                })
+                .then();
     }
 
     private boolean shouldExtendTarget(

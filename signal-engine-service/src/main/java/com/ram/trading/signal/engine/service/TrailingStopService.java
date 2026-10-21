@@ -14,6 +14,9 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -72,6 +75,79 @@ public class TrailingStopService {
     private final PaperTradeRepository repository;
     private final NotificationClient notificationClient;
 
+
+
+    /**
+     * Calculates a live-position trailing stop using the same R-multiple stages
+     * as paper trading. This method is deliberately pure: it never reads or
+     * writes PaperTrade persistence and never calls the broker.
+     *
+     * @return a strictly improved stop rounded to paise, or empty when no update
+     *         is warranted or the position data is invalid.
+     */
+    public Optional<BigDecimal> calculateLiveTrailingStop(
+            String side,
+            BigDecimal entryPrice,
+            BigDecimal initialStopLoss,
+            BigDecimal currentStopLoss,
+            double currentPrice) {
+
+        if (side == null || entryPrice == null || initialStopLoss == null
+                || currentStopLoss == null || !Double.isFinite(currentPrice)
+                || currentPrice <= 0 || entryPrice.signum() <= 0
+                || initialStopLoss.signum() <= 0 || currentStopLoss.signum() <= 0) {
+            return Optional.empty();
+        }
+
+        boolean isBuy = "BUY".equalsIgnoreCase(side.trim());
+        boolean isSell = "SELL".equalsIgnoreCase(side.trim());
+        if (!isBuy && !isSell) {
+            return Optional.empty();
+        }
+
+        double entry = entryPrice.doubleValue();
+        double initialStop = initialStopLoss.doubleValue();
+        double currentStop = currentStopLoss.doubleValue();
+        double initialRisk = isBuy ? entry - initialStop : initialStop - entry;
+        if (!Double.isFinite(initialRisk) || initialRisk <= 0) {
+            return Optional.empty();
+        }
+
+        double currentProfit = isBuy ? currentPrice - entry : entry - currentPrice;
+        double currentR = currentProfit / initialRisk;
+        int step = calculateTrailingStep(currentR);
+        if (step == 0) {
+            return Optional.empty();
+        }
+
+        double candidate;
+        if (step == 1) {
+            candidate = entry;
+        } else {
+            double lockedR = switch (step) {
+                case 2 -> STAGE_2_LOCK_R;
+                case 3 -> STAGE_3_LOCK_R;
+                case 4 -> STAGE_4_LOCK_R;
+                case 5 -> STAGE_5_LOCK_R;
+                case 6 -> STAGE_6_LOCK_R;
+                default -> 0.0d;
+            };
+            candidate = isBuy
+                    ? entry + initialRisk * lockedR
+                    : entry - initialRisk * lockedR;
+        }
+
+        if (!Double.isFinite(candidate) || candidate <= 0) {
+            return Optional.empty();
+        }
+
+        BigDecimal rounded = BigDecimal.valueOf(candidate).setScale(2, RoundingMode.HALF_UP);
+        int comparison = rounded.compareTo(currentStopLoss);
+        if ((isBuy && comparison <= 0) || (isSell && comparison >= 0)) {
+            return Optional.empty();
+        }
+        return Optional.of(rounded);
+    }
 
     /**
      * Called from TradeExitService on every market tick.

@@ -19,9 +19,19 @@ public class BrokerOrderRequest {
 
     private String signal;
 
+    private String transactionType;
+
     private Integer quantity;
 
     private BigDecimal price;
 
+    private BigDecimal triggerPrice;
+
     private String orderType;
+
+    private String product;
+
+    private String validity;
+
+    private String tag;
 }

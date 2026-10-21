@@ -89,44 +89,6 @@ public class AiCallControlService {
             return true;
         }
 
-        /*
-         * STEP 1: Check whether the strategy setup changed.
-         *
-         * A JUDAS-to-ORB change or BUY-to-SELL setup change
-         * must trigger a fresh AI evaluation.
-         */
-        String currentStrategy = signalRequest.getSetupStrategy();
-
-        String currentSetupDirection =
-                signalRequest.getSetupDirection() != null
-                        ? signalRequest.getSetupDirection()
-                        : null;
-
-        if (!sameValue(
-                previousState.getSetupStrategy(),
-                currentStrategy)
-                || !sameValue(
-                previousState.getSetupDirection() != null
-                        ? previousState.getSetupDirection()
-                        : null,
-                currentSetupDirection)) {
-
-            log.info(
-                    "AI CALL CONTROL | {} | ALLOWED | SETUP_CHANGED "
-                            + "| PreviousStrategy={} | CurrentStrategy={} "
-                            + "| PreviousDirection={} | CurrentDirection={}",
-                    symbol,
-                    previousState.getSetupStrategy(),
-                    currentStrategy,
-                    previousState.getSetupDirection(),
-                    currentSetupDirection);
-
-            return true;
-        }
-
-        /*
-         * STEP 2: Check technical direction.
-         */
         String previousSignal = previousState.getTechnicalSignal();
 
         String currentSignal =
@@ -144,9 +106,8 @@ public class AiCallControlService {
             return true;
         }
 
-        /*
-         * STEP 3: Check market context BEFORE cooldown.
-         */
+        // Check market context BEFORE cooldown.
+        // A meaningful context change must not be suppressed by cooldown.
         if (hasMarketContextChanged(
                 signalRequest.getMarketContext(),
                 previousState)) {
@@ -157,14 +118,12 @@ public class AiCallControlService {
             return true;
         }
 
-        /*
-         * STEP 4: Preserve existing cooldown behavior.
-         */
         long elapsedMillis =
                 System.currentTimeMillis() - previousState.getEvaluatedAt();
 
         long minimumIntervalMillis = minRecheckSeconds * 1000L;
 
+        // Preserve the existing cooldown behaviour for unchanged context.
         if (elapsedMillis >= 0
                 && elapsedMillis < minimumIntervalMillis) {
 
@@ -175,9 +134,7 @@ public class AiCallControlService {
             return false;
         }
 
-        /*
-         * STEP 5: Significant price movement.
-         */
+        // Significant price movement.
         if (hasSignificantPriceChange(
                 previousState.getCurrentPrice(),
                 signalRequest.getCurrentPrice())) {
@@ -188,9 +145,7 @@ public class AiCallControlService {
             return true;
         }
 
-        /*
-         * STEP 6: Significant RSI movement.
-         */
+        // Significant RSI movement.
         if (hasSignificantRsiChange(
                 previousState.getRsi(),
                 signalRequest.getRsi())) {
@@ -201,9 +156,7 @@ public class AiCallControlService {
             return true;
         }
 
-        /*
-         * STEP 7: Significant MACD movement.
-         */
+        // Significant MACD movement.
         if (hasSignificantMacdChange(
                 previousState.getMacd(),
                 signalRequest.getMacd())) {
@@ -214,9 +167,6 @@ public class AiCallControlService {
             return true;
         }
 
-        /*
-         * STEP 8: No meaningful change.
-         */
         log.debug(
                 "AI CALL CONTROL | {} | SKIPPED | NO_MEANINGFUL_CHANGE",
                 symbol);
@@ -363,11 +313,7 @@ public class AiCallControlService {
                         marketContext != null
                                 ? marketContext.getNiftyChange()
                                 : null)
-                .setupStrategy(signalRequest.getSetupStrategy())
-                .setupDirection(
-                        signalRequest.getSetupDirection() != null
-                                ? signalRequest.getSetupDirection()
-                                : null)
+
                 .bankNiftyChange(
                         marketContext != null
                                 ? marketContext.getBankNiftyChange()

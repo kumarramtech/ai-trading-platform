@@ -5,7 +5,11 @@ import com.ram.trading.ai.engine.cache.CacheConstants;
 import com.ram.trading.ai.engine.cache.CacheKeyBuilder;
 import com.ram.trading.ai.engine.cache.RedisCacheService;
 import com.ram.trading.ai.engine.constant.AiRecommendation;
+import com.ram.trading.ai.engine.constant.enums.SignalType;
+import com.ram.trading.ai.engine.constant.enums.Trend;
 import com.ram.trading.ai.engine.dto.AiDecisionResponse;
+import com.ram.trading.ai.engine.dto.MarketContext;
+import com.ram.trading.ai.engine.dto.SignalGenerationRequest;
 import com.ram.trading.ai.engine.dto.AiEvaluationState;
 import com.ram.trading.ai.engine.dto.TradingDecisionRequest;
 import com.ram.trading.ai.engine.dto.decision.Decision;
@@ -117,7 +121,9 @@ public class AiDecisionServiceImpl implements AiDecisionService {
                         "AI CALL SKIPPED | {} | REUSING_MATCHING_AI_RESPONSE",
                         symbol);
 
-                return validatedPreviousResponse;
+                // A reused response must pass the same deterministic regime
+                // guard as a newly generated response.
+                return applyMarketRegimeGuard(request, validatedPreviousResponse);
             }
 
             if (!cacheKeyMatches) {
@@ -150,13 +156,16 @@ public class AiDecisionServiceImpl implements AiDecisionService {
                                 "AI CACHE HIT | {} | Reusing validated cached response",
                                 symbol);
 
+                        AiDecisionResponse guardedCachedResponse =
+                                applyMarketRegimeGuard(request, validatedCachedResponse);
+
                         // If recording the evaluation fails, the outer catch
                         // blocks the decision instead of bypassing safety.
                         aiCallControlService.recordAiEvaluation(
                                 request,
-                                validatedCachedResponse);
+                                guardedCachedResponse);
 
-                        return validatedCachedResponse;
+                        return guardedCachedResponse;
                     }
 
                     log.warn(
@@ -181,8 +190,11 @@ public class AiDecisionServiceImpl implements AiDecisionService {
             // STEP 8: Parse and validate the AI response.
             AiDecisionResponse parsedResponse = parser.parse(aiResponse);
 
+            AiDecisionResponse regimeGuardedResponse =
+                    applyMarketRegimeGuard(request, parsedResponse);
+
             AiDecisionResponse response =
-                    aiDecisionValidator.validate(parsedResponse);
+                    aiDecisionValidator.validate(regimeGuardedResponse);
 
             if (response == null
                     || response.getDecision() == null
@@ -239,6 +251,121 @@ public class AiDecisionServiceImpl implements AiDecisionService {
         }
     }
 
+
+    /**
+     * Deterministic market-regime guard. The prompt informs the model, but
+     * regime/strategy safety must not depend on the model following instructions.
+     */
+    private AiDecisionResponse applyMarketRegimeGuard(
+            TradingDecisionRequest request,
+            AiDecisionResponse response) {
+
+        if (request == null
+                || request.getSignalRequest() == null
+                || response == null
+                || response.getDecision() == null) {
+            return response;
+        }
+
+        Decision decision = response.getDecision();
+
+        if (!Boolean.TRUE.equals(decision.getTradeAllowed())
+                || decision.getRecommendation() == null
+                || (decision.getRecommendation() != AiRecommendation.BUY
+                && decision.getRecommendation() != AiRecommendation.SELL)) {
+            return response;
+        }
+
+        SignalGenerationRequest signalRequest = request.getSignalRequest();
+        String strategy = signalRequest.getSetupStrategy() == null
+                ? ""
+                : signalRequest.getSetupStrategy().trim().toUpperCase();
+
+        boolean judasSetup = "JUDAS".equals(strategy);
+        boolean orbSetup = "ORB".equals(strategy);
+        MarketContext context = signalRequest.getMarketContext();
+        Trend regime = context == null ? null : context.getMarketTrend();
+
+        if (regime == null) {
+            if (judasSetup || orbSetup) {
+                return rejectByMarketRegime(
+                        response,
+                        "Market regime is missing or unknown for a JUDAS/ORB entry.");
+            }
+
+            log.warn(
+                    "AI MARKET REGIME GUARD | Symbol={} | Strategy={} | "
+                            + "Regime unavailable; existing non-JUDAS/ORB workflow unchanged",
+                    signalRequest.getSymbol(),
+                    strategy);
+            return response;
+        }
+
+        if (regime == Trend.SIDEWAYS && !judasSetup) {
+            return rejectByMarketRegime(
+                    response,
+                    "Sideways market regime blocks this non-JUDAS entry.");
+        }
+
+        AiRecommendation recommendation = decision.getRecommendation();
+        boolean counterTrend =
+                (regime == Trend.BULLISH && recommendation == AiRecommendation.SELL)
+                        || (regime == Trend.BEARISH && recommendation == AiRecommendation.BUY);
+
+        if (counterTrend && !judasSetup) {
+            return rejectByMarketRegime(
+                    response,
+                    "Counter-trend entry rejected by market-regime guard.");
+        }
+
+        if (judasSetup) {
+            String setupDirection = signalRequest.getSetupDirection();
+            SignalType technicalSignal = request.getTechnicalDecision() == null
+                    ? null
+                    : request.getTechnicalDecision().getSignal();
+
+            boolean directionMatches =
+                    setupDirection != null
+                            && setupDirection.equalsIgnoreCase(recommendation.name())
+                            && technicalSignal != null
+                            && technicalSignal.name().equalsIgnoreCase(recommendation.name());
+
+            if (!directionMatches) {
+                return rejectByMarketRegime(
+                        response,
+                        "JUDAS direction does not match both setup direction and engineering signal.");
+            }
+
+            if (counterTrend || regime == Trend.SIDEWAYS) {
+                log.warn(
+                        "AI COUNTERTREND JUDAS REVIEW | Symbol={} | Regime={} | Direction={} | "
+                                + "Decision requires setup-specific confirmation",
+                        signalRequest.getSymbol(),
+                        regime,
+                        recommendation);
+            }
+        }
+
+        return response;
+    }
+
+    private AiDecisionResponse rejectByMarketRegime(
+            AiDecisionResponse response,
+            String reason) {
+
+        Decision decision = response.getDecision();
+        decision.setRecommendation(AiRecommendation.HOLD);
+        decision.setTradeAllowed(false);
+        decision.setReason(reason);
+        decision.setDecisionStrength("MARKET_REGIME_REJECTED");
+        response.setAiReasoning(reason);
+
+        log.warn(
+                "AI MARKET REGIME GUARD REJECTED | Reason={}",
+                reason);
+
+        return response;
+    }
 
     private AiDecisionResponse buildSafeFallbackResponse() {
 

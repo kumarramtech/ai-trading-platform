@@ -17,15 +17,6 @@ import java.time.Duration;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Delivers market ticks to Signal Service with explicit backpressure.
- *
- * IMPORTANT:
- * We must not create one unbounded WebClient subscription per market tick.
- * Upstox can produce a much higher tick rate than Signal Service can safely
- * process. The bounded sink protects the Market Stream process from an
- * unbounded Reactor connection-acquire queue.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -46,12 +37,18 @@ public class SignalServiceClientImpl implements SignalServiceClient {
     private long httpTimeoutSeconds;
 
     private final AtomicLong lastErrorLogTime = new AtomicLong(0L);
-    private final AtomicLong lastOverflowLogTime = new AtomicLong(0L);
+    private final AtomicLong lastEmitFailureLogTime = new AtomicLong(0L);
 
     private static final long ERROR_LOG_COOLDOWN_MS = 30_000L;
 
-    private Sinks.Many<Tick> tickSink;
-    private Disposable dispatcher;
+    /*
+     * Serialize concurrent producers before emitting into the unicast sink.
+     * The lock is held only during the short, non-blocking emit operation.
+     */
+    private final Object emissionLock = new Object();
+
+    private volatile Sinks.Many<Tick> tickSink;
+    private volatile Disposable dispatcher;
 
     @PostConstruct
     void startDispatcher() {
@@ -59,16 +56,15 @@ public class SignalServiceClientImpl implements SignalServiceClient {
         int capacity = Math.max(1000, queueCapacity);
         int concurrency = Math.max(1, dispatchConcurrency);
 
-        tickSink = Sinks.many()
+        Sinks.Many<Tick> sink = Sinks.many()
                 .unicast()
                 .onBackpressureBuffer(
                         new ArrayBlockingQueue<>(capacity));
 
-        dispatcher = tickSink
-                .asFlux()
-                .flatMap(
-                        this::sendTick,
-                        concurrency)
+        this.tickSink = sink;
+
+        this.dispatcher = sink.asFlux()
+                .flatMap(this::sendTick, concurrency)
                 .doOnError(error ->
                         log.error(
                                 "Signal tick dispatcher stopped unexpectedly",
@@ -93,17 +89,27 @@ public class SignalServiceClientImpl implements SignalServiceClient {
             return;
         }
 
-        if (tickSink == null) {
-            log.warn(
-                    "Signal tick dispatcher not ready; dropping tick | Symbol={}",
-                    tick.getSymbol());
+        Sinks.Many<Tick> sink = this.tickSink;
+
+        if (sink == null) {
+            logEmitFailure(
+                    tick,
+                    "DISPATCHER_NOT_READY",
+                    "Signal tick dispatcher is not initialized");
             return;
         }
 
-        Sinks.EmitResult result = tickSink.tryEmitNext(tick);
+        Sinks.EmitResult result;
+
+        synchronized (emissionLock) {
+            result = sink.tryEmitNext(tick);
+        }
 
         if (result.isFailure()) {
-            logQueueOverflow(tick, result);
+            logEmitFailure(
+                    tick,
+                    result.name(),
+                    describeEmitFailure(result));
         }
     }
 
@@ -115,14 +121,60 @@ public class SignalServiceClientImpl implements SignalServiceClient {
                 .bodyValue(tick)
                 .retrieve()
                 .bodyToMono(Void.class)
-                .timeout(Duration.ofSeconds(httpTimeoutSeconds))
-                .doOnSuccess(response ->
+                .timeout(Duration.ofSeconds(
+                        Math.max(1L, httpTimeoutSeconds)))
+                .doOnSuccess(ignored ->
                         log.debug(
-                                "Tick sent to Signal Service : {}",
+                                "Tick sent to Signal Service | Symbol={}",
                                 tick.getSymbol()))
                 .doOnError(error ->
                         logSignalPublishError(tick, error))
+                /*
+                 * Keep one failed HTTP request from terminating the
+                 * entire dispatcher. This does not mean the tick was
+                 * delivered successfully.
+                 *
+                 * Automatic retries require receiver-side idempotency
+                 * or tick deduplication to avoid duplicate processing.
+                 */
                 .onErrorResume(error -> Mono.empty());
+    }
+
+    private String describeEmitFailure(Sinks.EmitResult result) {
+
+        return switch (result) {
+            case FAIL_NON_SERIALIZED ->
+                    "Concurrent emission rejected; check producer serialization";
+            case FAIL_OVERFLOW ->
+                    "Bounded tick buffer is full";
+            case FAIL_ZERO_SUBSCRIBER ->
+                    "Tick dispatcher has no active subscriber";
+            case FAIL_CANCELLED ->
+                    "Tick dispatcher subscription was cancelled";
+            case FAIL_TERMINATED ->
+                    "Tick sink has already terminated";
+            default ->
+                    "Tick emission failed";
+        };
+    }
+
+    private void logEmitFailure(
+            Tick tick,
+            String result,
+            String reason) {
+
+        long now = System.currentTimeMillis();
+        long last = lastEmitFailureLogTime.get();
+
+        if (now - last >= ERROR_LOG_COOLDOWN_MS
+                && lastEmitFailureLogTime.compareAndSet(last, now)) {
+
+            log.error(
+                    "SIGNAL TICK EMISSION FAILED | Symbol={} | Result={} | Reason={}",
+                    tick != null ? tick.getSymbol() : "UNKNOWN",
+                    result,
+                    reason);
+        }
     }
 
     private void logSignalPublishError(
@@ -138,40 +190,28 @@ public class SignalServiceClientImpl implements SignalServiceClient {
             log.warn(
                     "Signal Service tick delivery failed | Symbol={} | Error={}",
                     tick != null ? tick.getSymbol() : "UNKNOWN",
-                    error.getMessage());
-        }
-    }
-
-    private void logQueueOverflow(
-            Tick tick,
-            Sinks.EmitResult result) {
-
-        long now = System.currentTimeMillis();
-        long last = lastOverflowLogTime.get();
-
-        if (now - last >= ERROR_LOG_COOLDOWN_MS
-                && lastOverflowLogTime.compareAndSet(last, now)) {
-
-            log.error(
-                    "SIGNAL TICK QUEUE SATURATED | " +
-                            "Symbol={} | EmitResult={} | " +
-                            "Ticks are being rejected because Signal Service is not consuming fast enough",
-                    tick != null ? tick.getSymbol() : "UNKNOWN",
-                    result);
+                    error.getMessage(),
+                    error);
         }
     }
 
     @PreDestroy
     void stopDispatcher() {
 
-        if (dispatcher != null) {
-            dispatcher.dispose();
+        Disposable activeDispatcher = this.dispatcher;
+        Sinks.Many<Tick> sink = this.tickSink;
+
+        if (sink != null) {
+            synchronized (emissionLock) {
+                sink.tryEmitComplete();
+            }
         }
 
-        if (tickSink != null) {
-            tickSink.tryEmitComplete();
+        if (activeDispatcher != null) {
+            activeDispatcher.dispose();
         }
 
         log.info("Signal tick dispatcher stopped");
     }
 }
+

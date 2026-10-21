@@ -47,10 +47,6 @@ public class AiEvaluationState implements Serializable {
     private long evaluatedAt;
     private String cacheKey;
 
-    // Strategy setup used for the previous AI evaluation
-    private String setupStrategy;
-    private String setupDirection;
-
 // Existing technical and market-context fields remain unchanged.
 
     /*

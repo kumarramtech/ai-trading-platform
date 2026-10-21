@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -50,7 +51,13 @@ public class TradingDecisionEngine {
         SignalType setupDirection = request.getSetupDirection();
 
         // Determine the technical signal and preserve setup-direction integrity.
-        SignalType signal = determineSignal(results, setupDirection);
+        SignalType technicalSignal = determineSignal(results, setupDirection);
+        SignalType signal = applyMarketRegimeGuard(request, technicalSignal);
+
+        List<String> reasons = new ArrayList<>(collectReasons(results));
+        if (technicalSignal != signal && signal == SignalType.HOLD) {
+            reasons.add("Market regime / strategy alignment guard rejected the entry.");
+        }
 
         int confidence = confidenceCalculator.calculateScore(results);
         ConfidenceLevel level = confidenceCalculator.determineLevel(confidence);
@@ -107,7 +114,7 @@ public class TradingDecisionEngine {
                 .signal(signal)
                 .confidence(confidence)
                 .confidenceLevel(level)
-                .reasons(collectReasons(results))
+                .reasons(reasons)
                 .ruleResults(results)
                 .build();
     }
@@ -191,60 +198,94 @@ public class TradingDecisionEngine {
             return SignalType.HOLD;
         }
 
-        if (request.getMarketContext() == null
-                || request.getMarketContext().getMarketTrend() == null) {
+        String strategy = request.getSetupStrategy() == null
+                ? ""
+                : request.getSetupStrategy().trim().toUpperCase();
 
+        boolean judasSetup = "JUDAS".equals(strategy);
+        boolean orbSetup = "ORB".equals(strategy);
+        boolean strategyEntry = judasSetup || orbSetup;
+
+        Trend marketTrend = request.getMarketContext() == null
+                ? null
+                : request.getMarketContext().getMarketTrend();
+
+        if (marketTrend == null) {
+            if (strategyEntry) {
+                log.warn(
+                        "MARKET REGIME GUARD REJECTED | Symbol={} | Strategy={} | Regime=UNKNOWN | Signal={} | Decision=HOLD",
+                        request.getSymbol(),
+                        strategy,
+                        signal);
+                return SignalType.HOLD;
+            }
+
+            // Preserve the established MIDDAY/non-JUDAS-ORB pipeline when its
+            // DTO does not carry index-regime fields. This is not treated as
+            // a positive regime confirmation.
             log.warn(
-                    "MARKET REGIME GUARD | Symbol={} | Regime unavailable | "
-                            + "Signal={} changed to HOLD",
+                    "MARKET REGIME UNAVAILABLE | Symbol={} | Strategy={} | "
+                            + "No regime-based veto applied to this non-JUDAS/ORB path",
                     request.getSymbol(),
-                    signal);
-
-            return SignalType.HOLD;
-        }
-
-        Trend marketTrend =
-                request.getMarketContext().getMarketTrend();
-
-        if (marketTrend == Trend.BULLISH
-                && signal == SignalType.SELL) {
-
-            log.warn(
-                    "MARKET REGIME GUARD REJECTED | Symbol={} | "
-                            + "Regime=BULLISH | Signal=SELL | Decision=HOLD",
-                    request.getSymbol());
-
-            return SignalType.HOLD;
-        }
-
-        if (marketTrend == Trend.BEARISH
-                && signal == SignalType.BUY) {
-
-            log.warn(
-                    "MARKET REGIME GUARD REJECTED | Symbol={} | "
-                            + "Regime=BEARISH | Signal=BUY | Decision=HOLD",
-                    request.getSymbol());
-
-            return SignalType.HOLD;
+                    strategy);
+            return signal;
         }
 
         if (marketTrend == Trend.SIDEWAYS) {
+            if (judasSetup) {
+                log.info(
+                        "MARKET REGIME GUARD | Symbol={} | Strategy=JUDAS | "
+                                + "Regime=SIDEWAYS | Reversal setup passed to AI validation | Signal={}",
+                        request.getSymbol(),
+                        signal);
+                return signal;
+            }
 
-            log.info(
-                    "MARKET REGIME GUARD | Symbol={} | "
-                            + "Regime=SIDEWAYS | Decision=HOLD",
-                    request.getSymbol());
+            log.warn(
+                    "MARKET REGIME GUARD REJECTED | Symbol={} | Strategy={} | "
+                            + "Regime=SIDEWAYS | Signal={} | Decision=HOLD",
+                    request.getSymbol(),
+                    strategy,
+                    signal);
+            return SignalType.HOLD;
+        }
 
+        boolean counterTrend =
+                (marketTrend == Trend.BULLISH && signal == SignalType.SELL)
+                        || (marketTrend == Trend.BEARISH && signal == SignalType.BUY);
+
+        if (counterTrend) {
+            if (judasSetup) {
+                // JUDAS is explicitly a sweep/reversal setup. Keep it eligible
+                // for the final AI layer, which applies stricter evidence rules.
+                log.warn(
+                        "COUNTERTREND JUDAS | Symbol={} | Regime={} | Signal={} | "
+                                + "Passed to AI for stricter reversal validation",
+                        request.getSymbol(),
+                        marketTrend,
+                        signal);
+                return signal;
+            }
+
+            log.warn(
+                    "MARKET REGIME GUARD REJECTED | Symbol={} | Strategy={} | "
+                            + "Regime={} | Signal={} | Decision=HOLD",
+                    request.getSymbol(),
+                    strategy,
+                    marketTrend,
+                    signal);
             return SignalType.HOLD;
         }
 
         log.debug(
-                "MARKET REGIME GUARD PASSED | Symbol={} | "
+                "MARKET REGIME GUARD PASSED | Symbol={} | Strategy={} | "
                         + "Regime={} | Signal={}",
                 request.getSymbol(),
+                strategy,
                 marketTrend,
                 signal);
 
         return signal;
     }
+
 }

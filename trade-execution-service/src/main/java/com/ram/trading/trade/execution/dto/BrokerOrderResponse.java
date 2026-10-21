@@ -17,7 +17,13 @@ public class BrokerOrderResponse {
 
     private String orderId;
 
+    private String exchangeOrderId;
+
     private BigDecimal executedPrice;
+
+    private Integer executedQuantity;
+
+    private Integer pendingQuantity;
 
     private String status;
 

@@ -1,5 +1,6 @@
 package com.ram.trading.trade.execution.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,6 +24,7 @@ public class UpstoxOrderResponse {
     @AllArgsConstructor
     public static class DataResponse {
 
+        @JsonProperty("order_ids")
         private List<String> orderIds;
     }
 }

@@ -1,3 +1,4 @@
+
 package com.ram.trading.ai.engine.provider.deepseek;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -7,9 +8,11 @@ import com.ram.trading.ai.engine.provider.LLMProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.Map;
 
 @Component
@@ -37,8 +40,15 @@ public class DeepSeekProvider implements LLMProvider {
 
         this.objectMapper = objectMapper;
 
+        SimpleClientHttpRequestFactory requestFactory =
+                new SimpleClientHttpRequestFactory();
+
+        requestFactory.setConnectTimeout(Duration.ofSeconds(5));
+        requestFactory.setReadTimeout(Duration.ofSeconds(30));
+
         this.restClient = restClientBuilder
                 .baseUrl("https://api.deepseek.com")
+                .requestFactory(requestFactory)
                 .build();
     }
 
@@ -62,35 +72,27 @@ public class DeepSeekProvider implements LLMProvider {
     @Override
     public String analyze(String prompt) {
 
-        long start = System.currentTimeMillis();
+        long start = System.nanoTime();
 
         try {
-
-            log.info("=========================================");
-            log.info("Calling Provider={} Enabled={} Priority={}",
+            log.info(
+                    "AI_PROVIDER_REQUEST | provider={} | model={}",
                     getProviderName(),
-                    enabled,
-                    priority);
-            log.info("DeepSeek Model : {}", model);
-            log.info("=========================================");
+                    model);
 
             Map<String, Object> request = Map.of(
                     "model", model,
                     "messages", new Object[]{
                             Map.of(
                                     "role", "user",
-                                    "content", prompt
-                            )
+                                    "content", prompt)
                     },
                     "response_format", Map.of(
-                            "type", "json_object"
-                    ),
+                            "type", "json_object"),
                     "thinking", Map.of(
-                            "type", "disabled"
-                    ),
+                            "type", "disabled"),
                     "max_tokens", 4096,
-                    "stream", false
-            );
+                    "stream", false);
 
             String rawResponse = restClient.post()
                     .uri("/chat/completions")
@@ -102,50 +104,58 @@ public class DeepSeekProvider implements LLMProvider {
 
             if (rawResponse == null || rawResponse.isBlank()) {
                 throw new IllegalStateException(
-                        "DeepSeek returned empty response");
+                        "DeepSeek returned an empty response");
             }
 
             JsonNode root = objectMapper.readTree(rawResponse);
-
-            JsonNode contentNode = root
-                    .path("choices")
-                    .path(0)
-                    .path("message")
-                    .path("content");
+            JsonNode choices = root.path("choices");
+            JsonNode choice = choices.path(0);
+            JsonNode message = choice.path("message");
+            JsonNode contentNode = message.path("content");
 
             if (contentNode.isMissingNode()
                     || contentNode.isNull()
+                    || !contentNode.isTextual()
                     || contentNode.asText().isBlank()) {
 
+                // Log metadata only. Never log the prompt, API key,
+                // or complete provider response.
+                log.warn(
+                        "DEEPSEEK_INVALID_RESPONSE | model={} | "
+                                + "choicesCount={} | finishReason={} | "
+                                + "errorType={} | contentPresent={}",
+                        model,
+                        choices.isArray() ? choices.size() : 0,
+                        choice.path("finish_reason").asText("unknown"),
+                        root.path("error").path("type").asText("none"),
+                        !contentNode.isMissingNode()
+                                && !contentNode.isNull());
+
                 throw new IllegalStateException(
-                        "DeepSeek response does not contain message.content");
+                        "DeepSeek response does not contain valid message.content");
             }
 
-            String response = contentNode.asText();
+            log.info(
+                    "DEEPSEEK_SUCCESS | elapsedMs={}",
+                    elapsedMillis(start));
 
-            long elapsed = System.currentTimeMillis() - start;
-
-            log.info("{} completed successfully in {} ms",
-                    getProviderName(),
-                    elapsed);
-
-            log.debug("{} response received successfully",
-                    getProviderName());
-
-            return response;
+            return contentNode.asText();
 
         } catch (Exception ex) {
 
-            long elapsed = System.currentTimeMillis() - start;
-
-            log.error("{} failed after {} ms",
-                    getProviderName(),
-                    elapsed,
-                    ex);
+            log.error(
+                    "DEEPSEEK_FAILED | elapsedMs={} | exceptionType={}",
+                    elapsedMillis(start),
+                    ex.getClass().getSimpleName());
 
             throw new LLMProviderException(
-                    getProviderName() + " Failed",
+                    "DEEPSEEK failed",
                     ex);
         }
+    }
+
+    private long elapsedMillis(long startNanos) {
+        return Duration.ofNanos(
+                System.nanoTime() - startNanos).toMillis();
     }
 }

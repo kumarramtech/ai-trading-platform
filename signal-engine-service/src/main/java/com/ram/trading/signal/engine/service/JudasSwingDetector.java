@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -19,11 +20,14 @@ import java.util.List;
 @Slf4j
 public class JudasSwingDetector {
 
+    private static final ZoneId IST =
+            ZoneId.of("Asia/Kolkata");
+
     private static final LocalTime ANALYSIS_START =
-            LocalTime.of(10, 0);
+            LocalTime.of(9, 30);
 
     private static final LocalTime ANALYSIS_END =
-            LocalTime.of(14, 30);
+            LocalTime.of(10, 30);
 
     /*
      * Minimum distance price must penetrate the OR level.
@@ -58,12 +62,28 @@ public class JudasSwingDetector {
 
     /**
      * Detect a confirmed Judas Swing after the
-     * 09:15-09:30 opening range; selection starts at 10:00.
+     * 09:15-09:30 opening range; selection runs from 09:30 to 10:30 IST.
      *
      * This method does NOT generate the final trading signal.
      */
     public JudasSwingResult detect(
             OpeningRange openingRange) {
+        return detect(openingRange, ANALYSIS_START);
+    }
+
+    /**
+     * Detect only setups whose confirmation candle is at or after the
+     * current completed candle. This prevents a historical setup from
+     * being emitted as a fresh entry several minutes later.
+     */
+    public JudasSwingResult detect(
+            OpeningRange openingRange,
+            LocalTime earliestConfirmationTime) {
+
+        LocalTime eligibleConfirmationTime =
+                earliestConfirmationTime != null
+                        ? earliestConfirmationTime
+                        : ANALYSIS_START;
 
         if (openingRange == null
                 || openingRange.getSymbol() == null
@@ -87,7 +107,7 @@ public class JudasSwingDetector {
                 openingRange.getSymbol();
 
         LocalDate today =
-                LocalDate.now();
+                LocalDate.now(IST);
 
         LocalDateTime start =
                 LocalDateTime.of(
@@ -144,7 +164,8 @@ public class JudasSwingDetector {
         JudasSwingResult bearish =
                 detectHighSweep(
                         openingRange,
-                        candles
+                        candles,
+                        eligibleConfirmationTime
                 );
 
         if (bearish.isDetected()) {
@@ -172,7 +193,8 @@ public class JudasSwingDetector {
         JudasSwingResult bullish =
                 detectLowSweep(
                         openingRange,
-                        candles
+                        candles,
+                        eligibleConfirmationTime
                 );
 
         if (bullish.isDetected()) {
@@ -198,7 +220,8 @@ public class JudasSwingDetector {
      */
     private JudasSwingResult detectHighSweep(
             OpeningRange openingRange,
-            List<MinuteCandle> candles) {
+            List<MinuteCandle> candles,
+            LocalTime earliestConfirmationTime) {
 
         double rangeHigh =
                 openingRange.getHigh();
@@ -224,6 +247,14 @@ public class JudasSwingDetector {
             if (!validCandle(sweep)
                     || !validCandle(confirmation)) {
 
+                continue;
+            }
+ 
+            LocalTime confirmationTime =
+                    confirmation.getMinute().toLocalTime();
+
+            if (confirmationTime.isBefore(earliestConfirmationTime)
+                    || !confirmationTime.isBefore(ANALYSIS_END)) {
                 continue;
             }
 
@@ -365,7 +396,8 @@ public class JudasSwingDetector {
      */
     private JudasSwingResult detectLowSweep(
             OpeningRange openingRange,
-            List<MinuteCandle> candles) {
+            List<MinuteCandle> candles,
+            LocalTime earliestConfirmationTime) {
 
         double rangeLow =
                 openingRange.getLow();
@@ -391,6 +423,14 @@ public class JudasSwingDetector {
             if (!validCandle(sweep)
                     || !validCandle(confirmation)) {
 
+                continue;
+            }
+ 
+            LocalTime confirmationTime =
+                    confirmation.getMinute().toLocalTime();
+
+            if (confirmationTime.isBefore(earliestConfirmationTime)
+                    || !confirmationTime.isBefore(ANALYSIS_END)) {
                 continue;
             }
 
@@ -546,7 +586,7 @@ public class JudasSwingDetector {
             String symbol) {
 
         LocalDate today =
-                LocalDate.now();
+                LocalDate.now(IST);
 
         LocalDateTime start =
                 LocalDateTime.of(

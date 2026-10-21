@@ -321,14 +321,14 @@ public class MarketScannerScheduler {
     }
 
     @Scheduled(
-            cron = "0 0 9 * * MON-FRI",
+            cron = "0 15 9 * * MON-FRI",
             zone = "Asia/Kolkata"
     )
     public void analyzePreMarket() {
 
         log.info("======================================================");
         log.info("V2.2 PRE-MARKET ANALYSIS STARTED");
-        log.info("Analysis Time : 09:00 AM IST");
+        log.info("Analysis Time : 09:15 AM IST");
         log.info("======================================================");
 
         preMarketAnalysisService

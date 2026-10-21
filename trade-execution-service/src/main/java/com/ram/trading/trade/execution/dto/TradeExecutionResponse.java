@@ -25,11 +25,15 @@ public class TradeExecutionResponse {
 
     private BigDecimal executedPrice;
 
-    private BigDecimal reservedMargin;
+    private BigDecimal requiredMargin;
 
     private String orderId;
 
     private String status;
 
     private String message;
+
+    private Integer filledQuantity;
+
+    private String rejectionReason;
 }

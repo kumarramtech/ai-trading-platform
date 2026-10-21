@@ -101,6 +101,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     @Value("${execution.live-enabled:false}")
     private boolean liveExecutionEnabled;
 
+    @Value("${trading.market.strategy.entry.start:09:30}")
+    private LocalTime strategyEntryStart = LocalTime.of(9, 30);
+
     @PostConstruct
     private void validateExecutionTradeMode() {
         if (executionTradeMode == null
@@ -530,12 +533,22 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     entrySetup.direction(),
                                     entrySetup.confirmationTime());
 
-                            recordStrategySetup(entrySetup);
-
-
                             return technicalIndicatorService
                                     .calculate(
                                             tick.getSymbol())
+                                    .onErrorResume(error -> {
+                                        log.error(
+                                                "Technical indicator calculation failed; releasing setup for retry | Symbol={}",
+                                                tick.getSymbol(),
+                                                error);
+
+                                        releaseProcessedStrategySetup(
+                                                tick.getSymbol(),
+                                                entrySetup,
+                                                "TECHNICAL_INDICATOR_ERROR");
+
+                                        return Mono.empty();
+                                    })
 
                                     .switchIfEmpty(
                                             Mono.defer(() -> {
@@ -544,11 +557,18 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                                         "Skipping {} because technical indicators are unavailable.",
                                                         tick.getSymbol());
 
+                                                releaseProcessedStrategySetup(
+                                                        tick.getSymbol(),
+                                                        entrySetup,
+                                                        "TECHNICAL_INDICATORS_UNAVAILABLE");
+
                                                 return Mono.empty();
                                             })
                                     )
 
                                     .flatMap(indicator -> {
+
+                                        recordStrategySetup(entrySetup);
 
                                         log.debug(
                                                 "Technical Indicators Loaded");
@@ -1781,7 +1801,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * No entry strategy is evaluated here.
          * These candles are used to build the Opening Range.
          */
-        if (candleTime.isBefore(LocalTime.of(9, 30))) {
+        if (candleTime.isBefore(strategyEntryStart)) {
 
             log.debug(
                     "ENTRY STRATEGY GATE | {} | " +
@@ -1823,16 +1843,20 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * JUDAS
          * ============================================================
          *
-         * 09:30 - 14:30 (selection window; entries still gated by session)
+         * 09:30 - 10:30. Evaluate only a setup confirmed by the
+         * current completed candle; never enter on a stale historical setup.
          */
-        if (!candleTime.isBefore(LocalTime.of(10, 0))
-                && candleTime.isBefore(LocalTime.of(14, 30))) {
+        if (!candleTime.isBefore(strategyEntryStart)
+                && candleTime.isBefore(LocalTime.of(10, 30))) {
 
             JudasSwingResult judas =
-                    judasSwingDetector.detect(openingRange);
+                    judasSwingDetector.detect(openingRange, candleTime);
 
             if (judas != null
-                    && judas.isDetected()) {
+                    && judas.isDetected()
+                    && judas.getConfirmationTime() != null
+                    && judas.getConfirmationTime().equals(
+                            completedCandle.getMinute())) {
 
                 String setupKey =
                         symbol
@@ -1877,20 +1901,20 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * ORB
          * ============================================================
          *
-         * 09:30 - 14:30 (selection window; entries still gated by session)
+         * 09:30 - 11:30. Confirmation must be from the current
+         * completed candle, not an older historical setup.
          */
-        if (!candleTime.isBefore(LocalTime.of(10, 0))
-                && candleTime.isBefore(LocalTime.of(14, 30))) {
+        if (!candleTime.isBefore(strategyEntryStart)
+                && candleTime.isBefore(LocalTime.of(11, 30))) {
 
             ORBResult orb =
-                    orbValidator.validate(
-                            openingRange,
-                            LocalTime.of(10, 0));
+                    orbValidator.validate(openingRange, candleTime);
 
             if (orb != null
                     && orb.isValid()
                     && orb.getConfirmationTime() != null
-                    && !orb.getConfirmationTime().toLocalTime().isBefore(LocalTime.of(10, 0))) {
+                    && orb.getConfirmationTime().equals(
+                            completedCandle.getMinute())) {
 
                 String setupKey =
                         symbol
@@ -1937,6 +1961,33 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 completedCandle.getMinute());
 
         return null;
+    }
+
+    private void releaseProcessedStrategySetup(
+            String symbol,
+            EntrySetup entrySetup,
+            String reason) {
+
+        if (symbol == null || entrySetup == null
+                || entrySetup.strategy() == null
+                || entrySetup.confirmationTime() == null) {
+            return;
+        }
+
+        String setupKey = symbol
+                + "|"
+                + entrySetup.strategy()
+                + "|"
+                + entrySetup.confirmationTime();
+
+        if (processedStrategySetups.remove(setupKey, setupKey)) {
+            log.warn(
+                    "STRATEGY SETUP RELEASED FOR RETRY | Symbol={} | Strategy={} | Confirmation={} | Reason={}",
+                    symbol,
+                    entrySetup.strategy(),
+                    entrySetup.confirmationTime(),
+                    reason);
+        }
     }
 
     private void recordStrategySetup(EntrySetup entrySetup) {

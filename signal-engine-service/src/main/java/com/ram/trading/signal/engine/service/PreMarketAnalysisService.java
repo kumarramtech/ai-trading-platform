@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 
@@ -18,11 +19,18 @@ import java.util.List;
 @Slf4j
 public class PreMarketAnalysisService {
 
-    private static final LocalTime PRE_MARKET_START =
-            LocalTime.of(9, 0);
+    private static final ZoneId IST =
+            ZoneId.of("Asia/Kolkata");
 
-    private static final LocalTime MARKET_OPEN =
+    /**
+     * The requested pre-market candidate analysis is triggered at 09:15 IST.
+     * Allow a short execution window so scheduler delay does not silently skip it.
+     */
+    private static final LocalTime ANALYSIS_START =
             LocalTime.of(9, 15);
+
+    private static final LocalTime ANALYSIS_END =
+            LocalTime.of(9, 20);
 
     private static final double MIN_GAP_PERCENT =
             0.50;
@@ -39,7 +47,7 @@ public class PreMarketAnalysisService {
 
 
     /**
-     * Performs pre-market analysis between 09:00 and 09:15 IST.
+     * Performs the scheduled candidate analysis at 09:15 IST.
      *
      * This service only discovers candidates.
      *
@@ -51,10 +59,10 @@ public class PreMarketAnalysisService {
      */
     public Mono<List<PreMarketCandidate>> analyze() {
 
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(IST);
 
-        if (now.isBefore(PRE_MARKET_START)
-                || !now.isBefore(MARKET_OPEN)) {
+        if (now.isBefore(ANALYSIS_START)
+                || !now.isBefore(ANALYSIS_END)) {
 
             log.info(
                     "PRE-MARKET ANALYSIS SKIPPED | " +
@@ -67,7 +75,7 @@ public class PreMarketAnalysisService {
 
         log.info("======================================================");
         log.info("V2.2 PRE-MARKET ANALYSIS STARTED");
-        log.info("Window : 09:00 - 09:15 IST");
+        log.info("Window : 09:15 - 09:20 IST");
         log.info("======================================================");
 
         return preMarketDataProvider
@@ -203,7 +211,7 @@ public class PreMarketAnalysisService {
                         .score(score)
                         .status(status)
                         .discoveredAt(
-                                LocalDateTime.now()
+                                LocalDateTime.now(IST)
                         )
                         .build();
 

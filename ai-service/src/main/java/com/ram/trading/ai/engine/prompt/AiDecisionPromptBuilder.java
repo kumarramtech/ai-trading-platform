@@ -114,10 +114,11 @@ public class AiDecisionPromptBuilder {
             1. Explicit Risk Constraint
             2. Conflicting Open Position
             3. Explicit Portfolio Constraint
-            4. Material Contradictory News
-            5. Original JUDAS/ORB Direction
-            6. Engineering Decision
-            7. Optional Market/Sector Context
+            4. Market-Regime / Strategy Alignment
+            5. Material Contradictory News
+            6. Original JUDAS/ORB Direction
+            7. Engineering Decision
+            8. Optional Sector Context
 
             =======================================================
             SIGNAL REQUEST
@@ -248,26 +249,51 @@ public class AiDecisionPromptBuilder {
             %s
 
             =======================================================
-            MARKET REGIME RULE
+            MARKET REGIME / STRATEGY CONFIRMATION RULE
             =======================================================
 
-            Market context is contextual evidence.
+            Market regime is a real validation input, not merely
+            optional commentary. Use the supplied marketContext.marketTrend
+            together with NIFTY and BANKNIFTY changes.
 
-            Do NOT automatically convert:
+            Never reverse Engineering direction:
+            - BULLISH market + Engineering SELL must NOT become BUY.
+            - BEARISH market + Engineering BUY must NOT become SELL.
+            If the original direction is not sufficiently supported, return HOLD.
 
-            Market BULLISH + Engineering SELL -> BUY
+            Apply strategy-aware rules:
 
-            or:
+            1. ORB:
+               - BULLISH regime supports BUY; reject an ORB SELL as counter-trend.
+               - BEARISH regime supports SELL; reject an ORB BUY as counter-trend.
+               - SIDEWAYS regime: return HOLD for ORB.
+               - Missing/unknown regime: return HOLD for ORB.
 
-            Market BEARISH + Engineering BUY -> SELL
+            2. JUDAS:
+               - JUDAS is a sweep/reversal strategy, so a counter-trend trade is
+                 not automatically invalid.
+               - A counter-trend JUDAS may be approved ONLY when the supplied
+                 setupDirection and Engineering signal agree, the supplied
+                 technical evidence clearly supports the reversal, and no
+                 risk, portfolio, open-position, or material-news constraint
+                 invalidates it.
+               - If the evidence is mixed, weak, contradictory, or incomplete,
+                 return HOLD. Do not approve a counter-trend JUDAS merely because
+                 tradeAllowed is requested or because a sweep is mentioned.
+               - SIDEWAYS regime: require especially clear setup-specific
+                 technical confirmation; otherwise return HOLD.
+               - Missing/unknown regime: return HOLD for JUDAS.
 
-            Evaluate the individual stock setup first.
+            3. Other existing strategies (including MIDDAY):
+               - When regime is available, reject clear counter-trend entries
+                 (BULLISH + SELL or BEARISH + BUY) and reject entries in a
+                 SIDEWAYS regime.
+               - Missing optional regime data alone must not break existing
+                 non-JUDAS/ORB workflows; continue to apply their existing
+                 technical, risk, and portfolio safeguards.
 
-            A bullish market does not automatically invalidate
-            a valid SELL setup.
-
-            A bearish market does not automatically invalidate
-            a valid BUY setup.
+            Market regime must never override explicit risk controls or
+            authorize a trade that Engineering did not recommend.
 
             =======================================================
             WHEN TO CONFIRM BUY
@@ -282,6 +308,7 @@ public class AiDecisionPromptBuilder {
             - There is no material bearish news invalidating the setup.
             - Original JUDAS/ORB direction does not create an
               unresolved material conflict.
+            - Market-regime / strategy rules above are satisfied.
 
             If these conditions are satisfied:
 
@@ -301,6 +328,7 @@ public class AiDecisionPromptBuilder {
             - There is no material bullish news invalidating the setup.
             - Original JUDAS/ORB direction does not create an
               unresolved material conflict.
+            - Market-regime / strategy rules above are satisfied.
 
             If these conditions are satisfied:
 
@@ -327,7 +355,8 @@ public class AiDecisionPromptBuilder {
 
             - news is unavailable
             - news is neutral
-            - optional context is missing
+            - optional context is missing, except where the
+              JUDAS/ORB market-regime rule above explicitly requires HOLD
             - there is general uncertainty
 
             =======================================================
