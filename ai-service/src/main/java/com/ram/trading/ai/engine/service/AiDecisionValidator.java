@@ -3,7 +3,6 @@ package com.ram.trading.ai.engine.service;
 import com.ram.trading.ai.engine.constant.AiRecommendation;
 import com.ram.trading.ai.engine.dto.AiDecisionResponse;
 import com.ram.trading.ai.engine.dto.decision.Decision;
-import com.ram.trading.ai.engine.dto.execution.ExecutionPlan;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -60,58 +59,11 @@ public class AiDecisionValidator {
         }
 
         /*
-         * A BUY or SELL may be returned as a recommendation while trading
-         * is disallowed. The downstream tradeAllowed check remains authoritative.
-         *
-         * If execution is allowed, validate the AI-provided price plan.
+         * The AI decides DIRECTION only (BUY / SELL / HOLD + confidence).
+         * Entry, stop-loss and target are calculated by the signal-engine
+         * (Opening Range based), so any executionPlan the model still returns
+         * is ignored and must never cause a SAFE_HOLD.
          */
-        if (tradeAllowed
-                && (recommendation == AiRecommendation.BUY
-                || recommendation == AiRecommendation.SELL)) {
-
-            ExecutionPlan plan = response.getExecutionPlan();
-
-            if (plan == null) {
-                log.warn(
-                        "AI DECISION VALIDATION | Missing execution plan | Recommendation={} | SAFE_HOLD",
-                        recommendation);
-                return safeHold("Allowed BUY/SELL decision has no execution plan.");
-            }
-
-            Double entry = plan.getEntry();
-            Double stopLoss = plan.getStopLoss();
-            Double target = plan.getTarget();
-
-            if (!isPositiveFinite(entry)
-                    || !isPositiveFinite(stopLoss)
-                    || !isPositiveFinite(target)) {
-
-                log.warn(
-                        "AI DECISION VALIDATION | Invalid execution prices | Recommendation={} | SAFE_HOLD",
-                        recommendation);
-                return safeHold(
-                        "Execution plan entry, stop-loss and target must be finite positive prices.");
-            }
-
-            boolean validPriceOrder;
-
-            if (recommendation == AiRecommendation.BUY) {
-                validPriceOrder = stopLoss < entry && entry < target;
-            } else {
-                validPriceOrder = target < entry && entry < stopLoss;
-            }
-
-            if (!validPriceOrder) {
-                log.warn(
-                        "AI DECISION VALIDATION | Invalid price order | Recommendation={} | Entry={} | StopLoss={} | Target={} | SAFE_HOLD",
-                        recommendation,
-                        entry,
-                        stopLoss,
-                        target);
-                return safeHold(
-                        "Execution plan prices do not match the BUY/SELL direction.");
-            }
-        }
 
         /*
          * EXIT validation remains with the caller, which must verify
@@ -124,12 +76,6 @@ public class AiDecisionValidator {
                 confidence);
 
         return response;
-    }
-
-    private boolean isPositiveFinite(Double value) {
-        return value != null
-                && Double.isFinite(value)
-                && value > 0.0;
     }
 
     private AiDecisionResponse safeHold(String reason) {

@@ -32,12 +32,24 @@ public class PositionSizingService {
     private double maxLossPerTrade;
 
     /**
-     * Position sizing is based on the broker's actual margin requirement.
+     * Planned loss at the stop-loss for one trade. Quantity is capped so that
+     * quantity x |entry - stop| never exceeds it. 0 disables the cap.
+     *
+     * The broker-side stop sits at the strategy stop, so this is the loss that
+     * actually happens if Signal Engine, Trade Execution or the network is down.
+     * Keep it below max-loss-per-trade so the hard-loss guard stays a gap/slippage
+     * backstop instead of pre-empting the strategy stop.
+     */
+    @Value("${trading.risk.risk-per-trade:200}")
+    private double riskPerTrade = 200;
+
+    /**
+     * Position sizing starts from the broker's actual margin requirement.
      *
      * The configured ₹10,000 is the margin allocation per trade.
      * Broker leverage increases exposure; it does NOT increase our
-     * allocated margin. The ₹250 value is an EXIT loss trigger and is
-     * deliberately not used to reduce entry quantity.
+     * allocated margin. The quantity is then capped by risk-per-trade,
+     * which may leave part of the margin allocation unused.
      */
     public Mono<PositionSizingResult> calculate(
             TradingSignal signal) {
@@ -187,6 +199,59 @@ public class PositionSizingService {
         }
 
         /*
+         * Risk cap: the loss at the stop must not exceed risk-per-trade.
+         * A capped quantity is re-priced with the broker margin API.
+         */
+        boolean riskCapped = false;
+
+        if (riskPerTrade > 0 && marginResponse != null) {
+
+            int riskQuantity = (int) Math.floor(riskPerTrade / riskPerShare);
+
+            if (riskQuantity < 1) {
+                return rejected(
+                        signal,
+                        entryPrice,
+                        stopLoss,
+                        riskPerShare,
+                        "Stop distance " + riskPerShare
+                                + " per share exceeds the per-trade risk budget " + riskPerTrade);
+            }
+
+            if (quantity > riskQuantity) {
+
+                log.info(
+                        "RISK BASED QUANTITY CAP | Symbol={} | MarginQty={} | RiskQty={} | "
+                                + "RiskPerShare={} | RiskPerTrade={}",
+                        signal.getSymbol(),
+                        quantity,
+                        riskQuantity,
+                        riskPerShare,
+                        riskPerTrade);
+
+                quantity = riskQuantity;
+                riskCapped = true;
+
+                marginResponse = calculateMargin(
+                        instrumentKey,
+                        signal,
+                        quantity);
+
+                if (marginResponse == null
+                        || marginResponse.getRequiredMargin() == null
+                        || marginResponse.getRequiredMargin() <= 0) {
+
+                    return rejected(
+                            signal,
+                            entryPrice,
+                            stopLoss,
+                            riskPerShare,
+                            "Broker margin unavailable for risk-capped quantity");
+                }
+            }
+        }
+
+        /*
          * Final broker margin response must be available.
          */
         if (marginResponse == null
@@ -232,7 +297,8 @@ public class PositionSizingService {
         double minimumAcceptableMargin =
                 targetMarginPerTrade * 0.95;
 
-        if (requiredMargin < minimumAcceptableMargin) {
+        // A risk-capped quantity is deliberately smaller than the margin allocation.
+        if (!riskCapped && requiredMargin < minimumAcceptableMargin) {
 
             return rejected(
                     signal,
@@ -258,11 +324,9 @@ public class PositionSizingService {
         }
 
         /*
-         * Expected stop-loss risk is calculated only for reporting.
-         *
-         * IMPORTANT:
-         * The ₹250 max-loss value is NOT used for quantity sizing.
-         * It remains an EXIT trigger handled by the exit service.
+         * Expected stop-loss risk is bounded by risk-per-trade above.
+         * The ₹250 max-loss value remains the EXIT trigger handled by
+         * the exit service (gap/slippage backstop).
          */
         double expectedStopLossRisk =
                 quantity * riskPerShare;
@@ -285,7 +349,8 @@ public class PositionSizingService {
                 .stopLoss(stopLoss)
                 .riskPerShare(riskPerShare)
                 .maxRiskPerTrade(maxLossPerTrade)
-                .riskBasedQuantity(quantity)
+                .riskBasedQuantity(riskPerTrade > 0
+                        ? (int) Math.floor(riskPerTrade / riskPerShare) : quantity)
                 .marginBasedQuantity(quantity)
                 .expectedRisk(expectedStopLossRisk)
                 .targetMargin(targetMarginPerTrade)

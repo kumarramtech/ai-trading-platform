@@ -39,6 +39,16 @@ class TradingDecisionEngineMarketRegimeTest {
     }
 
     @Test
+    void allowsSidewaysOrbToReachFinalAiValidation() {
+        assertDecision("ORB", SignalType.BUY, Trend.SIDEWAYS, SignalType.BUY);
+    }
+
+    @Test
+    void allowsSidewaysOrbSellToReachFinalAiValidation() {
+        assertDecision("ORB", SignalType.SELL, Trend.SIDEWAYS, SignalType.SELL);
+    }
+
+    @Test
     void allowsCounterTrendJudasToReachFinalAiValidation() {
         assertDecision("JUDAS", SignalType.SELL, Trend.BULLISH, SignalType.SELL);
     }

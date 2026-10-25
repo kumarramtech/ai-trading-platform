@@ -47,6 +47,10 @@ public class Tick {
     private String marketRegime;
 
     public LocalDateTime getTradeTime() {
+        if (timestamp == null) {
+            return null;
+        }
+
         return LocalDateTime.ofInstant(
                 Instant.ofEpochMilli(timestamp),
                 ZoneId.of("Asia/Kolkata"));

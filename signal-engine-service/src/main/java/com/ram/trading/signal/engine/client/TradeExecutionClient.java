@@ -2,12 +2,17 @@
 package com.ram.trading.signal.engine.client;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.netty.channel.ChannelOption;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -16,13 +21,31 @@ public class TradeExecutionClient {
 
     private final WebClient webClient;
 
+    /**
+     * Uses its own HTTP client instead of the shared 10s read-timeout one: an entry
+     * (place, confirm fill, place and verify the broker stop) or an exit (cancel the
+     * stop, place, confirm fill) legitimately takes longer than 10s when the broker
+     * is slow. Trade Execution finishes an operation even if this caller gives up;
+     * a premature timeout here only loses the confirmation.
+     */
+    @Autowired
     public TradeExecutionClient(
             WebClient.Builder webClientBuilder,
-            @Value("${trade.execution.service.url}") String baseUrl) {
+            @Value("${trade.execution.service.url}") String baseUrl,
+            @Value("${trade.execution.service.response-timeout-seconds:30}") long responseTimeoutSeconds) {
 
-        this.webClient = webClientBuilder
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .responseTimeout(Duration.ofSeconds(Math.max(1L, responseTimeoutSeconds)));
+
+        this.webClient = webClientBuilder.clone()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .baseUrl(baseUrl)
                 .build();
+    }
+
+    public TradeExecutionClient(WebClient.Builder webClientBuilder, String baseUrl) {
+        this(webClientBuilder, baseUrl, 30L);
     }
 
     /**
@@ -45,6 +68,19 @@ public class TradeExecutionClient {
     public Mono<List<TradeExecutionPosition>> getOpenTrades() {
         return webClient.get()
                 .uri("/api/v1/trade-execution/open")
+                .retrieve()
+                .bodyToFlux(TradeExecutionPosition.class)
+                .collectList();
+    }
+
+    /**
+     * Read-only retrieval of every live position opened in the current trading
+     * session (any status, with realized P&L). Used to enforce Signal Engine's
+     * trading-risk limits in live mode.
+     */
+    public Mono<List<TradeExecutionPosition>> getSessionTrades() {
+        return webClient.get()
+                .uri("/api/v1/trade-execution/today")
                 .retrieve()
                 .bodyToFlux(TradeExecutionPosition.class)
                 .collectList();

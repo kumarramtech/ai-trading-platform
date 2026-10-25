@@ -441,6 +441,44 @@ class TradeExitServiceImplTest {
         verifyNoInteractions(paperTradingService);
     }
 
+    @Test
+    void ticksDuringAnInFlightLiveExitDoNotSubmitAnotherExit() {
+        TradeExecutionClient.TradeExecutionPosition position =
+                livePosition(70L, "BUY", "100.00", "90.00", "90.00", "120.00");
+        when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
+        reactor.core.publisher.Sinks.One<TradeExecutionClient.TradeExecutionResponse> pendingExit =
+                reactor.core.publisher.Sinks.one();
+        when(tradeExecutionClient.exitTrade(any())).thenReturn(pendingExit.asMono());
+
+        Tick tick = Tick.builder().symbol("TEST").lastTradedPrice(89.00d).build();
+
+        // The tick request completes immediately while the exit is still in flight.
+        StepVerifier.create(service.evaluateExit(tick)).verifyComplete();
+        StepVerifier.create(service.evaluateExit(tick)).verifyComplete();
+        verify(tradeExecutionClient, times(1)).exitTrade(any());
+
+        pendingExit.tryEmitValue(new TradeExecutionClient.TradeExecutionResponse(
+                true, 70L, "TEST", "SELL", 10, new BigDecimal("89.00"), null,
+                "exit-order", "CLOSED", "closed", 10, null));
+
+        // Once the exit finished, the snapshot is refreshed instead of reused.
+        StepVerifier.create(service.evaluateExit(tick)).verifyComplete();
+        verify(tradeExecutionClient, times(2)).getOpenTrades();
+    }
+
+    @Test
+    void openPositionsAreReadOncePerSnapshotWindowAcrossTicks() {
+        when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of()));
+        ReflectionTestUtils.setField(service, "openPositionsCacheMs", 60_000L);
+
+        StepVerifier.create(service.evaluateExit(Tick.builder().symbol("AAA").lastTradedPrice(10.0d).build()))
+                .verifyComplete();
+        StepVerifier.create(service.evaluateExit(Tick.builder().symbol("BBB").lastTradedPrice(20.0d).build()))
+                .verifyComplete();
+
+        verify(tradeExecutionClient, times(1)).getOpenTrades();
+    }
+
     private TradeExecutionClient.TradeExecutionPosition livePosition(
             Long signalId, String side, String entry, String initialStop,
             String currentStop, String target) {

@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS executed_trades (
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
 
     entry_order_id VARCHAR(64) NULL,
+    protective_order_id VARCHAR(64) NULL,
+    protective_order_status VARCHAR(32) NULL,
+    protective_order_quantity INT NULL,
+    protective_trigger_price DECIMAL(20,8) NULL,
+    protective_order_tag VARCHAR(32) NULL,
     exit_order_id VARCHAR(64) NULL,
     exit_order_quantity INT NULL,
     exit_attempt INT NOT NULL DEFAULT 0,
@@ -67,6 +72,7 @@ CREATE TABLE IF NOT EXISTS executed_trades (
     KEY idx_executed_trade_status (status),
     KEY idx_executed_trade_symbol_status (symbol, status),
     KEY idx_executed_trade_entry_order (entry_order_id),
+    KEY idx_executed_trade_protective_order (protective_order_id),
     KEY idx_executed_trade_exit_order (exit_order_id),
     KEY idx_executed_trade_opened_at (opened_at)
     ) ENGINE=InnoDB

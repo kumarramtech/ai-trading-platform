@@ -232,22 +232,17 @@ public class TradingDecisionEngine {
         }
 
         if (marketTrend == Trend.SIDEWAYS) {
-            if (judasSetup) {
-                log.info(
-                        "MARKET REGIME GUARD | Symbol={} | Strategy=JUDAS | "
-                                + "Regime=SIDEWAYS | Reversal setup passed to AI validation | Signal={}",
-                        request.getSymbol(),
-                        signal);
-                return signal;
-            }
-
-            log.warn(
-                    "MARKET REGIME GUARD REJECTED | Symbol={} | Strategy={} | "
-                            + "Regime=SIDEWAYS | Signal={} | Decision=HOLD",
+            // SIDEWAYS is a neutral/low-directional-confidence context, not an
+            // automatic veto. Technical rules have already confirmed the setup
+            // direction; AI and risk controls remain responsible for final approval.
+            // Keep UNKNOWN fail-closed and keep strong counter-trend rejection below.
+            log.info(
+                    "MARKET REGIME NEUTRAL | Symbol={} | Strategy={} | "
+                            + "Regime=SIDEWAYS | Signal={} | Decision=CONTINUE_TO_AI_AND_RISK",
                     request.getSymbol(),
                     strategy,
                     signal);
-            return SignalType.HOLD;
+            return signal;
         }
 
         boolean counterTrend =

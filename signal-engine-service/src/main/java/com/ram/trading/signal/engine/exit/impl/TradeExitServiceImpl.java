@@ -25,6 +25,10 @@ import reactor.core.scheduler.Schedulers;
 import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.time.LocalTime;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
@@ -84,6 +88,35 @@ public class TradeExitServiceImpl implements TradeExitService {
     /** Independent safety gate. Keep false until live lifecycle testing passes. */
     @Value("${execution.live-enabled:false}")
     private boolean liveExecutionEnabled;
+
+    /**
+     * How long one read of Trade Execution's open positions serves the ticks of all
+     * symbols. Without it every tick of every symbol made an HTTP call and a DB query.
+     */
+    @Value("${trading.live.open-positions-cache-ms:1000}")
+    private long openPositionsCacheMs = 1000L;
+
+    /** Exchange tick used to align live trailing stops (must match Trade Execution). */
+    @Value("${trading.price.tick-size:0.05}")
+    private double priceTickSize = 0.05d;
+
+    /** Positions are squared off from this time, so target extension counts down to it. */
+    @Value("${trading.market.close:15:00}")
+    private LocalTime squareOffTime = LocalTime.of(15, 0);
+
+    private record CachedOpenTrades(
+            Mono<List<TradeExecutionClient.TradeExecutionPosition>> trades,
+            long expiresAtNanos) {
+    }
+
+    private final AtomicReference<CachedOpenTrades> openTradesCache = new AtomicReference<>();
+
+    /**
+     * Signal IDs with a live exit or protection update in flight. Ticks arriving
+     * meanwhile skip that position instead of firing duplicate requests that Trade
+     * Execution would reject as busy.
+     */
+    private final Set<Long> liveOperationsInFlight = ConcurrentHashMap.newKeySet();
 
     @Override
     public Mono<Void> evaluateExit(Tick tick) {
@@ -565,14 +598,14 @@ public class TradeExitServiceImpl implements TradeExitService {
      * Trade Execution Service owns idempotency and broker reconciliation.
      */
     private Mono<Void> evaluateLiveExit(Tick tick) {
-        return tradeExecutionClient.getOpenTrades()
+        return openTrades()
                 .flatMapMany(Flux::fromIterable)
                 .filter(position -> position != null
                         && position.signalId() != null
                         && position.symbol() != null
                         && position.symbol().equalsIgnoreCase(tick.getSymbol())
                         && "OPEN".equalsIgnoreCase(position.status()))
-                .concatMap(position -> evaluateLivePosition(position, tick))
+                .doOnNext(position -> launchLivePositionEvaluation(position, tick))
                 .then()
                 .onErrorResume(error -> {
                     log.error("Live position lookup/exit evaluation failed; no blind retry. "
@@ -580,6 +613,52 @@ public class TradeExitServiceImpl implements TradeExitService {
                             tick.getSymbol(), error.toString());
                     return Mono.empty();
                 });
+    }
+
+    /**
+     * Runs the evaluation of one position outside the tick request. An exit
+     * (cancel broker stop, place, confirm) can take several seconds; inside the
+     * request it blocked that market-stream lane, delayed every later tick for the
+     * lane's symbols and was cut off by the stream's 5s timeout.
+     */
+    private void launchLivePositionEvaluation(
+            TradeExecutionClient.TradeExecutionPosition position,
+            Tick tick) {
+        Long signalId = position.signalId();
+        if (!liveOperationsInFlight.add(signalId)) {
+            log.debug("LIVE POSITION EVALUATION SKIPPED | signalId={} | symbol={} | Previous operation still in flight",
+                    signalId, position.symbol());
+            return;
+        }
+        Mono.defer(() -> evaluateLivePosition(position, tick))
+                .doFinally(signal -> liveOperationsInFlight.remove(signalId))
+                .subscribe(
+                        ignored -> { },
+                        error -> log.error("LIVE POSITION EVALUATION FAILED; no blind retry | signalId={} | symbol={} | Error={}",
+                                signalId, position.symbol(), error.toString()));
+    }
+
+    /** Open live positions, shared by all ticks for a short window (one in-flight read). */
+    private Mono<List<TradeExecutionClient.TradeExecutionPosition>> openTrades() {
+        long now = System.nanoTime();
+        CachedOpenTrades cached = openTradesCache.get();
+        if (cached != null && now - cached.expiresAtNanos() < 0) {
+            return cached.trades();
+        }
+        Mono<List<TradeExecutionClient.TradeExecutionPosition>> fresh =
+                tradeExecutionClient.getOpenTrades().cache();
+        CachedOpenTrades next = new CachedOpenTrades(
+                fresh, now + Math.max(0L, openPositionsCacheMs) * 1_000_000L);
+        if (openTradesCache.compareAndSet(cached, next)) {
+            return fresh;
+        }
+        CachedOpenTrades winner = openTradesCache.get();
+        return winner != null ? winner.trades() : fresh;
+    }
+
+    /** Positions changed (exit or protection update): the next tick must read fresh state. */
+    private void invalidateOpenTrades() {
+        openTradesCache.set(null);
     }
 
     private Mono<Void> evaluateLivePosition(
@@ -682,12 +761,16 @@ public class TradeExitServiceImpl implements TradeExitService {
             return Mono.just(false);
         }
 
-        BigDecimal proposedStop = candidate.get();
+        // Trade Execution aligns stops to the exchange tick before modifying the broker
+        // order; propose the aligned value so the confirmation below can match it.
+        BigDecimal proposedStop = com.ram.trading.signal.engine.util.PriceTicks.alignStop(
+                candidate.get(), position.side(), BigDecimal.valueOf(priceTickSize));
         TradeExecutionClient.TradeProtectionUpdateRequest request =
                 new TradeExecutionClient.TradeProtectionUpdateRequest(
                         position.signalId(), proposedStop, null, null);
 
         return tradeExecutionClient.updateProtection(request)
+                .doFinally(signal -> invalidateOpenTrades())
                 .map(updated -> {
                     boolean confirmed = updated != null
                             && java.util.Objects.equals(position.signalId(), updated.signalId())
@@ -727,7 +810,7 @@ public class TradeExitServiceImpl implements TradeExitService {
             return false;
         }
 
-        LocalTime marketClose = LocalTime.of(15, 30);
+        LocalTime marketClose = squareOffTime;
         LocalTime currentTime = LocalTime.now(java.time.ZoneId.of("Asia/Kolkata"));
         long minutesRemaining = java.time.Duration.between(currentTime, marketClose).toMinutes();
         if (minutesRemaining < minMinutesRemainingForTargetExtension) {
@@ -755,7 +838,8 @@ public class TradeExitServiceImpl implements TradeExitService {
         double extension = Math.abs(oldTarget - entry) * (targetExtensionPercent / 100.0d);
         double rawTarget = "BUY".equalsIgnoreCase(position.side())
                 ? oldTarget + extension : oldTarget - extension;
-        BigDecimal newTarget = BigDecimal.valueOf(Math.round(rawTarget * 100.0d) / 100.0d);
+        BigDecimal newTarget = com.ram.trading.signal.engine.util.PriceTicks.alignTarget(
+                BigDecimal.valueOf(rawTarget), position.side(), BigDecimal.valueOf(priceTickSize));
         if (newTarget.signum() <= 0) {
             log.warn("LIVE TARGET EXTENSION REJECTED: computed target is invalid | signalId={} | target={}",
                     position.signalId(), newTarget);
@@ -766,6 +850,7 @@ public class TradeExitServiceImpl implements TradeExitService {
                 new TradeExecutionClient.TradeProtectionUpdateRequest(
                         position.signalId(), null, newTarget, true);
         return tradeExecutionClient.updateProtection(request)
+                .doFinally(signal -> invalidateOpenTrades())
                 .map(updated -> updated != null
                         && "OPEN".equalsIgnoreCase(updated.status())
                         && Boolean.TRUE.equals(updated.targetExtended())
@@ -821,6 +906,7 @@ public class TradeExitServiceImpl implements TradeExitService {
                                 response.success(), response.message());
                     }
                 })
+                .doFinally(signal -> invalidateOpenTrades())
                 .then();
     }
 
@@ -846,7 +932,7 @@ public class TradeExitServiceImpl implements TradeExitService {
         }
 
         LocalTime marketClose =
-                LocalTime.of(15, 30);
+                squareOffTime;
 
         LocalTime currentTime =
                 LocalTime.now(

@@ -16,6 +16,12 @@ public interface TradeExecutionService {
     /** Read-only view of persisted OPEN execution positions. */
     Mono<List<ExecutedTradeRecord>> getOpenTrades();
 
+    /**
+     * Read-only view of every position opened in the current trading session, any status.
+     * Signal Engine uses it to enforce its own trading-risk limits in live mode.
+     */
+    Mono<List<ExecutedTradeRecord>> getSessionTrades();
+
     Mono<TradeExecutionResponse> exitTrade(
             TradeExitRequest request);
 

@@ -43,6 +43,7 @@ class StartupRecoveryCoordinatorTest {
                 .exitFilledQuantity(0).remainingQuantity(1).build();
 
         CountDownLatch claimRepaired = new CountDownLatch(1);
+        when(service.expirePriorSessionState()).thenReturn(Mono.empty());
         when(service.recoverPendingExitsAfterStartup()).thenReturn(Mono.empty());
         when(service.recoverPendingEntriesAfterStartup()).thenReturn(Mono.empty());
         when(idempotency.findUnresolved()).thenReturn(Mono.just(List.of(claim)));

@@ -3,6 +3,7 @@ package com.ram.trading.margin.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -25,6 +26,11 @@ public class PaperTradingAccount {
     private Double usedMargin;
 
     private Double realizedPnl;
+
+    /** Live mode: Upstox available funds at the first check of brokerFundsDate. */
+    private Double brokerOpeningFunds;
+
+    private LocalDate brokerFundsDate;
 
     private LocalDateTime createdAt;
 

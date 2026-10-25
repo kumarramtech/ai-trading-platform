@@ -43,6 +43,11 @@ class ExecutedTradeRepositoryIntegrationTest {
                     target_extended BOOLEAN NOT NULL DEFAULT FALSE,
                     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
                     entry_order_id VARCHAR(64),
+                    protective_order_id VARCHAR(64),
+                    protective_order_status VARCHAR(32),
+                    protective_order_quantity INT,
+                    protective_trigger_price DECIMAL(20,8),
+                    protective_order_tag VARCHAR(32),
                     exit_order_id VARCHAR(64),
                     exit_order_quantity INT,
                     exit_attempt INT NOT NULL DEFAULT 0,
@@ -385,6 +390,138 @@ class ExecutedTradeRepositoryIntegrationTest {
                 repository.findBySignalId(1013L).orElseThrow();
 
         assertEquals("EXIT_PENDING", unchanged.getStatus());
+    }
+
+    @Test
+    void brokerStopFillMustCloseTradeWithStopLossPnlExactlyOnce() {
+        saveOpenTrade(1020L, "BUY", 4, "100.00");
+        repository.updateProtectiveOrderState(1020L, "stop-1020", "ACTIVE", 4, new BigDecimal("95.00"), "AI-SL-1020");
+
+        ExecutedTradeRecord closed = repository.applyProtectiveStopFill(
+                1020L, "stop-1020", 4, new BigDecimal("95.00"));
+
+        assertEquals("CLOSED", closed.getStatus());
+        assertEquals(0, closed.getRemainingQuantity());
+        assertEquals("BROKER_STOP_LOSS", closed.getExitReason());
+        assertEquals("FILL_APPLIED", closed.getProtectiveOrderStatus());
+        assertMoney("-20.00", closed.getRealizedPnl());
+        assertNotNull(closed.getClosedAt());
+
+        ExecutedTradeRecord again = repository.applyProtectiveStopFill(
+                1020L, "stop-1020", 4, new BigDecimal("95.00"));
+        assertMoney("-20.00", again.getRealizedPnl());
+        assertEquals(4, again.getExitFilledQuantity());
+    }
+
+    @Test
+    void partialBrokerStopFillMustLeaveRemainderOpenForMarketExit() {
+        saveOpenTrade(1021L, "SELL", 5, "200.00");
+        repository.updateProtectiveOrderState(1021L, "stop-1021", "ACTIVE", 5, new BigDecimal("210.00"), "AI-SL-1021");
+
+        ExecutedTradeRecord partial = repository.applyProtectiveStopFill(
+                1021L, "stop-1021", 2, new BigDecimal("210.00"));
+
+        assertEquals("OPEN", partial.getStatus());
+        assertEquals(3, partial.getRemainingQuantity());
+        assertMoney("-20.00", partial.getRealizedPnl());
+        assertTrue(repository.claimExit(1021L, 3), "The remainder must still be claimable for a market exit");
+    }
+
+    @Test
+    void brokerStopFillMustNotBeBookedForADifferentOrder() {
+        saveOpenTrade(1022L, "BUY", 2, "100.00");
+        repository.updateProtectiveOrderState(1022L, "stop-1022", "ACTIVE", 2, new BigDecimal("95.00"), "AI-SL-1022");
+
+        assertThrows(IllegalStateException.class, () -> repository.applyProtectiveStopFill(
+                1022L, "other-order", 2, new BigDecimal("95.00")));
+        assertEquals("OPEN", repository.findBySignalId(1022L).orElseThrow().getStatus());
+    }
+
+    @Test
+    void onlyOneStopModificationMayBeClaimedAtATime() {
+        saveOpenTrade(1023L, "BUY", 2, "100.00");
+        repository.updateProtectiveOrderState(1023L, "stop-1023", "ACTIVE", 2, new BigDecimal("95.00"), "AI-SL-1023");
+
+        assertTrue(repository.claimProtectiveModification(1023L, "stop-1023"));
+        assertFalse(repository.claimProtectiveModification(1023L, "stop-1023"));
+        assertMoney("95.00", repository.findBySignalId(1023L).orElseThrow().getProtectiveTriggerPrice());
+    }
+
+    @Test
+    void priorSessionPositionsMustBeExpiredAndExcludedFromActiveCounts() {
+        saveOpenTrade(1024L, "BUY", 2, "100.00");
+        saveOpenTrade(1025L, "BUY", 2, "100.00");
+        jdbcTemplate.update("UPDATE executed_trades SET opened_at = ? WHERE signal_id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusDays(1)), 1024L);
+        jdbcTemplate.update("UPDATE executed_trades SET opened_at = ? WHERE signal_id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now()), 1025L);
+
+        var expired = repository.expirePriorSessionTrades(java.time.LocalDate.now().atStartOfDay());
+
+        assertEquals(1, expired.size());
+        assertEquals(1024L, expired.get(0).getSignalId());
+        assertEquals("EXPIRED_PRIOR_SESSION", repository.findBySignalId(1024L).orElseThrow().getStatus());
+        assertEquals("OPEN", repository.findBySignalId(1025L).orElseThrow().getStatus());
+        assertEquals(1, repository.countActivePositions());
+    }
+
+    @Test
+    void sessionTradesMustIncludeClosedTradesOfTodayOnly() {
+        saveOpenTrade(1030L, "BUY", 2, "100.00");
+        saveOpenTrade(1031L, "BUY", 2, "100.00");
+        jdbcTemplate.update("UPDATE executed_trades SET opened_at = ?, status = 'CLOSED' WHERE signal_id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now()), 1030L);
+        jdbcTemplate.update("UPDATE executed_trades SET opened_at = ? WHERE signal_id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusDays(1)), 1031L);
+
+        var today = repository.findTradesOpenedSince(java.time.LocalDate.now().atStartOfDay());
+
+        assertEquals(1, today.size());
+        assertEquals(1030L, today.get(0).getSignalId());
+        assertEquals("CLOSED", today.get(0).getStatus());
+    }
+
+    @Test
+    void unsubmittedExitClaimIsReleasedOnlyWhenOldEnoughAndUnchanged() {
+        saveOpenTrade(1040L, "BUY", 5, "100.00");
+        assertTrue(repository.claimExit(1040L, 5));
+        int attempt = repository.findBySignalId(1040L).orElseThrow().getExitAttempt();
+
+        assertFalse(repository.releaseUnsubmittedExitClaim(1040L, attempt, 60),
+                "A fresh claim may still be submitting; it must stay pending");
+
+        jdbcTemplate.update("UPDATE executed_trades SET updated_at = ? WHERE signal_id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusMinutes(5)), 1040L);
+        assertFalse(repository.releaseUnsubmittedExitClaim(1040L, attempt + 1, 60),
+                "A different attempt must not be released");
+
+        assertTrue(repository.releaseUnsubmittedExitClaim(1040L, attempt, 60));
+        ExecutedTradeRecord released = repository.findBySignalId(1040L).orElseThrow();
+        assertEquals("OPEN", released.getStatus());
+        assertEquals(attempt, released.getExitAttempt(), "Attempt is kept so the next claim builds a new tag");
+        assertTrue(repository.claimExit(1040L, 5), "The position must be exitable again");
+    }
+
+    @Test
+    void exitClaimWithBrokerOrderIdIsNeverReleasedAsUnsubmitted() {
+        saveOpenTrade(1041L, "BUY", 5, "100.00");
+        assertTrue(repository.claimExit(1041L, 5));
+        assertTrue(repository.persistExitOrderDetailsIfPending(1041L, "exit-1041", 5));
+        jdbcTemplate.update("UPDATE executed_trades SET updated_at = ? WHERE signal_id = ?",
+                java.sql.Timestamp.valueOf(java.time.LocalDateTime.now().minusMinutes(5)), 1041L);
+        int attempt = repository.findBySignalId(1041L).orElseThrow().getExitAttempt();
+
+        assertFalse(repository.releaseUnsubmittedExitClaim(1041L, attempt, 60));
+        assertEquals("EXIT_PENDING", repository.findBySignalId(1041L).orElseThrow().getStatus());
+    }
+
+    @Test
+    void activePositionsAreCountedPerSymbol() {
+        saveOpenTrade(1042L, "BUY", 2, "100.00");
+        jdbcTemplate.update("UPDATE executed_trades SET symbol = 'INFY' WHERE signal_id = ?", 1042L);
+
+        assertEquals(1, repository.countActivePositionsForSymbol("infy"));
+        assertEquals(0, repository.countActivePositionsForSymbol("TCS"));
     }
 
     private void assertMoney(String expected, BigDecimal actual) {

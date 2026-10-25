@@ -14,6 +14,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 
@@ -25,6 +26,8 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -36,6 +39,9 @@ public class BrokerExecutionClientImpl implements BrokerExecutionClient {
 
     @Value("${upstox.order-url}")
     private String upstoxOrderUrl;
+
+    @Value("${upstox.order-modify-url:https://api-hft.upstox.com/v2/order/modify}")
+    private String upstoxOrderModifyUrl;
 
     @Value("${upstox.order-cancel-url:https://api-hft.upstox.com/v2/order/cancel}")
     private String upstoxOrderCancelUrl;
@@ -115,6 +121,8 @@ public class BrokerExecutionClientImpl implements BrokerExecutionClient {
                 .switchIfEmpty(Mono.error(
                         new IllegalStateException(
                                 "Upstox access token is unavailable")))
+                // Errors before the order request is sent are definitive: no order exists.
+                .onErrorMap(AccessTokenUnavailableException::new)
                 .flatMap(accessToken -> webClientBuilder.build()
                         .post()
                         .uri(upstoxOrderUrl)
@@ -132,6 +140,17 @@ public class BrokerExecutionClientImpl implements BrokerExecutionClient {
                         .map(response ->
                                 buildBrokerOrderResponse(request, response)))
                 .onErrorResume(error -> {
+                    if (error instanceof AccessTokenUnavailableException) {
+                        log.error("Upstox order NOT sent: access token unavailable | Symbol={} | Tag={}",
+                                request.getSymbol(), tag, error);
+                        return Mono.just(BrokerOrderResponse.builder()
+                                .success(false)
+                                .status("REJECTED")
+                                .message("Order was not sent because the Upstox access token is unavailable: "
+                                        + error.getMessage())
+                                .build());
+                    }
+
                     log.error(
                             "Upstox order placement error; reconciling before "
                                     + "any retry | Symbol={} | Tag={}",
@@ -144,6 +163,82 @@ public class BrokerExecutionClientImpl implements BrokerExecutionClient {
                             tag,
                             error);
                 });
+    }
+
+    @Override
+    public Mono<BrokerOrderResponse> modifyOrder(String orderId, BrokerOrderRequest request) {
+        if (orderId == null || orderId.isBlank()) {
+            return Mono.just(BrokerOrderResponse.builder()
+                    .success(false)
+                    .status("INVALID_REQUEST")
+                    .message("orderId must not be blank")
+                    .build());
+        }
+        if (request == null) {
+            return Mono.just(BrokerOrderResponse.builder()
+                    .success(false)
+                    .status("INVALID_REQUEST")
+                    .message("Broker order modification request must not be null")
+                    .build());
+        }
+
+        String orderType = normalizeOrderType(request.getOrderType());
+        String validationError = validateOrderRequest(request, orderType);
+        if (validationError != null) {
+            return Mono.just(BrokerOrderResponse.builder()
+                    .success(false)
+                    .status("INVALID_REQUEST")
+                    .message(validationError)
+                    .build());
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("order_id", orderId.trim());
+        body.put("quantity", request.getQuantity());
+        body.put("validity", request.getValidity() == null || request.getValidity().isBlank()
+                ? "DAY" : request.getValidity().trim().toUpperCase());
+        body.put("price", "MARKET".equals(orderType) || "SL-M".equals(orderType)
+                ? BigDecimal.ZERO : request.getPrice());
+        body.put("order_type", orderType);
+        body.put("disclosed_quantity", 0);
+        body.put("trigger_price", request.getTriggerPrice() == null
+                ? BigDecimal.ZERO : request.getTriggerPrice());
+
+        return brokerClient.getAccessToken()
+                .switchIfEmpty(Mono.error(new IllegalStateException(
+                        "Upstox access token is unavailable for order modification")))
+                .flatMap(accessToken -> webClientBuilder.build()
+                        .put()
+                        .uri(upstoxOrderModifyUrl)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .bodyValue(body)
+                        .retrieve()
+                        .bodyToMono(JsonNode.class)
+                        .switchIfEmpty(Mono.error(new IllegalStateException(
+                                "Empty Upstox order modification response for order " + orderId)))
+                        .map(response -> {
+                            String status = response.path("status").asText("");
+                            String returnedId = response.path("data").path("order_id").asText("");
+                            if (!"success".equalsIgnoreCase(status) || returnedId.isBlank()
+                                    || !orderId.trim().equals(returnedId)) {
+                                return BrokerOrderResponse.builder()
+                                        .success(false)
+                                        .orderId(returnedId.isBlank() ? orderId.trim() : returnedId)
+                                        .status("MODIFY_NOT_CONFIRMED")
+                                        .message("Upstox did not confirm modification for order " + orderId)
+                                        .build();
+                            }
+                            log.info("UPSTOX ORDER MODIFICATION ACKNOWLEDGED | OrderId={} | Type={} | Qty={} | Trigger={}",
+                                    returnedId, orderType, request.getQuantity(), request.getTriggerPrice());
+                            return BrokerOrderResponse.builder()
+                                    .success(true)
+                                    .orderId(returnedId)
+                                    .status("MODIFY_ACKNOWLEDGED")
+                                    .message("Broker acknowledged order modification; verify order details before relying on it")
+                                    .build();
+                        }));
     }
 
     @Override
@@ -651,10 +746,27 @@ public class BrokerExecutionClientImpl implements BrokerExecutionClient {
                                     + ". Confirm final state using order details.")
                             .build());
                 })
-                .switchIfEmpty(Mono.just(unknownPlacementOutcome(
-                        "No matching order found during reconciliation. "
-                                + "The placement outcome remains uncertain; "
-                                + "do not retry automatically.")))
+                .switchIfEmpty(Mono.fromSupplier(() -> {
+                    // A 4xx response means Upstox refused the request before creating an
+                    // order; combined with a confirmed empty tag lookup it is a definitive
+                    // rejection. Timeouts and 5xx responses remain ambiguous.
+                    if (isDefinitiveClientRejection(placementError)) {
+                        String body = ((WebClientResponseException) placementError)
+                                .getResponseBodyAsString();
+                        log.warn("Upstox rejected order request | Symbol={} | Tag={} | HttpStatus={} | Body={}",
+                                request.getSymbol(), tag,
+                                ((WebClientResponseException) placementError).getStatusCode().value(), body);
+                        return BrokerOrderResponse.builder()
+                                .success(false)
+                                .status("REJECTED")
+                                .message("Upstox rejected the order request: " + body)
+                                .build();
+                    }
+                    return unknownPlacementOutcome(
+                            "No matching order found during reconciliation. "
+                                    + "The placement outcome remains uncertain; "
+                                    + "do not retry automatically.");
+                }))
                 .onErrorResume(reconciliationError -> {
                     log.error(
                             "Order reconciliation failed | Symbol={} | Tag={}",
@@ -673,5 +785,19 @@ public class BrokerExecutionClientImpl implements BrokerExecutionClient {
                 .status("UNKNOWN")
                 .message(message)
                 .build();
+    }
+
+    private static boolean isDefinitiveClientRejection(Throwable error) {
+        // 408 is a request timeout: the broker may still have processed the order.
+        return error instanceof WebClientResponseException response
+                && response.getStatusCode().is4xxClientError()
+                && response.getStatusCode().value() != 408;
+    }
+
+    /** Marks failures that happened before any order request reached the broker. */
+    private static final class AccessTokenUnavailableException extends RuntimeException {
+        private AccessTokenUnavailableException(Throwable cause) {
+            super(cause.getMessage() != null ? cause.getMessage() : "Access token unavailable", cause);
+        }
     }
 }

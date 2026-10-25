@@ -10,6 +10,14 @@ public interface BrokerExecutionClient {
 
     Mono<BrokerOrderResponse> executeOrder(BrokerOrderRequest request);
 
+    /**
+     * Requests modification of an existing open/pending broker order. A successful
+     * response is only an acknowledgement; callers must fetch order details and
+     * verify the modified quantity/type/trigger before considering it active.
+     * Errors are propagated because a timeout can leave the broker outcome uncertain.
+     */
+    Mono<BrokerOrderResponse> modifyOrder(String orderId, BrokerOrderRequest request);
+
     default Mono<BrokerOrderResponse> executeExitOrder(
             BrokerOrderRequest request) {
         return executeOrder(request);

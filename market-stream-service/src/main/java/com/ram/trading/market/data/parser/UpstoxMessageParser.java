@@ -50,10 +50,11 @@ public class UpstoxMessageParser {
                         feed.hasFullFeed()
                 );
 
-                if (instrumentKey.contains("Nifty 50")
-                        || instrumentKey.contains("Nifty Bank")) {
+                if (log.isDebugEnabled()
+                        && (instrumentKey.contains("Nifty 50")
+                        || instrumentKey.contains("Nifty Bank"))) {
 
-                    log.warn(
+                    log.debug(
                             "INDEX FEED DEBUG -> instrumentKey={}, feed={}",
                             instrumentKey,
                             feed

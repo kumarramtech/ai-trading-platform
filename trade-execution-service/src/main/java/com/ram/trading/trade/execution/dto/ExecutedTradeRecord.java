@@ -43,6 +43,17 @@ public class ExecutedTradeRecord {
 
     private String entryOrderId;
 
+    /** Broker-side protective stop order identity and last reconciled state. */
+    private String protectiveOrderId;
+
+    private String protectiveOrderStatus;
+
+    private Integer protectiveOrderQuantity;
+
+    private BigDecimal protectiveTriggerPrice;
+
+    private String protectiveOrderTag;
+
     private String exitOrderId;
 
     private BigDecimal exitPrice;

@@ -27,7 +27,7 @@ public class TradeExecutionController {
     public Mono<ResponseEntity<TradeExecutionResponse>> executeTrade(
             @RequestBody TradeExecutionRequest request) {
 
-        return tradeExecutionService.executeTrade(request).map(ResponseEntity::ok);
+        return runToCompletion(tradeExecutionService.executeTrade(request)).map(ResponseEntity::ok);
     }
 
     @GetMapping("/health")
@@ -59,11 +59,21 @@ public class TradeExecutionController {
                 .map(ResponseEntity::ok);
     }
 
-    /** Persist internal protection values; this does not modify a broker-side stop order. */
+    /**
+     * Read-only list of every position opened in the current trading session (any status),
+     * including realized P&L. Does not submit orders and does not imply execution readiness.
+     */
+    @GetMapping("/today")
+    public Mono<ResponseEntity<List<ExecutedTradeRecord>>> getSessionTrades() {
+        return tradeExecutionService.getSessionTrades()
+                .map(ResponseEntity::ok);
+    }
+
+    /** Update protection state. Stop-loss updates are rejected when they would diverge from an existing broker stop. */
     @PatchMapping("/protection")
     public Mono<ResponseEntity<ExecutedTradeRecord>> updateProtection(
             @RequestBody TradeProtectionUpdateRequest request) {
-        return tradeExecutionService.updateProtection(request)
+        return runToCompletion(tradeExecutionService.updateProtection(request))
                 .map(ResponseEntity::ok);
     }
 
@@ -71,8 +81,19 @@ public class TradeExecutionController {
     public Mono<ResponseEntity<TradeExecutionResponse>> exitTrade(
             @RequestBody TradeExitRequest request) {
 
-        return tradeExecutionService.exitTrade(request)
+        return runToCompletion(tradeExecutionService.exitTrade(request))
                 .map(ResponseEntity::ok);
+    }
+
+    /**
+     * Broker-facing operations must finish once started, whatever happens to the caller.
+     * WebFlux cancels the handler's Mono when the client times out or disconnects; for an
+     * order flow that could stop between "broker stop cancelled" and "market exit placed",
+     * or between an exit claim and its submission, leaving a live position unprotected.
+     * The operation is subscribed independently; a disconnect only drops the response.
+     */
+    static <T> Mono<T> runToCompletion(Mono<T> operation) {
+        return Mono.fromFuture(operation.toFuture(), true);
     }
 
 }

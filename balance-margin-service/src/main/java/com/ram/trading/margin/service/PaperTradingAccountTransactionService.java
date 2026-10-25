@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -118,6 +119,33 @@ public class PaperTradingAccountTransactionService {
                 account.getAvailableBalance(),
                 account.getUsedMargin(),
                 account.getRealizedPnl());
+    }
+
+    @Transactional
+    public double brokerOpeningFunds(double currentBrokerFunds, LocalDate today) {
+
+        PaperTradingAccount account =
+                accountRepository.findFirstByOrderByIdAscForUpdate()
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Paper trading account not found"));
+
+        if (today.equals(account.getBrokerFundsDate())
+                && account.getBrokerOpeningFunds() != null) {
+            return account.getBrokerOpeningFunds();
+        }
+
+        account.setBrokerOpeningFunds(currentBrokerFunds);
+        account.setBrokerFundsDate(today);
+        account.setUpdatedAt(LocalDateTime.now());
+        accountRepository.save(account);
+
+        log.info(
+                "Broker Opening Funds Recorded | Date = {} | Funds = {}",
+                today,
+                currentBrokerFunds);
+
+        return currentBrokerFunds;
     }
 
     private void validateMargin(Double requiredMargin) {

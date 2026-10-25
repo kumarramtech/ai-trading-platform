@@ -30,6 +30,7 @@ import com.ram.trading.signal.engine.service.*;
 import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
 import com.ram.trading.signal.engine.service.ai.TradingOrchestratorService;
 import com.ram.trading.signal.engine.service.ai.mapper.TradingSignalMapper;
+import com.ram.trading.signal.engine.service.ExecutionPlanCalculator;
 import com.ram.trading.signal.engine.service.context.TradingContext;
 import com.ram.trading.signal.engine.service.interfac.MarketDataProvider;
 import com.ram.trading.signal.engine.dto.ai.decision.TradingPipelineResult;
@@ -41,11 +42,13 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
@@ -61,6 +64,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final TradingOrchestratorService tradingOrchestratorService;
 
     private final TradingSignalMapper tradingSignalMapper;
+    private final ExecutionPlanCalculator executionPlanCalculator;
 
     private final TradingSignalService tradingSignalService;
 
@@ -103,6 +107,24 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     @Value("${trading.market.strategy.entry.start:09:30}")
     private LocalTime strategyEntryStart = LocalTime.of(9, 30);
+
+    /**
+     * The 12:00 MIDDAY path enters on daily indicators and the discovery move,
+     * without an intraday JUDAS/ORB trigger or a market-regime check.
+     */
+    @Value("${trading.strategy.midday.enabled:true}")
+    private boolean middayEntriesEnabled = true;
+
+    /**
+     * Upper bound for one detached entry pipeline (AI call + risk guard +
+     * position sizing + paper-trade creation). It is independent of the
+     * market-stream tick HTTP timeout (5s), which previously cancelled the
+     * pipeline while the AI service was still answering (median ~7s).
+     */
+    @Value("${trading.pipeline.detached-timeout-seconds:90}")
+    private long detachedPipelineTimeoutSeconds = 90L;
+
+    private final AtomicInteger detachedPipelinesInFlight = new AtomicInteger();
 
     @PostConstruct
     private void validateExecutionTradeMode() {
@@ -288,6 +310,11 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
         if (symbol == null || symbol.isBlank()) {
             log.warn("MIDDAY PIPELINE SKIPPED | Invalid symbol");
+            return Mono.empty();
+        }
+
+        if (!middayEntriesEnabled) {
+            log.info("MIDDAY PIPELINE SKIPPED | Symbol={} | trading.strategy.midday.enabled=false", symbol);
             return Mono.empty();
         }
 
@@ -603,12 +630,65 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                                         indicator,
                                                         entrySetup);
 
-                                        return generateTradingSignal(
+                                        /*
+                                         * The AI -> risk -> sizing -> trade chain
+                                         * takes 5-15s. It must NOT be owned by the
+                                         * tick HTTP request: the market-stream
+                                         * cancels that request after 5s, which
+                                         * silently dropped otherwise valid trades.
+                                         */
+                                        return detachTradingPipeline(
                                                 request,
                                                 indicator);
                                     });
                         })
                 );
+    }
+
+    /**
+     * Runs the trading pipeline independently of the inbound tick request.
+     *
+     * Subscribing here (instead of returning the Mono to the controller)
+     * means a client timeout/disconnect can no longer cancel the AI call,
+     * Risk Guard, position sizing or paper-trade creation half-way. The tick
+     * request is acknowledged immediately with an empty response.
+     *
+     * Behaviour of the pipeline itself (gates, thresholds, sizing, risk) is
+     * unchanged; only its lifecycle is decoupled from the HTTP request.
+     */
+    private Mono<TradingSignal> detachTradingPipeline(
+            SignalGenerationRequest request,
+            TechnicalIndicatorResponse indicator) {
+
+        final String symbol = request.getSymbol();
+        final long startNanos = System.nanoTime();
+        final int inFlight = detachedPipelinesInFlight.incrementAndGet();
+
+        log.info(
+                "DETACHED TRADING PIPELINE STARTED | Symbol={} | InFlight={}",
+                symbol,
+                inFlight);
+
+        Mono.defer(() -> generateTradingSignal(request, indicator))
+                .timeout(Duration.ofSeconds(
+                        Math.max(1L, detachedPipelineTimeoutSeconds)))
+                .subscribeOn(Schedulers.boundedElastic())
+                .doFinally(signalType ->
+                        detachedPipelinesInFlight.decrementAndGet())
+                .doOnSuccess(signal -> log.info(
+                        "DETACHED TRADING PIPELINE FINISHED | Symbol={} | ElapsedMs={} | SignalProduced={}",
+                        symbol,
+                        (System.nanoTime() - startNanos) / 1_000_000L,
+                        signal != null))
+                .subscribe(
+                        ignored -> { },
+                        error -> log.error(
+                                "DETACHED TRADING PIPELINE FAILED | Symbol={} | ElapsedMs={}",
+                                symbol,
+                                (System.nanoTime() - startNanos) / 1_000_000L,
+                                error));
+
+        return Mono.empty();
     }
 
     private Mono<TradingSignal> generateTradingSignal(
@@ -882,6 +962,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 tradingSignalMapper.map(
                                         aiResponse,
                                         request);
+
+                        /*
+                         * The AI only confirms the direction. Stop-loss and
+                         * target are owned by the engine (Opening Range based).
+                         */
+                        executionPlanCalculator.apply(signal, request);
 
                         log.debug(
                                 "STEP-4 Mapper Completed");

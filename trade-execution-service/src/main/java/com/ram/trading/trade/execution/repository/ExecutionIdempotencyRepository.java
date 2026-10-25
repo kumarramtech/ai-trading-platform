@@ -186,6 +186,78 @@ public class ExecutionIdempotencyRepository {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * Entry claims created at or after the given time, excluding definitive broker
+     * rejections. Blocking: callers must run it on a blocking-capable scheduler.
+     */
+    public int countEntryClaimsSince(java.time.LocalDateTime since) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM trade_execution_idempotency
+                WHERE created_at >= ?
+                  AND UPPER(COALESCE(status, '')) NOT IN ('REJECTED', 'EXPIRED_PRIOR_SESSION')
+                """, Integer.class, java.sql.Timestamp.valueOf(since));
+        return count == null ? 0 : count;
+    }
+
+    /**
+     * Unresolved claims that have no executed trade yet: each may already be a live
+     * broker order. Blocking: callers must run it on a blocking-capable scheduler.
+     */
+    public int countUnresolvedClaimsWithoutTrade() {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM trade_execution_idempotency e
+                LEFT JOIN executed_trades t ON t.signal_id = e.signal_id
+                WHERE t.signal_id IS NULL
+                  AND UPPER(COALESCE(e.status, '')) IN
+                      ('PROCESSING', 'ORDER_PLACED', 'PENDING', 'UNKNOWN', 'RECONCILIATION_REQUIRED')
+                """, Integer.class);
+        return count == null ? 0 : count;
+    }
+
+    /** As {@link #countUnresolvedClaimsWithoutTrade()}, for one symbol. */
+    public int countUnresolvedClaimsWithoutTradeForSymbol(String symbol) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM trade_execution_idempotency e
+                LEFT JOIN executed_trades t ON t.signal_id = e.signal_id
+                WHERE t.signal_id IS NULL
+                  AND UPPER(e.symbol) = UPPER(?)
+                  AND UPPER(COALESCE(e.status, '')) IN
+                      ('PROCESSING', 'ORDER_PLACED', 'PENDING', 'UNKNOWN', 'RECONCILIATION_REQUIRED')
+                """, Integer.class, symbol);
+        return count == null ? 0 : count;
+    }
+
+    /**
+     * Retires claims from an earlier trading session that can no longer be reconciled
+     * (broker order APIs only return the current day's orders, and intraday exposure
+     * is squared off by the broker). Without this a single stale claim would keep
+     * startup readiness FAILED forever. Returns the retired signal IDs for review.
+     */
+    public java.util.List<Long> expirePriorSessionClaims(java.time.LocalDateTime sessionStart) {
+        java.sql.Timestamp cutoff = java.sql.Timestamp.valueOf(sessionStart);
+        String staleCondition = """
+                created_at < ?
+                AND (UPPER(COALESCE(status, '')) IN
+                        ('PROCESSING', 'ORDER_PLACED', 'PENDING', 'UNKNOWN', 'RECONCILIATION_REQUIRED')
+                     OR (UPPER(COALESCE(status, '')) IN ('FILLED', 'PARTIAL_FILLED')
+                         AND NOT EXISTS (SELECT 1 FROM executed_trades t
+                                         WHERE t.signal_id = trade_execution_idempotency.signal_id)))
+                """;
+        java.util.List<Long> signalIds = jdbcTemplate.queryForList(
+                "SELECT signal_id FROM trade_execution_idempotency WHERE " + staleCondition,
+                Long.class, cutoff);
+        if (!signalIds.isEmpty()) {
+            jdbcTemplate.update("""
+                    UPDATE trade_execution_idempotency
+                    SET status = 'EXPIRED_PRIOR_SESSION',
+                        rejection_reason = COALESCE(rejection_reason,
+                            'Unresolved at end of a prior session; reconcile P&L manually'),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE """ + staleCondition, cutoff);
+        }
+        return signalIds;
+    }
+
     public Mono<Void> updateOrderPlaced(Long signalId, String orderId) {
         return update(signalId, "ORDER_PLACED", orderId, null, null, null);
     }

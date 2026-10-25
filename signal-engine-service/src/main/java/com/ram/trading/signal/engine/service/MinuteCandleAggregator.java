@@ -2,12 +2,15 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.dto.market.Tick;
 import com.ram.trading.signal.engine.dto.premarket.MinuteCandle;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -16,90 +19,89 @@ public class MinuteCandleAggregator {
 
     private final MinuteCandleStore minuteCandleStore;
 
+    // Per-symbol watermark prevents duplicate completion and late ticks from
+    // rewriting candles that have already been consumed by strategy evaluation.
+    private final Map<String, LocalDateTime> lastEmittedMinute = new ConcurrentHashMap<>();
+
+    /** Avoid re-processing a candle that was already completed before a restart. */
+    @PostConstruct
+    public void restoreEmissionWatermarks() {
+        for (String symbol : minuteCandleStore.getSymbols()) {
+            LocalDateTime latestMinute = minuteCandleStore.getLatestMinute(symbol);
+            if (latestMinute != null) {
+                lastEmittedMinute.put(symbol, latestMinute);
+            }
+        }
+        log.info("CANDLE EMISSION WATERMARKS RESTORED | Symbols={}", lastEmittedMinute.size());
+    }
+
 
     /**
      * Process one live tick.
      *
      * Every tick belongs to exactly one minute candle.
      */
+
     public MinuteCandle process(Tick tick) {
 
         if (!isValidTick(tick)) {
             return null;
         }
 
-        String symbol =
-                tick.getSymbol();
+        String symbol = tick.getSymbol();
+        Double price = tick.getLastTradedPrice();
 
-        Double price =
-                tick.getLastTradedPrice();
+        LocalDateTime tradeTime = tick.getTradeTime();
 
-        LocalDateTime tradeTime =
-                tick.getTradeTime();
+        if (tradeTime == null) {
+            log.warn(
+                    "Skipping tick with missing trade time | Symbol={} | Timestamp={}",
+                    symbol,
+                    tick.getTimestamp()
+            );
+            return null;
+        }
 
-        /*
-         * Normalize timestamp to the beginning
-         * of its minute.
-         *
-         * Example:
-         *
-         * 09:15:37
-         *     ↓
-         * 09:15:00
-         */
-        LocalDateTime minute =
-                tradeTime.truncatedTo(
-                        ChronoUnit.MINUTES
-                );
+        LocalDateTime minute = tradeTime.truncatedTo(ChronoUnit.MINUTES);
 
-        MinuteCandle existing =
-                minuteCandleStore.get(
-                        symbol,
-                        minute
-                );
+        LocalDateTime latestStoredMinute = minuteCandleStore.getLatestMinute(symbol);
+        if (latestStoredMinute != null && minute.isBefore(latestStoredMinute)) {
+            log.warn(
+                    "LATE TICK IGNORED | Symbol={} | TickMinute={} | LatestStoredMinute={}",
+                    symbol, minute, latestStoredMinute);
+            return null;
+        }
 
-        /*
-         * ============================================================
-         * FIRST TICK FOR THIS MINUTE
-         * ============================================================
-         *
-         * There is no existing candle for this minute.
-         *
-         * Before creating the new candle, check whether the
-         * immediately previous minute has a completed candle.
-         */
+        MinuteCandle existing = minuteCandleStore.get(symbol, minute);
+
         if (existing == null) {
 
-            LocalDateTime previousMinute =
-                    minute.minusMinutes(1);
+            MinuteCandle completedCandidate = minuteCandleStore.getLatestBefore(symbol, minute);
+            MinuteCandle completedCandle = null;
+            if (completedCandidate != null) {
+                LocalDateTime lastEmitted = lastEmittedMinute.get(symbol);
+                if (lastEmitted == null || completedCandidate.getMinute().isAfter(lastEmitted)) {
+                    completedCandle = completedCandidate;
+                    lastEmittedMinute.put(symbol, completedCandidate.getMinute());
+                }
+                // Persist only after the next minute starts; avoids a database write per tick.
+                minuteCandleStore.saveCompleted(completedCandidate);
+            }
 
-            MinuteCandle completedCandle =
-                    minuteCandleStore.get(
-                            symbol,
-                            previousMinute
-                    );
-
-            MinuteCandle candle =
-                    MinuteCandle.builder()
-                            .symbol(symbol)
-                            .minute(minute)
-                            .open(price)
-                            .high(price)
-                            .low(price)
-                            .close(price)
-                            .volume(
-                                    safeVolume(
-                                            tick.getVolume()
-                                    )
-                            )
-                            .build();
+            MinuteCandle candle = MinuteCandle.builder()
+                    .symbol(symbol)
+                    .minute(minute)
+                    .open(price)
+                    .high(price)
+                    .low(price)
+                    .close(price)
+                    .volume(safeVolume(tick.getVolume()))
+                    .build();
 
             minuteCandleStore.save(candle);
 
             log.debug(
-                    "1-MIN CANDLE CREATED | " +
-                            "Symbol={} | Minute={} | " +
-                            "O={} | H={} | L={} | C={} | V={}",
+                    "1-MIN CANDLE CREATED | Symbol={} | Minute={} | O={} | H={} | L={} | C={} | V={}",
                     symbol,
                     minute,
                     price,
@@ -109,58 +111,23 @@ public class MinuteCandleAggregator {
                     candle.getVolume()
             );
 
-            /*
-             * Return the previous candle because it is now complete.
-             *
-             * The newly-created candle must NOT be returned because
-             * it is still being formed.
-             */
             return completedCandle;
         }
 
-        /*
-         * ============================================================
-         * UPDATE CURRENT CANDLE
-         * ============================================================
-         */
-
-        existing.setHigh(
-                max(
-                        existing.getHigh(),
-                        price
-                )
-        );
-
-        existing.setLow(
-                min(
-                        existing.getLow(),
-                        price
-                )
-        );
-
-        /*
-         * Latest tick becomes the candle close.
-         */
+        existing.setHigh(max(existing.getHigh(), price));
+        existing.setLow(min(existing.getLow(), price));
         existing.setClose(price);
 
-        /*
-         * Tick.volume represents the cumulative volume of the current I1
-         * candle from the Upstox full feed. Replace it rather than summing
-         * repeated snapshots of the same minute.
-         */
+        // Tick volume is cumulative; replace rather than sum repeated snapshots.
         if (tick.getVolume() != null) {
-            existing.setVolume(
-                    safeVolume(tick.getVolume())
-            );
+            existing.setVolume(safeVolume(tick.getVolume()));
         }
 
         minuteCandleStore.save(existing);
 
-        /*
-         * Current candle is still being formed.
-         */
         return null;
     }
+
 
 
     private boolean isValidTick(Tick tick) {

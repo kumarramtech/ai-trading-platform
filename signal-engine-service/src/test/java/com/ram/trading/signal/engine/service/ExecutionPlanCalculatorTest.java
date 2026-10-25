@@ -1,0 +1,92 @@
+package com.ram.trading.signal.engine.service;
+
+import com.ram.trading.signal.engine.dto.TradingSignal;
+import com.ram.trading.signal.engine.dto.premarket.OpeningRange;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+class ExecutionPlanCalculatorTest {
+
+    private final OpeningRangeService openingRangeService = mock(OpeningRangeService.class);
+    private final ExecutionPlanCalculator calculator = new ExecutionPlanCalculator(openingRangeService);
+
+    private OpeningRange range(double high, double low) {
+        OpeningRange r = new OpeningRange();
+        r.setHigh(high);
+        r.setLow(low);
+        return r;
+    }
+
+    private TradingSignal signal(String direction, double entry) {
+        TradingSignal s = new TradingSignal();
+        s.setSymbol("ABC");
+        s.setSignal(direction);
+        s.setEntryPrice(entry);
+        return s;
+    }
+
+    @Test
+    void buyUsesOpeningRangeLowAndTwoToOneTarget() {
+        // entry 100, OR low 99.40 -> risk ~0.65 (inside 0.4%..1.0%)
+        when(openingRangeService.get("ABC")).thenReturn(range(101.0, 99.40));
+        TradingSignal s = signal("BUY", 100.0);
+
+        calculator.apply(s, null);
+
+        assertTrue(s.getStopLoss() < 100.0 && 100.0 < s.getTargetPrice());
+        double risk = 100.0 - s.getStopLoss();
+        assertEquals(2.0 * risk, s.getTargetPrice() - 100.0, 0.02);
+        assertTrue(risk >= 0.40 && risk <= 1.00);
+    }
+
+    @Test
+    void sellUsesOpeningRangeHigh() {
+        when(openingRangeService.get("ABC")).thenReturn(range(100.6, 98.0));
+        TradingSignal s = signal("SELL", 100.0);
+
+        calculator.apply(s, null);
+
+        assertTrue(s.getTargetPrice() < 100.0 && 100.0 < s.getStopLoss());
+        double risk = s.getStopLoss() - 100.0;
+        assertEquals(2.0 * risk, 100.0 - s.getTargetPrice(), 0.02);
+    }
+
+    @Test
+    void wideRangeIsClampedToMaxRisk() {
+        when(openingRangeService.get("ABC")).thenReturn(range(110.0, 90.0));
+        TradingSignal s = signal("BUY", 100.0);
+
+        calculator.apply(s, null);
+
+        assertEquals(99.0, s.getStopLoss(), 0.01);
+        assertEquals(102.0, s.getTargetPrice(), 0.01);
+    }
+
+    @Test
+    void missingRangeUsesFallbackPercent() {
+        when(openingRangeService.get("ABC")).thenReturn(null);
+        TradingSignal s = signal("SELL", 200.0);
+
+        calculator.apply(s, null);
+
+        assertEquals(201.2, s.getStopLoss(), 0.01);
+        assertEquals(197.6, s.getTargetPrice(), 0.01);
+    }
+
+    @Test
+    void holdAndInvalidEntryAreUntouched() {
+        TradingSignal hold = signal("HOLD", 100.0);
+        calculator.apply(hold, null);
+        assertNull(hold.getStopLoss());
+        assertNull(hold.getTargetPrice());
+
+        TradingSignal bad = signal("BUY", 0.0);
+        calculator.apply(bad, null);
+        assertNull(bad.getStopLoss());
+    }
+}

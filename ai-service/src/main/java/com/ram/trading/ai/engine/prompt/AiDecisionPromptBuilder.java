@@ -398,38 +398,14 @@ public class AiDecisionPromptBuilder {
             tradeAllowed = true
 
             =======================================================
-            EXECUTION PLAN RULES
+            PRICES AND POSITION SIZE
             =======================================================
 
-            For BUY:
+            You decide DIRECTION only: BUY, SELL or HOLD.
 
-              stopLoss < entry < target
-
-            For SELL:
-
-              target < entry < stopLoss
-
-            Entry MUST equal the supplied current price.
-
-            Never return:
-
-              entry == target
-
-            Never return:
-
-              entry == stopLoss
-
-            Never return an execution plan that contradicts
-            the recommendation.
-
-            Position size is NOT decided by the AI.
-
-            The Risk/Position Sizing service is responsible
-            for final quantity.
-
-            Therefore:
-
-            positionSize should be 0.
+            Do NOT return entry, target, stopLoss or positionSize.
+            The trading engine calculates all prices and the
+            Risk/Position Sizing service decides the quantity.
 
             =======================================================
             RESPONSE FORMAT
@@ -450,14 +426,6 @@ public class AiDecisionPromptBuilder {
                 "confidence": 75,
                 "decisionStrength": "HIGH",
                 "reason": "Engineering BUY confirmed because no explicit material contradictory evidence was found."
-              },
-              "executionPlan": {
-                "entry": 245.35,
-                "target": 251.20,
-                "stopLoss": 242.80,
-                "positionSize": 0,
-                "holdingPeriod": "INTRADAY",
-                "exitStrategy": "Target or Stop Loss"
               },
               "aiReasoning": "Engineering decision validated using supplied technical, strategy, risk and contextual information."
             }

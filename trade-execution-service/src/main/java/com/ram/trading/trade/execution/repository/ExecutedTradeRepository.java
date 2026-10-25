@@ -42,6 +42,11 @@ public class ExecutedTradeRepository {
                     .targetExtended(rs.getBoolean("target_extended"))
                     .status(rs.getString("status"))
                     .entryOrderId(rs.getString("entry_order_id"))
+                    .protectiveOrderId(rs.getString("protective_order_id"))
+                    .protectiveOrderStatus(rs.getString("protective_order_status"))
+                    .protectiveOrderQuantity(rs.getObject("protective_order_quantity", Integer.class))
+                    .protectiveTriggerPrice(rs.getBigDecimal("protective_trigger_price"))
+                    .protectiveOrderTag(rs.getString("protective_order_tag"))
                     .exitOrderId(rs.getString("exit_order_id"))
                     .exitOrderQuantity(rs.getObject("exit_order_quantity", Integer.class))
                     .exitAttempt(rs.getObject("exit_attempt", Integer.class))
@@ -78,10 +83,12 @@ public class ExecutedTradeRepository {
                     signal_id, symbol, instrument_key, trade_signal,
                     requested_quantity, filled_quantity,
                     average_entry_price, initial_stop_loss, current_stop_loss,
-                    target_price, status, entry_order_id, exit_order_id, exit_order_quantity,
+                    target_price, status, entry_order_id, protective_order_id, protective_order_status,
+                    protective_order_quantity, protective_trigger_price, protective_order_tag,
+                    exit_order_id, exit_order_quantity,
                     exit_filled_quantity, remaining_quantity, exit_average_price,
                     exit_price, realized_pnl, exit_reason, opened_at, closed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -110,16 +117,21 @@ public class ExecutedTradeRepository {
             ps.setBigDecimal(10, trade.getTargetPrice());
             ps.setString(11, trade.getStatus());
             ps.setString(12, trade.getEntryOrderId());
-            ps.setString(13, trade.getExitOrderId());
-            ps.setObject(14, trade.getExitOrderQuantity(), java.sql.Types.INTEGER);
-            ps.setInt(15, exitFilledQuantity);
-            ps.setInt(16, remainingQuantity);
-            ps.setBigDecimal(17, trade.getExitAveragePrice());
-            ps.setBigDecimal(18, trade.getExitPrice());
-            ps.setBigDecimal(19, trade.getRealizedPnl());
-            ps.setString(20, trade.getExitReason());
-            ps.setTimestamp(21, toTimestamp(trade.getOpenedAt()));
-            ps.setTimestamp(22, toTimestamp(trade.getClosedAt()));
+            ps.setString(13, trade.getProtectiveOrderId());
+            ps.setString(14, trade.getProtectiveOrderStatus());
+            ps.setObject(15, trade.getProtectiveOrderQuantity(), java.sql.Types.INTEGER);
+            ps.setBigDecimal(16, trade.getProtectiveTriggerPrice());
+            ps.setString(17, trade.getProtectiveOrderTag());
+            ps.setString(18, trade.getExitOrderId());
+            ps.setObject(19, trade.getExitOrderQuantity(), java.sql.Types.INTEGER);
+            ps.setInt(20, exitFilledQuantity);
+            ps.setInt(21, remainingQuantity);
+            ps.setBigDecimal(22, trade.getExitAveragePrice());
+            ps.setBigDecimal(23, trade.getExitPrice());
+            ps.setBigDecimal(24, trade.getRealizedPnl());
+            ps.setString(25, trade.getExitReason());
+            ps.setTimestamp(26, toTimestamp(trade.getOpenedAt()));
+            ps.setTimestamp(27, toTimestamp(trade.getClosedAt()));
 
             return ps;
         }, keyHolder);
@@ -157,6 +169,11 @@ public class ExecutedTradeRepository {
                         ELSE ?
                     END,
                     entry_order_id = COALESCE(?, entry_order_id),
+                    protective_order_id = COALESCE(?, protective_order_id),
+                    protective_order_status = COALESCE(?, protective_order_status),
+                    protective_order_quantity = COALESCE(?, protective_order_quantity),
+                    protective_trigger_price = COALESCE(?, protective_trigger_price),
+                    protective_order_tag = COALESCE(?, protective_order_tag),
                     exit_order_id = COALESCE(?, exit_order_id),
                     exit_order_quantity = COALESCE(?, exit_order_quantity),
                     exit_filled_quantity = CASE
@@ -188,6 +205,11 @@ public class ExecutedTradeRepository {
                 trade.getTargetPrice(),
                 trade.getStatus(),
                 trade.getEntryOrderId(),
+                trade.getProtectiveOrderId(),
+                trade.getProtectiveOrderStatus(),
+                trade.getProtectiveOrderQuantity(),
+                trade.getProtectiveTriggerPrice(),
+                trade.getProtectiveOrderTag(),
                 trade.getExitOrderId(),
                 trade.getExitOrderQuantity(),
                 trade.getExitFilledQuantity(),
@@ -428,6 +450,30 @@ public class ExecutedTradeRepository {
                 new IllegalStateException("Trade disappeared after protection update: " + signalId));
     }
 
+    /** Persist broker-confirmed protective-stop state without changing trade lifecycle fields. */
+    public ExecutedTradeRecord updateProtectiveOrderState(
+            Long signalId, String orderId, String status, Integer quantity,
+            BigDecimal triggerPrice, String tag) {
+        if (signalId == null || status == null || status.isBlank()) {
+            throw new IllegalArgumentException("signalId and protective status are required");
+        }
+        int updated = jdbcTemplate.update("""
+                UPDATE executed_trades
+                SET protective_order_id = COALESCE(?, protective_order_id),
+                    protective_order_status = ?,
+                    protective_order_quantity = COALESCE(?, protective_order_quantity),
+                    protective_trigger_price = COALESCE(?, protective_trigger_price),
+                    protective_order_tag = COALESCE(?, protective_order_tag),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE signal_id = ? AND UPPER(status) NOT IN ('CLOSED')
+                """, orderId, status, quantity, triggerPrice, tag, signalId);
+        if (updated != 1) {
+            throw new IllegalStateException("Could not persist protective-order state for signalId=" + signalId);
+        }
+        return findBySignalId(signalId).orElseThrow(() ->
+                new IllegalStateException("Trade disappeared after protective state update: " + signalId));
+    }
+
     public List<ExecutedTradeRecord> findOpenTrades() {
         return jdbcTemplate.query("""
                 SELECT * FROM executed_trades
@@ -621,6 +667,45 @@ public class ExecutedTradeRepository {
     }
 
     /**
+     * Releases an exit claim that never produced a broker order: still EXIT_PENDING
+     * for the same attempt, no order ID, and claimed at least {@code minAgeSeconds}
+     * ago (age measured by the database clock). The caller must already have
+     * confirmed that broker history has no order under the attempt's tag. The
+     * attempt number is kept, so the next claim builds a new tag.
+     */
+    public boolean releaseUnsubmittedExitClaim(Long signalId, int exitAttempt, long minAgeSeconds) {
+        if (signalId == null) {
+            throw new IllegalArgumentException(
+                    "Signal ID must not be null");
+        }
+
+        int rows = jdbcTemplate.update("""
+                UPDATE executed_trades
+                SET status = 'OPEN',
+                    exit_order_id = NULL,
+                    exit_order_quantity = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE signal_id = ?
+                  AND UPPER(status) = 'EXIT_PENDING'
+                  AND COALESCE(exit_attempt, 0) = ?
+                  AND (exit_order_id IS NULL OR TRIM(exit_order_id) = '')
+                  AND updated_at <= TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP)
+                  AND remaining_quantity > 0
+                  AND filled_quantity > 0
+                  AND exit_filled_quantity >= 0
+                  AND exit_filled_quantity < filled_quantity
+                  AND remaining_quantity = filled_quantity - exit_filled_quantity
+                """, signalId, exitAttempt, -Math.max(0L, minAgeSeconds));
+
+        if (rows > 1) {
+            throw new IllegalStateException(
+                    "Multiple trades found for signal ID " + signalId);
+        }
+
+        return rows == 1;
+    }
+
+    /**
      * Applies one terminal broker exit-order snapshot exactly once.
      * The row lock serializes concurrent reconciliation for the same trade.
      * This uses the existing executed_trades table; no additional table is required.
@@ -777,51 +862,16 @@ public class ExecutedTradeRepository {
                     "A positive exit fill requires a valid average price");
         }
 
-        // 7. Calculate cumulative exited quantity and remaining position
-        int totalExitFilled = previousExitFilled + orderFilled;
-        int remaining = entryFilled - totalExitFilled;
-
-        BigDecimal previousAverage = trade.getExitAveragePrice();
-        BigDecimal newAverage = previousAverage;
-
-        if (orderFilled > 0) {
-            BigDecimal previousNotional = previousAverage == null
-                    ? BigDecimal.ZERO
-                    : previousAverage.multiply(
-                    BigDecimal.valueOf(previousExitFilled));
-
-            BigDecimal newNotional = previousNotional.add(
-                    orderAverage.multiply(BigDecimal.valueOf(orderFilled)));
-
-            newAverage = newNotional.divide(
-                    BigDecimal.valueOf(totalExitFilled),
-                    8,
-                    RoundingMode.HALF_UP);
-        }
-
-        // 8. Calculate realized P&L for this exit fill
-        BigDecimal realizedDelta = BigDecimal.ZERO;
-
-        if (orderFilled > 0) {
-            BigDecimal perUnit =
-                    "BUY".equalsIgnoreCase(trade.getSide())
-                            ? orderAverage.subtract(trade.getAverageEntryPrice())
-                            : trade.getAverageEntryPrice().subtract(orderAverage);
-
-            realizedDelta = perUnit.multiply(BigDecimal.valueOf(orderFilled));
-        }
-
-        BigDecimal realized = (
-                trade.getRealizedPnl() == null
-                        ? BigDecimal.ZERO
-                        : trade.getRealizedPnl()
-        ).add(realizedDelta);
+        // 7-8. Calculate cumulative exit quantity, average and realized P&L
+        ExitFillOutcome outcome = computeExitFill(trade, previousExitFilled, orderFilled, orderAverage);
+        int remaining = entryFilled - outcome.totalExitFilled();
+        BigDecimal newAverage = outcome.exitAverage();
 
         // 9. Update the trade state
-        trade.setExitFilledQuantity(totalExitFilled);
+        trade.setExitFilledQuantity(outcome.totalExitFilled());
         trade.setRemainingQuantity(remaining);
         trade.setExitAveragePrice(newAverage);
-        trade.setRealizedPnl(realized);
+        trade.setRealizedPnl(outcome.realizedPnl());
 
         trade.setExitReason(
                 "COMPLETE".equals(normalizedStatus)
@@ -874,6 +924,218 @@ public class ExecutedTradeRepository {
                                 + signalId));
     }
 
+
+    private record ExitFillOutcome(int totalExitFilled, BigDecimal exitAverage, BigDecimal realizedPnl) {
+    }
+
+    private static ExitFillOutcome computeExitFill(
+            ExecutedTradeRecord trade, int previousExitFilled, int orderFilled, BigDecimal orderAverage) {
+
+        int totalExitFilled = previousExitFilled + orderFilled;
+        BigDecimal previousAverage = trade.getExitAveragePrice();
+        BigDecimal newAverage = previousAverage;
+        BigDecimal realizedDelta = BigDecimal.ZERO;
+
+        if (orderFilled > 0) {
+            BigDecimal previousNotional = previousAverage == null
+                    ? BigDecimal.ZERO
+                    : previousAverage.multiply(BigDecimal.valueOf(previousExitFilled));
+            BigDecimal newNotional = previousNotional.add(
+                    orderAverage.multiply(BigDecimal.valueOf(orderFilled)));
+            newAverage = newNotional.divide(
+                    BigDecimal.valueOf(totalExitFilled), 8, RoundingMode.HALF_UP);
+
+            BigDecimal perUnit = "BUY".equalsIgnoreCase(trade.getSide())
+                    ? orderAverage.subtract(trade.getAverageEntryPrice())
+                    : trade.getAverageEntryPrice().subtract(orderAverage);
+            realizedDelta = perUnit.multiply(BigDecimal.valueOf(orderFilled));
+        }
+
+        BigDecimal realized = (trade.getRealizedPnl() == null
+                ? BigDecimal.ZERO : trade.getRealizedPnl()).add(realizedDelta);
+        return new ExitFillOutcome(totalExitFilled, newAverage, realized);
+    }
+
+    /**
+     * Books a fill of the broker-side protective stop order against an OPEN trade
+     * exactly once. The stop is a real exit: without this the position would stay
+     * OPEN locally after the broker closed it, and a later exit could reverse it.
+     * Re-applying the same stop order is a no-op once FILL_APPLIED is recorded.
+     */
+    @Transactional
+    public ExecutedTradeRecord applyProtectiveStopFill(
+            Long signalId,
+            String protectiveOrderId,
+            int orderFilled,
+            BigDecimal orderAverage) {
+
+        if (signalId == null || protectiveOrderId == null || protectiveOrderId.isBlank()) {
+            throw new IllegalArgumentException("Signal ID and protective order ID are required");
+        }
+        if (orderFilled <= 0 || orderAverage == null || orderAverage.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("A protective stop fill requires a positive quantity and price");
+        }
+
+        ExecutedTradeRecord trade;
+        try {
+            trade = jdbcTemplate.queryForObject(
+                    "SELECT * FROM executed_trades WHERE signal_id = ? FOR UPDATE", rowMapper, signalId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException ex) {
+            throw new IllegalStateException("Executed trade not found for signal ID " + signalId, ex);
+        }
+
+        if (!protectiveOrderId.equals(trade.getProtectiveOrderId())) {
+            throw new IllegalStateException(
+                    "Protective order ID does not match the order recorded for signalId=" + signalId);
+        }
+        if ("FILL_APPLIED".equalsIgnoreCase(trade.getProtectiveOrderStatus())) {
+            return trade;
+        }
+        if (!"OPEN".equalsIgnoreCase(trade.getStatus())) {
+            throw new IllegalStateException(
+                    "Protective stop fill can only be booked against an OPEN trade. signalId="
+                            + signalId + ", status=" + trade.getStatus());
+        }
+        if (trade.getAverageEntryPrice() == null
+                || trade.getAverageEntryPrice().compareTo(BigDecimal.ZERO) <= 0
+                || (!"BUY".equalsIgnoreCase(trade.getSide()) && !"SELL".equalsIgnoreCase(trade.getSide()))) {
+            throw new IllegalStateException("Trade side or entry price is invalid. signalId=" + signalId);
+        }
+
+        int entryFilled = trade.getFilledQuantity() == null ? 0 : trade.getFilledQuantity();
+        int previousExitFilled = trade.getExitFilledQuantity() == null ? 0 : trade.getExitFilledQuantity();
+        int remainingBefore = entryFilled - previousExitFilled;
+        Integer protectedQuantity = trade.getProtectiveOrderQuantity();
+
+        if (entryFilled <= 0 || previousExitFilled < 0 || remainingBefore <= 0
+                || trade.getRemainingQuantity() == null || trade.getRemainingQuantity() != remainingBefore
+                || orderFilled > remainingBefore
+                || (protectedQuantity != null && orderFilled > protectedQuantity)) {
+            throw new IllegalStateException(
+                    "Protective stop fill exceeds the open position or the ledger is inconsistent. signalId="
+                            + signalId + ", orderFilled=" + orderFilled + ", remaining=" + remainingBefore
+                            + ", protectedQuantity=" + protectedQuantity
+                            + ". Manual reconciliation required.");
+        }
+
+        ExitFillOutcome outcome = computeExitFill(trade, previousExitFilled, orderFilled, orderAverage);
+        int remaining = entryFilled - outcome.totalExitFilled();
+        boolean closed = remaining == 0;
+
+        int updated = jdbcTemplate.update("""
+                        UPDATE executed_trades
+                        SET exit_filled_quantity = ?,
+                            remaining_quantity = ?,
+                            exit_average_price = ?,
+                            exit_price = ?,
+                            realized_pnl = ?,
+                            exit_reason = 'BROKER_STOP_LOSS',
+                            exit_order_id = ?,
+                            exit_order_quantity = ?,
+                            status = ?,
+                            closed_at = ?,
+                            protective_order_status = 'FILL_APPLIED',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE signal_id = ?
+                          AND UPPER(status) = 'OPEN'
+                          AND protective_order_id = ?
+                        """,
+                outcome.totalExitFilled(),
+                remaining,
+                outcome.exitAverage(),
+                closed ? outcome.exitAverage() : null,
+                outcome.realizedPnl(),
+                protectiveOrderId,
+                orderFilled,
+                closed ? "CLOSED" : "OPEN",
+                closed ? toTimestamp(java.time.LocalDateTime.now()) : null,
+                signalId,
+                protectiveOrderId);
+
+        if (updated != 1) {
+            throw new IllegalStateException(
+                    "Expected to book one protective stop fill for signalId=" + signalId + ", updated=" + updated);
+        }
+        return findBySignalId(signalId).orElseThrow(() -> new IllegalStateException(
+                "Trade disappeared after protective stop fill: " + signalId));
+    }
+
+    /**
+     * Claims the right to modify an ACTIVE broker stop. Only one modification may be
+     * in flight per position; a concurrent caller gets false and must not modify.
+     * The persisted trigger is deliberately left unchanged until the broker confirms.
+     */
+    public boolean claimProtectiveModification(Long signalId, String protectiveOrderId) {
+        int rows = jdbcTemplate.update("""
+                UPDATE executed_trades
+                SET protective_order_status = 'MODIFY_PENDING',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE signal_id = ?
+                  AND protective_order_id = ?
+                  AND UPPER(status) = 'OPEN'
+                  AND UPPER(COALESCE(protective_order_status, '')) = 'ACTIVE'
+                """, signalId, protectiveOrderId);
+        if (rows > 1) {
+            throw new IllegalStateException("Multiple trades found for signal ID " + signalId);
+        }
+        return rows == 1;
+    }
+
+    /**
+     * Intraday (product I) positions cannot survive the trading session: the broker
+     * squares them off and its order APIs only return the current day's orders.
+     * Rows still active from an earlier session are therefore moved out of every
+     * active/pending query so they can never trigger a new broker order, and are
+     * returned for manual P&L review.
+     */
+    @Transactional
+    public List<ExecutedTradeRecord> expirePriorSessionTrades(java.time.LocalDateTime sessionStart) {
+        List<ExecutedTradeRecord> stale = jdbcTemplate.query("""
+                SELECT * FROM executed_trades
+                WHERE UPPER(status) IN ('OPEN', 'ENTRY_PENDING', 'EXIT_PENDING')
+                  AND COALESCE(opened_at, created_at) < ?
+                FOR UPDATE
+                """, rowMapper, toTimestamp(sessionStart));
+        if (stale.isEmpty()) {
+            return stale;
+        }
+        jdbcTemplate.update("""
+                UPDATE executed_trades
+                SET status = 'EXPIRED_PRIOR_SESSION',
+                    exit_reason = COALESCE(exit_reason, 'PRIOR_SESSION_UNRECONCILED'),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE UPPER(status) IN ('OPEN', 'ENTRY_PENDING', 'EXIT_PENDING')
+                  AND COALESCE(opened_at, created_at) < ?
+                """, toTimestamp(sessionStart));
+        return stale;
+    }
+
+    /** Positions that hold or may soon hold broker exposure. */
+    public int countActivePositions() {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM executed_trades
+                WHERE UPPER(status) IN ('OPEN', 'ENTRY_PENDING', 'EXIT_PENDING')
+                """, Integer.class);
+        return count == null ? 0 : count;
+    }
+
+    public int countActivePositionsForSymbol(String symbol) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM executed_trades
+                WHERE UPPER(status) IN ('OPEN', 'ENTRY_PENDING', 'EXIT_PENDING')
+                  AND UPPER(symbol) = UPPER(?)
+                """, Integer.class, symbol);
+        return count == null ? 0 : count;
+    }
+
+    /** Every position (any status) opened at or after the given time, newest first. */
+    public List<ExecutedTradeRecord> findTradesOpenedSince(java.time.LocalDateTime since) {
+        return jdbcTemplate.query("""
+                SELECT * FROM executed_trades
+                WHERE COALESCE(opened_at, created_at) >= ?
+                ORDER BY COALESCE(opened_at, created_at) DESC
+                """, rowMapper, toTimestamp(since));
+    }
 
     /**
      * Retrieves trades whose exit processing was claimed but may not

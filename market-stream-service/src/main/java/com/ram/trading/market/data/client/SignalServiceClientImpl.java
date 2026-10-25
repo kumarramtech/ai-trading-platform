@@ -38,13 +38,8 @@ public class SignalServiceClientImpl implements SignalServiceClient {
 
     private final AtomicLong lastErrorLogTime = new AtomicLong(0L);
     private final AtomicLong lastEmitFailureLogTime = new AtomicLong(0L);
-
     private static final long ERROR_LOG_COOLDOWN_MS = 30_000L;
 
-    /*
-     * Serialize concurrent producers before emitting into the unicast sink.
-     * The lock is held only during the short, non-blocking emit operation.
-     */
     private final Object emissionLock = new Object();
 
     private volatile Sinks.Many<Tick> tickSink;
@@ -52,123 +47,109 @@ public class SignalServiceClientImpl implements SignalServiceClient {
 
     @PostConstruct
     void startDispatcher() {
-
         int capacity = Math.max(1000, queueCapacity);
         int concurrency = Math.max(1, dispatchConcurrency);
 
         Sinks.Many<Tick> sink = Sinks.many()
                 .unicast()
-                .onBackpressureBuffer(
-                        new ArrayBlockingQueue<>(capacity));
+                .onBackpressureBuffer(new ArrayBlockingQueue<>(capacity));
 
         this.tickSink = sink;
 
+        /*
+         * Fixed lanes avoid creating an unbounded number of per-symbol groups.
+         * A symbol always maps to the same lane, and concatMap serializes that
+         * lane. Different lanes can dispatch concurrently. Ordering is by
+         * successful publishTick emission order, not exchange timestamp.
+         */
         this.dispatcher = sink.asFlux()
-                .flatMap(this::sendTick, concurrency)
+                .groupBy(tick -> dispatchLane(tick, concurrency))
+                .flatMap(lane -> lane.concatMap(this::sendTick), concurrency)
                 .doOnError(error ->
-                        log.error(
-                                "Signal tick dispatcher stopped unexpectedly",
-                                error))
-                .retryWhen(
-                        Retry.backoff(
-                                        Long.MAX_VALUE,
-                                        Duration.ofSeconds(1))
-                                .maxBackoff(Duration.ofSeconds(10)))
+                        log.error("Signal tick dispatcher stopped unexpectedly", error))
+                .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofSeconds(1))
+                        .maxBackoff(Duration.ofSeconds(10)))
                 .subscribe();
 
         log.info(
-                "Signal tick dispatcher started | queueCapacity={} | concurrency={}",
+                "Signal tick dispatcher started | queueCapacity={} | concurrency={} | ordering=per-lane",
                 capacity,
                 concurrency);
     }
 
+    private int dispatchLane(Tick tick, int laneCount) {
+        String symbol = tick != null ? tick.getSymbol() : null;
+        if (symbol == null || symbol.isBlank()) {
+            return 0;
+        }
+        return Math.floorMod(symbol.trim().toUpperCase().hashCode(), laneCount);
+    }
+
     @Override
     public void publishTick(Tick tick) {
-
         if (tick == null) {
             return;
         }
 
-        Sinks.Many<Tick> sink = this.tickSink;
+        if (tick.getSymbol() == null || tick.getSymbol().isBlank()) {
+            logEmitFailure(tick, "INVALID_SYMBOL", "Tick symbol is null or blank");
+            return;
+        }
 
+        Sinks.Many<Tick> sink = this.tickSink;
         if (sink == null) {
             logEmitFailure(
-                    tick,
-                    "DISPATCHER_NOT_READY",
+                    tick, "DISPATCHER_NOT_READY",
                     "Signal tick dispatcher is not initialized");
             return;
         }
 
         Sinks.EmitResult result;
-
         synchronized (emissionLock) {
             result = sink.tryEmitNext(tick);
         }
 
         if (result.isFailure()) {
-            logEmitFailure(
-                    tick,
-                    result.name(),
-                    describeEmitFailure(result));
+            logEmitFailure(tick, result.name(), describeEmitFailure(result));
         }
     }
 
     private Mono<Void> sendTick(Tick tick) {
-
         return webClient
                 .post()
                 .uri(signalServiceUrl + "/api/v1/signals/live")
                 .bodyValue(tick)
                 .retrieve()
                 .bodyToMono(Void.class)
-                .timeout(Duration.ofSeconds(
-                        Math.max(1L, httpTimeoutSeconds)))
+                .timeout(Duration.ofSeconds(Math.max(1L, httpTimeoutSeconds)))
                 .doOnSuccess(ignored ->
-                        log.debug(
-                                "Tick sent to Signal Service | Symbol={}",
-                                tick.getSymbol()))
-                .doOnError(error ->
-                        logSignalPublishError(tick, error))
+                        log.debug("Tick sent to Signal Service | Symbol={}", tick.getSymbol()))
+                .doOnError(error -> logSignalPublishError(tick, error))
                 /*
-                 * Keep one failed HTTP request from terminating the
-                 * entire dispatcher. This does not mean the tick was
-                 * delivered successfully.
-                 *
-                 * Automatic retries require receiver-side idempotency
-                 * or tick deduplication to avoid duplicate processing.
+                 * Do not automatically retry an individual request. A timeout
+                 * can occur after the receiver has already processed the tick.
                  */
                 .onErrorResume(error -> Mono.empty());
     }
 
     private String describeEmitFailure(Sinks.EmitResult result) {
-
         return switch (result) {
             case FAIL_NON_SERIALIZED ->
                     "Concurrent emission rejected; check producer serialization";
-            case FAIL_OVERFLOW ->
-                    "Bounded tick buffer is full";
-            case FAIL_ZERO_SUBSCRIBER ->
-                    "Tick dispatcher has no active subscriber";
-            case FAIL_CANCELLED ->
-                    "Tick dispatcher subscription was cancelled";
-            case FAIL_TERMINATED ->
-                    "Tick sink has already terminated";
-            default ->
-                    "Tick emission failed";
+            case FAIL_OVERFLOW -> "Bounded tick buffer is full";
+            case FAIL_ZERO_SUBSCRIBER -> "Tick dispatcher has no active subscriber";
+            case FAIL_CANCELLED -> "Tick dispatcher subscription was cancelled";
+            case FAIL_TERMINATED -> "Tick sink has already terminated";
+            default -> "Tick emission failed";
         };
     }
 
-    private void logEmitFailure(
-            Tick tick,
-            String result,
-            String reason) {
-
+    private void logEmitFailure(Tick tick, String result, String reason) {
         long now = System.currentTimeMillis();
         long last = lastEmitFailureLogTime.get();
 
         if (now - last >= ERROR_LOG_COOLDOWN_MS
                 && lastEmitFailureLogTime.compareAndSet(last, now)) {
-
             log.error(
                     "SIGNAL TICK EMISSION FAILED | Symbol={} | Result={} | Reason={}",
                     tick != null ? tick.getSymbol() : "UNKNOWN",
@@ -177,16 +158,12 @@ public class SignalServiceClientImpl implements SignalServiceClient {
         }
     }
 
-    private void logSignalPublishError(
-            Tick tick,
-            Throwable error) {
-
+    private void logSignalPublishError(Tick tick, Throwable error) {
         long now = System.currentTimeMillis();
         long last = lastErrorLogTime.get();
 
         if (now - last >= ERROR_LOG_COOLDOWN_MS
                 && lastErrorLogTime.compareAndSet(last, now)) {
-
             log.warn(
                     "Signal Service tick delivery failed | Symbol={} | Error={}",
                     tick != null ? tick.getSymbol() : "UNKNOWN",
@@ -197,7 +174,6 @@ public class SignalServiceClientImpl implements SignalServiceClient {
 
     @PreDestroy
     void stopDispatcher() {
-
         Disposable activeDispatcher = this.dispatcher;
         Sinks.Many<Tick> sink = this.tickSink;
 
@@ -207,6 +183,10 @@ public class SignalServiceClientImpl implements SignalServiceClient {
             }
         }
 
+        /*
+         * Immediate disposal can cancel in-flight work. This method does not
+         * claim that all queued ticks were delivered before shutdown.
+         */
         if (activeDispatcher != null) {
             activeDispatcher.dispose();
         }
@@ -214,4 +194,3 @@ public class SignalServiceClientImpl implements SignalServiceClient {
         log.info("Signal tick dispatcher stopped");
     }
 }
-

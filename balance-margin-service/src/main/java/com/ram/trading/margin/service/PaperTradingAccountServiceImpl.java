@@ -9,7 +9,9 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Service
 @RequiredArgsConstructor
@@ -90,6 +92,16 @@ public class PaperTradingAccountServiceImpl
                                         profitLoss))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then();
+    }
+
+    @Override
+    public Mono<Double> brokerOpeningFunds(double currentBrokerFunds) {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        return getOrCreateAccount()
+                .then(Mono.fromCallable(() ->
+                                accountTransactionService
+                                        .brokerOpeningFunds(currentBrokerFunds, today))
+                        .subscribeOn(Schedulers.boundedElastic()));
     }
 
     @Override

@@ -6,12 +6,18 @@ import com.ram.trading.trade.execution.repository.ExecutionIdempotencyRecord;
 import com.ram.trading.trade.execution.repository.ExecutionIdempotencyRepository;
 import com.ram.trading.trade.execution.repository.ExecutedTradeRepository;
 import com.ram.trading.trade.execution.readiness.ExecutionReadiness;
+import com.ram.trading.trade.execution.risk.ExecutionRiskGuard;
 
 
 import org.springframework.dao.DuplicateKeyException;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +36,17 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
     private final ExecutionIdempotencyRepository idempotencyRepository;
     private final ExecutedTradeRepository executedTradeRepository;
     private final ExecutionReadiness executionReadiness;
+    private final ExecutionRiskGuard riskGuard;
+
+    /** Serializes limit evaluation with claim insertion so concurrent entries cannot both pass a limit. */
+    private final ReentrantLock entryAdmissionLock = new ReentrantLock();
+
+    /**
+     * Signal IDs with a protective-stop or exit operation in flight. A market exit
+     * must never race a stop placement/modification for the same position, or both
+     * could fill and reverse it. In-process only: run a single service instance.
+     */
+    private final Set<Long> positionsInFlight = ConcurrentHashMap.newKeySet();
 
     @Value("${execution.live-enabled:false}")
     private boolean liveEnabled;
@@ -42,6 +59,22 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
 
     @Value("${execution.reconciliation.interval-ms:500}")
     private long reconciliationIntervalMs;
+
+    /** Upstox/product-specific support must be confirmed before enabling live orders. */
+    @Value("${execution.protection.order-type:SL-M}")
+    private String protectiveStopOrderType;
+
+    /** Exchange tick that every stop/target sent to the broker is aligned to. */
+    @Value("${execution.price.tick-size:0.05}")
+    private BigDecimal priceTickSize = new BigDecimal("0.05");
+
+    /**
+     * An exit claim whose order never reached the broker (no order ID, and broker
+     * history confirms no order under its tag) is released back to OPEN after this
+     * grace period, so the position can be exited again instead of staying stuck.
+     */
+    @Value("${execution.exit.unsubmitted-claim-release-seconds:60}")
+    private long unsubmittedExitClaimReleaseSeconds = 60L;
 
     /**
      * Recover persisted exit orders after application startup.
@@ -244,6 +277,16 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
      * not prevent other unresolved orders from being checked on the next cycle.
      */
     public Mono<Void> reconcilePendingOrdersAtRuntime() {
+        return expirePriorSessionState()
+                .onErrorResume(error -> {
+                    log.error("PRIOR-SESSION EXPIRY FAILED | Continuing with order reconciliation", error);
+                    return Mono.empty();
+                })
+                .then(reconcilePendingExitsAndEntriesAtRuntime())
+                .then(reconcileProtectiveStopsAtRuntime());
+    }
+
+    private Mono<Void> reconcilePendingExitsAndEntriesAtRuntime() {
         return Mono.fromCallable(executedTradeRepository::findExitPendingTrades)
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(reactor.core.publisher.Flux::fromIterable)
@@ -320,9 +363,27 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                     // valid history response with no matching tag. Transport, auth,
                     // malformed-response, and unsuccessful-response errors propagate
                     // to the caller's error handler; none of those authorize a retry.
-                    log.warn("RUNTIME EXIT TAG LOOKUP CONFIRMED NO MATCH | SignalId={} | Tag={} | Trade remains pending; no replacement order submitted",
-                            trade.getSignalId(), tag);
-                    return Mono.empty();
+                    // The claim never reached the broker (e.g. the request was interrupted
+                    // between claim and submission). Leaving it EXIT_PENDING would block
+                    // every later exit, including market-close square-off, while the
+                    // broker stop may already be cancelled. Release it once it is old
+                    // enough that a just-submitted order would be visible in history.
+                    return Mono.fromCallable(() -> executedTradeRepository.releaseUnsubmittedExitClaim(
+                                    trade.getSignalId(), valueOrZero(trade.getExitAttempt()),
+                                    unsubmittedExitClaimReleaseSeconds))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .doOnNext(released -> {
+                                if (released) {
+                                    log.error("UNSUBMITTED EXIT CLAIM RELEASED | SignalId={} | Tag={} | No broker order exists for this attempt; "
+                                                    + "position is OPEN again and will be exited by the next exit request",
+                                            trade.getSignalId(), tag);
+                                } else {
+                                    log.warn("RUNTIME EXIT TAG LOOKUP CONFIRMED NO MATCH | SignalId={} | Tag={} | Claim is recent or changed; "
+                                                    + "trade remains pending; no replacement order submitted",
+                                            trade.getSignalId(), tag);
+                                }
+                            })
+                            .then(Mono.<Boolean>empty());
                 }))
                 .then();
     }
@@ -367,6 +428,142 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                             trade.getSignalId(), orderId);
                     return Mono.just(false);
                 }))
+                .then();
+    }
+
+    /**
+     * Checks the broker stop of every live OPEN position. A stop that filled at the
+     * broker is booked as an exit; without this the position would stay OPEN locally
+     * and a later exit order would open a reverse position. Also re-establishes
+     * protection that never completed after entry, and confirms stop state after an
+     * interrupted modification. Never submits an exit order.
+     */
+    public Mono<Void> reconcileProtectiveStopsAtRuntime() {
+        if (!liveEnabled) {
+            return Mono.empty();
+        }
+        return getOpenTrades()
+                .flatMapMany(reactor.core.publisher.Flux::fromIterable)
+                .concatMap(trade -> withPositionLock(trade.getSignalId(),
+                        () -> reconcileProtectiveStop(trade),
+                        Mono::<Void>empty)
+                        .onErrorResume(error -> {
+                            log.error("PROTECTIVE STOP RECONCILIATION FAILED | SignalId={} | StopOrderId={} | Reason={}",
+                                    trade.getSignalId(), trade.getProtectiveOrderId(), safeMessage(error), error);
+                            return Mono.empty();
+                        }))
+                .then();
+    }
+
+    private Mono<Void> reconcileProtectiveStop(ExecutedTradeRecord trade) {
+        int remaining = remainingQuantity(trade);
+        if (remaining <= 0 || !"OPEN".equalsIgnoreCase(trade.getStatus())) {
+            return Mono.empty();
+        }
+        Long signalId = trade.getSignalId();
+        String orderId = trade.getProtectiveOrderId();
+        String status = trade.getProtectiveOrderStatus();
+
+        if (isBlank(orderId)) {
+            if (isBlank(status)) {
+                log.warn("LIVE POSITION HAS NO BROKER STOP; PLACING PROTECTION | SignalId={} | Symbol={} | Qty={}",
+                        signalId, trade.getSymbol(), remaining);
+                return ensureProtectiveStop(trade).then();
+            }
+            if ("SUBMISSION_OUTCOME_UNKNOWN".equalsIgnoreCase(status)) {
+                String tag = isBlank(trade.getProtectiveOrderTag())
+                        ? protectiveTag(signalId) : trade.getProtectiveOrderTag();
+                return brokerExecutionClient.findOrderByTag(tag)
+                        .flatMap(history -> isBlank(history.getOrderId())
+                                ? Mono.error(new IllegalStateException(
+                                "Protective stop tag " + tag + " matched an order without an ID"))
+                                : Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                        signalId, history.getOrderId(), "RECONCILING", null, null, tag))
+                                .subscribeOn(Schedulers.boundedElastic()))
+                        .doOnNext(saved -> log.warn("PROTECTIVE STOP RECOVERED BY TAG | SignalId={} | OrderId={}",
+                                signalId, saved.getProtectiveOrderId()))
+                        .switchIfEmpty(Mono.fromRunnable(() -> log.error(
+                                "LIVE POSITION UNPROTECTED: stop submission outcome unknown and no order found for tag {} | SignalId={}",
+                                tag, signalId)))
+                        .then();
+            }
+            log.error("LIVE POSITION UNPROTECTED AT BROKER | SignalId={} | Symbol={} | Qty={} | StopState={}",
+                    signalId, trade.getSymbol(), remaining, status);
+            return Mono.empty();
+        }
+
+        if ("FILL_APPLIED".equalsIgnoreCase(status)) {
+            log.error("LIVE POSITION UNPROTECTED AFTER PARTIAL STOP FILL | SignalId={} | Remaining={}",
+                    signalId, remaining);
+            return Mono.empty();
+        }
+
+        return brokerExecutionClient.getOrderDetails(orderId)
+                .switchIfEmpty(Mono.error(new IllegalStateException(
+                        "No broker details for protective order " + orderId)))
+                .flatMap(details -> {
+                    String brokerStatus = normalizeStatus(details.getStatus());
+                    if (isTerminalStatus(brokerStatus)) {
+                        return settleTerminalProtectiveStop(trade, orderId, details)
+                                .doOnNext(release -> {
+                                    if (release.trade() != null && valueOrZero(details.getFilledQuantity()) == 0) {
+                                        log.error("BROKER STOP NO LONGER ACTIVE; POSITION UNPROTECTED | SignalId={} | OrderId={} | BrokerStatus={} | Reason={}",
+                                                signalId, orderId, brokerStatus,
+                                                firstNonBlank(details.getStatusMessage(), details.getStatusMessageRaw(), "n/a"));
+                                    }
+                                })
+                                .then();
+                    }
+                    if (!isWorkingProtectiveStatus(details.getStatus())) {
+                        // Transient broker state (e.g. modify/cancel pending): check next cycle.
+                        return Mono.empty();
+                    }
+                    boolean quantityMatches = details.getQuantity() != null && details.getQuantity() == remaining;
+                    BigDecimal brokerTrigger = details.getTriggerPrice();
+                    if (!quantityMatches || brokerTrigger == null) {
+                        log.error("BROKER STOP DOES NOT MATCH POSITION | SignalId={} | OrderId={} | StopQty={} | Remaining={}",
+                                signalId, orderId, details.getQuantity(), remaining);
+                        return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                        signalId, orderId, "RECONCILIATION_REQUIRED", null, null, null))
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .then();
+                    }
+                    boolean alreadyConfirmed = "ACTIVE".equalsIgnoreCase(status)
+                            && trade.getProtectiveTriggerPrice() != null
+                            && trade.getProtectiveTriggerPrice().compareTo(brokerTrigger) == 0;
+                    if (alreadyConfirmed) {
+                        return Mono.empty();
+                    }
+                    log.info("BROKER STOP CONFIRMED ACTIVE | SignalId={} | OrderId={} | Qty={} | Trigger={} | PreviousState={}",
+                            signalId, orderId, remaining, brokerTrigger, status);
+                    return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                    signalId, orderId, "ACTIVE", remaining, brokerTrigger, null))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .then();
+                });
+    }
+
+    /**
+     * Retires positions and claims left active by an earlier trading session. Their
+     * intraday exposure was squared off by the broker, and broker order APIs no
+     * longer return those orders, so they can neither be reconciled nor exited.
+     */
+    public Mono<Void> expirePriorSessionState() {
+        return Mono.fromRunnable(() -> {
+                    LocalDateTime sessionStart = riskGuard.sessionStart();
+                    for (ExecutedTradeRecord trade : executedTradeRepository.expirePriorSessionTrades(sessionStart)) {
+                        log.error("PRIOR-SESSION POSITION EXPIRED | SignalId={} | Symbol={} | PreviousStatus={} | Remaining={} "
+                                        + "| EntryOrderId={} | ExitOrderId={} | StopOrderId={} | Verify the outcome in the broker contract note",
+                                trade.getSignalId(), trade.getSymbol(), trade.getStatus(), trade.getRemainingQuantity(),
+                                trade.getEntryOrderId(), trade.getExitOrderId(), trade.getProtectiveOrderId());
+                    }
+                    List<Long> claims = idempotencyRepository.expirePriorSessionClaims(sessionStart);
+                    if (!claims.isEmpty()) {
+                        log.error("PRIOR-SESSION EXECUTION CLAIMS EXPIRED | SignalIds={} | Verify these orders in the broker contract note",
+                                claims);
+                    }
+                })
+                .subscribeOn(Schedulers.boundedElastic())
                 .then();
     }
 
@@ -501,6 +698,8 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                             + snapshot.state() + ", reason=" + snapshot.reason()));
         }
 
+        alignProtectivePrices(request);
+
         String validationError = validate(request);
 
         if (validationError != null) {
@@ -602,7 +801,18 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
      */
     @Override
     public Mono<java.util.List<ExecutedTradeRecord>> getOpenTrades() {
+        // Rows from an earlier session have no broker exposure (intraday product is
+        // squared off by the broker); exiting them would open a fresh position.
         return Mono.fromCallable(executedTradeRepository::findOpenTrades)
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(trades -> trades.stream()
+                        .filter(trade -> !riskGuard.isPriorSession(trade.getOpenedAt()))
+                        .toList());
+    }
+
+    @Override
+    public Mono<java.util.List<ExecutedTradeRecord>> getSessionTrades() {
+        return Mono.fromCallable(() -> executedTradeRepository.findTradesOpenedSince(riskGuard.sessionStart()))
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -623,10 +833,179 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
             return Mono.error(new IllegalArgumentException(
                     "targetPrice is required when marking a target extension"));
         }
+        return Mono.fromCallable(() -> executedTradeRepository.findBySignalId(request.signalId())
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "Executed trade not found for signalId=" + request.signalId())))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(existing -> applyProtectionUpdate(
+                        existing, alignProtectivePrices(request, existing.getSide())));
+    }
+
+    private Mono<ExecutedTradeRecord> applyProtectionUpdate(
+            ExecutedTradeRecord existing, TradeProtectionUpdateRequest request) {
+        // Target-only changes do not require a broker stop modification.
+        if (request.stopLoss() == null) {
+            return persistProtectionLevels(request);
+        }
+
+        String protectiveOrderId = existing.getProtectiveOrderId();
+        BigDecimal knownBrokerTrigger = existing.getProtectiveTriggerPrice();
+        if (isBlank(protectiveOrderId)) {
+            // Paper mode can continue to update its simulated stop. In live mode,
+            // never update only the DB when a filled position has no broker stop.
+            if (liveEnabled && isOpenPosition(existing)) {
+                return Mono.error(new IllegalStateException(
+                        "Cannot update stop-loss: no broker protective order is recorded. "
+                                + "Reconcile protection before changing the stop. SignalId="
+                                + request.signalId()));
+            }
+            return persistProtectionLevels(request);
+        }
+
+        // The persisted trigger is authoritative only while the stop is confirmed ACTIVE.
+        if ("ACTIVE".equalsIgnoreCase(existing.getProtectiveOrderStatus())
+                && knownBrokerTrigger != null
+                && request.stopLoss().compareTo(knownBrokerTrigger) == 0) {
+            return persistProtectionLevels(request);
+        }
+        if (!liveEnabled) {
+            return Mono.error(new IllegalStateException(
+                    "Live execution is disabled; broker stop was not modified and database stop-loss was not changed."));
+        }
+        return withPositionLock(existing.getSignalId(),
+                () -> modifyAndVerifyProtectiveStop(existing, request),
+                () -> Mono.error(new IllegalStateException(
+                        "Another protective-stop or exit operation is in progress; stop-loss was not changed. SignalId="
+                                + request.signalId())));
+    }
+
+    private Mono<ExecutedTradeRecord> persistProtectionLevels(TradeProtectionUpdateRequest request) {
         return Mono.fromCallable(() -> executedTradeRepository.updateProtectionLevels(
-                        request.signalId(), request.stopLoss(), request.targetPrice(),
-                        request.targetExtended()))
+                        request.signalId(), request.stopLoss(), request.targetPrice(), request.targetExtended()))
                 .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * Modify the already-persisted broker stop, verify the broker's current order details,
+     * and only then persist the new application protection levels. A timeout or mismatch
+     * leaves the stop in RECONCILIATION_REQUIRED and is never treated as success.
+     */
+    private Mono<ExecutedTradeRecord> modifyAndVerifyProtectiveStop(
+            ExecutedTradeRecord trade, TradeProtectionUpdateRequest update) {
+        Long signalId = trade.getSignalId();
+        String orderId = trade.getProtectiveOrderId();
+        int remaining = trade.getRemainingQuantity() == null
+                ? Math.max(0, valueOrZero(trade.getFilledQuantity()) - valueOrZero(trade.getExitFilledQuantity()))
+                : trade.getRemainingQuantity();
+        Integer protectedQuantity = trade.getProtectiveOrderQuantity();
+        BigDecimal stop = update.stopLoss();
+        String type = protectiveStopOrderType == null ? "SL-M" : protectiveStopOrderType.trim().toUpperCase();
+
+        if (remaining <= 0 || protectedQuantity == null || protectedQuantity <= 0
+                || protectedQuantity != remaining) {
+            return Mono.error(new IllegalStateException(
+                    "Cannot modify protective stop because broker-protected quantity does not match remaining position. "
+                            + "SignalId=" + signalId + ", protected=" + protectedQuantity + ", remaining=" + remaining));
+        }
+        if (isBlank(trade.getInstrumentKey()) || isBlank(trade.getSymbol())) {
+            return Mono.error(new IllegalStateException(
+                    "Cannot modify protective stop without persisted symbol and instrument key. SignalId=" + signalId));
+        }
+        if (!"SL".equals(type) && !"SL-M".equals(type)) {
+            return Mono.error(new IllegalStateException("execution.protection.order-type must be SL or SL-M"));
+        }
+
+        String exitSide = "BUY".equalsIgnoreCase(trade.getSide()) ? "SELL" : "BUY";
+        BrokerOrderRequest brokerRequest = BrokerOrderRequest.builder()
+                .symbol(trade.getSymbol())
+                .instrumentKey(trade.getInstrumentKey())
+                .signal(exitSide)
+                .transactionType(exitSide)
+                .quantity(remaining)
+                .triggerPrice(stop)
+                .price("SL".equals(type) ? stop : BigDecimal.ZERO)
+                .orderType(type)
+                .product("I")
+                .validity("DAY")
+                .tag(isBlank(trade.getProtectiveOrderTag()) ? protectiveTag(signalId) : trade.getProtectiveOrderTag())
+                .build();
+
+        String tag = brokerRequest.getTag();
+        return Mono.fromCallable(() -> executedTradeRepository.claimProtectiveModification(signalId, orderId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(claimed -> {
+                    if (!claimed) {
+                        return Mono.error(new IllegalStateException(
+                                "Protective stop is not confirmed ACTIVE (status=" + trade.getProtectiveOrderStatus()
+                                        + ") or a modification is already in flight; stop-loss was not changed. SignalId="
+                                        + signalId));
+                    }
+                    return brokerExecutionClient.modifyOrder(orderId, brokerRequest)
+                            .switchIfEmpty(Mono.error(new IllegalStateException(
+                                    "Empty broker response while modifying protective stop. SignalId=" + signalId)))
+                            .flatMap(response -> {
+                                if (response == null || !response.isSuccess()
+                                        || isBlank(response.getOrderId()) || !orderId.equals(response.getOrderId())) {
+                                    return Mono.error(new IllegalStateException(
+                                            "Broker did not confirm protective-stop modification for order " + orderId
+                                                    + "; outcome must be reconciled before retry."));
+                                }
+                                return awaitModifiedStop(orderId, remaining, stop, 1);
+                            })
+                            .flatMap(details -> persistProtectionLevels(update)
+                                    .flatMap(saved -> Mono.fromCallable(() ->
+                                                    executedTradeRepository.updateProtectiveOrderState(
+                                                            signalId, orderId, "ACTIVE", remaining, stop, tag))
+                                            .subscribeOn(Schedulers.boundedElastic())))
+                            // Keep the last confirmed quantity/trigger: the requested values
+                            // are unconfirmed and must not be mistaken for broker state.
+                            .onErrorResume(error -> Mono.fromCallable(() ->
+                                            executedTradeRepository.updateProtectiveOrderState(
+                                                    signalId, orderId, "RECONCILIATION_REQUIRED", null, null, null))
+                                    .subscribeOn(Schedulers.boundedElastic())
+                                    .onErrorResume(stateError -> {
+                                        log.error("Could not persist protective-stop reconciliation state | SignalId={} | OrderId={}",
+                                                signalId, orderId, stateError);
+                                        return Mono.empty();
+                                    })
+                                    .then(Mono.error(new IllegalStateException(
+                                            "Protective-stop modification is not confirmed. Reconcile broker order before retrying. SignalId="
+                                                    + signalId, error))));
+                });
+    }
+
+    /**
+     * Polls the broker until a modified stop shows the requested quantity and trigger
+     * while still working. Upstox passes through transient states such as
+     * "modify pending" before the new trigger is visible.
+     */
+    private Mono<UpstoxOrderDetailsResponse.DataResponse> awaitModifiedStop(
+            String orderId, int quantity, BigDecimal stop, int attempt) {
+        return brokerExecutionClient.getOrderDetails(orderId)
+                .switchIfEmpty(Mono.error(new IllegalStateException(
+                        "No broker details after protective-stop modification. OrderId=" + orderId)))
+                .flatMap(details -> {
+                    String status = details.getStatus() == null ? "UNKNOWN" : details.getStatus().trim();
+                    boolean quantityMatches = details.getQuantity() != null && details.getQuantity() == quantity;
+                    boolean triggerMatches = details.getTriggerPrice() != null
+                            && details.getTriggerPrice().compareTo(stop) == 0;
+                    if (isWorkingProtectiveStatus(status) && quantityMatches && triggerMatches) {
+                        return Mono.just(details);
+                    }
+                    if (isTerminalStatus(normalizeStatus(status)) || attempt >= reconciliationMaxAttempts) {
+                        return Mono.error(new IllegalStateException(
+                                "Modified broker stop is not confirmed active/matching. OrderId=" + orderId
+                                        + ", status=" + status + ", quantity=" + details.getQuantity()
+                                        + ", trigger=" + details.getTriggerPrice()));
+                    }
+                    return Mono.delay(Duration.ofMillis(reconciliationIntervalMs))
+                            .then(Mono.defer(() -> awaitModifiedStop(orderId, quantity, stop, attempt + 1)));
+                });
+    }
+
+    private boolean isOpenPosition(ExecutedTradeRecord trade) {
+        return trade != null && ("OPEN".equalsIgnoreCase(trade.getStatus())
+                || "PARTIALLY_EXITED".equalsIgnoreCase(trade.getStatus()));
     }
 
     @Override
@@ -861,101 +1240,33 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                                 "Live broker execution is disabled; no exit order was submitted and trade state was not changed"));
                     }
 
-                    /*
-                     * Atomically claim the OPEN trade before checking broker history
-                     * or attempting the initial exit submission.
-                     */
-                    return Mono.fromCallable(() ->
-                                    executedTradeRepository.claimExit(request.getSignalId(),request.getQuantity()))
-                            .subscribeOn(Schedulers.boundedElastic())
-                            .flatMap(claimed -> {
-                                if (!claimed) {
-                                    return Mono.just(exitPending(
-                                            request,
-                                            trade.getExitOrderId(),
-                                            "Another request claimed this trade for exit, "
-                                                    + "or the trade is no longer OPEN. "
-                                                    + "No new order was submitted."
-                                    ));
-                                }
+                    // The broker has already squared off an earlier session's intraday
+                    // position; a new exit order would open a fresh position instead.
+                    if (riskGuard.isPriorSession(trade.getOpenedAt())) {
+                        return Mono.just(exitFailure(request, "STALE_POSITION",
+                                "Position was opened in an earlier trading session and has no broker exposure; "
+                                        + "no exit order was submitted. Reconcile it manually."));
+                    }
 
-                                /*
-                                 * claimExit increments the persisted attempt number.
-                                 * Reload it before building the broker tag so a retry
-                                 * cannot reuse a previous rejected zero-fill attempt's tag.
-                                 */
-                                return Mono.fromCallable(() ->
-                                                executedTradeRepository.findBySignalId(request.getSignalId())
-                                                        .orElseThrow(() -> new IllegalStateException(
-                                                                "Trade disappeared after exit claim: "
-                                                                        + request.getSignalId())))
-                                        .subscribeOn(Schedulers.boundedElastic())
-                                        .flatMap(claimedTrade -> {
-                                            int claimedAttempt = valueOrZero(claimedTrade.getExitAttempt());
-                                            if (claimedAttempt <= 0) {
-                                                return Mono.error(new IllegalStateException(
-                                                        "Exit claim did not persist a positive attempt number for signalId="
-                                                                + request.getSignalId()));
-                                            }
-
-                                            String attemptTag = buildExitTag(
-                                                    claimedTrade.getSignalId(),
-                                                    claimedTrade.getExitAttempt(),
-                                                    priorExitFilled,
-                                                    request.getQuantity());
-
-                                            log.info("EXIT ATTEMPT CLAIMED | SignalId={} | Attempt={} | Tag={}",
-                                                    claimedTrade.getSignalId(), claimedAttempt, attemptTag);
-
-                                            /*
-                                             * Existing order -> persist its ID and reconcile.
-                                             * Confirmed empty lookup -> submit this attempt.
-                                             * Lookup error -> remain pending; do not submit.
-                                             */
-                                            return brokerExecutionClient.findOrderByTag(attemptTag)
-                                                    .flatMap(existing -> {
-                                                        if (isBlank(existing.getOrderId())) {
-                                                            return Mono.just(exitPending(
-                                                                    request,
-                                                                    null,
-                                                                    "Broker history returned an exit order without "
-                                                                            + "an order ID. Trade remains EXIT_PENDING; "
-                                                                            + "manual reconciliation is required. "
-                                                                            + "No replacement order was submitted."));
-                                                        }
-
-                                                        return persistExitOrderId(
-                                                                claimedTrade,
-                                                                existing.getOrderId(),
-                                                                request.getQuantity())
-                                                                .then(Mono.defer(() -> reconcileExitOrder(
-                                                                        request,
-                                                                        claimedTrade,
-                                                                        existing.getOrderId(),
-                                                                        0)));
-                                                    })
-                                                    .switchIfEmpty(Mono.defer(() -> submitExitOrder(
-                                                            request,
-                                                            claimedTrade,
-                                                            remaining,
-                                                            orderType,
-                                                            attemptTag)))
-                                                    .onErrorResume(error -> {
-                                                        log.error(
-                                                                "EXIT PROCESSING FAILED SAFELY | SignalId={} | Attempt={} | Reason={}",
-                                                                request.getSignalId(), claimedAttempt,
-                                                                safeMessage(error), error);
-
-                                                        return Mono.just(exitPending(
-                                                                request,
-                                                                claimedTrade.getExitOrderId(),
-                                                                "Exit processing could not be safely confirmed. "
-                                                                        + "Trade remains EXIT_PENDING; reconcile broker "
-                                                                        + "history before retrying: "
-                                                                        + safeMessage(error)));
-                                                    });
-                                        });
-                            });
+                    // A live market exit must not race an existing broker-side stop:
+                    // if both filled, the position would reverse. Cancel the stop and
+                    // book any stop fill first, then exit only what is still open.
+                    return withPositionLock(trade.getSignalId(),
+                            () -> releaseProtectiveStopBeforeExit(trade)
+                                    .onErrorResume(error -> {
+                                        log.error("EXIT BLOCKED: PROTECTIVE STOP NOT CONFIRMED CANCELLED | SignalId={} | StopOrderId={} | Reason={}",
+                                                trade.getSignalId(), trade.getProtectiveOrderId(), safeMessage(error), error);
+                                        return Mono.just(ProtectiveRelease.done(exitFailure(request, "EXIT_BLOCKED",
+                                                "The broker protective stop could not be confirmed cancelled, so no market exit "
+                                                        + "was submitted and trade state was not changed. Retry the exit; reason: "
+                                                        + safeMessage(error))));
+                                    })
+                                    .flatMap(release -> release.response() != null
+                                            ? Mono.just(release.response())
+                                            : claimAndSubmitExit(request, release.trade(), orderType)),
+                            () -> Mono.just(exitFailure(request, "EXIT_BLOCKED",
+                                    "Another protective-stop or exit operation is in progress for this position; "
+                                            + "no order was submitted. Retry the exit.")));
                 })
                 .onErrorResume(error -> {
                     log.error(
@@ -971,6 +1282,300 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                             "Exit could not be safely processed: " + safeMessage(error)
                     ));
                 });
+    }
+
+    /**
+     * Atomically claims an OPEN trade for exit, then checks broker history for the
+     * attempt tag before submitting. The trade must reflect any protective-stop fill
+     * already booked, so the exit never sells more than is still held.
+     */
+    private Mono<TradeExecutionResponse> claimAndSubmitExit(
+            TradeExitRequest originalRequest,
+            ExecutedTradeRecord trade,
+            String orderType) {
+
+        int remaining = remainingQuantity(trade);
+        int priorExitFilled = valueOrZero(trade.getExitFilledQuantity());
+        if (remaining <= 0 || !"OPEN".equalsIgnoreCase(trade.getStatus())) {
+            return Mono.just(exitFailure(originalRequest, "TRADE_NOT_OPEN",
+                    "Trade has no remaining quantity to exit; status=" + trade.getStatus()));
+        }
+
+        final TradeExitRequest request;
+        if (originalRequest.getQuantity() > remaining) {
+            // Only possible after a protective-stop partial fill was just booked.
+            log.warn("EXIT QUANTITY REDUCED TO REMAINING POSITION | SignalId={} | Requested={} | Remaining={}",
+                    trade.getSignalId(), originalRequest.getQuantity(), remaining);
+            request = TradeExitRequest.builder()
+                    .signalId(originalRequest.getSignalId())
+                    .quantity(remaining)
+                    .orderType(originalRequest.getOrderType())
+                    .build();
+        } else {
+            request = originalRequest;
+        }
+
+        return Mono.fromCallable(() ->
+                        executedTradeRepository.claimExit(request.getSignalId(), request.getQuantity()))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(claimed -> {
+                    if (!claimed) {
+                        return Mono.just(exitPending(
+                                request,
+                                trade.getExitOrderId(),
+                                "Another request claimed this trade for exit, "
+                                        + "or the trade is no longer OPEN. "
+                                        + "No new order was submitted."
+                        ));
+                    }
+
+                    /*
+                     * claimExit increments the persisted attempt number.
+                     * Reload it before building the broker tag so a retry
+                     * cannot reuse a previous rejected zero-fill attempt's tag.
+                     */
+                    return Mono.fromCallable(() ->
+                                    executedTradeRepository.findBySignalId(request.getSignalId())
+                                            .orElseThrow(() -> new IllegalStateException(
+                                                    "Trade disappeared after exit claim: "
+                                                            + request.getSignalId())))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .flatMap(claimedTrade -> {
+                                int claimedAttempt = valueOrZero(claimedTrade.getExitAttempt());
+                                if (claimedAttempt <= 0) {
+                                    return Mono.error(new IllegalStateException(
+                                            "Exit claim did not persist a positive attempt number for signalId="
+                                                    + request.getSignalId()));
+                                }
+
+                                String attemptTag = buildExitTag(
+                                        claimedTrade.getSignalId(),
+                                        claimedTrade.getExitAttempt(),
+                                        priorExitFilled,
+                                        request.getQuantity());
+
+                                log.info("EXIT ATTEMPT CLAIMED | SignalId={} | Attempt={} | Tag={}",
+                                        claimedTrade.getSignalId(), claimedAttempt, attemptTag);
+
+                                /*
+                                 * Existing order -> persist its ID and reconcile.
+                                 * Confirmed empty lookup -> submit this attempt.
+                                 * Lookup error -> remain pending; do not submit.
+                                 */
+                                return brokerExecutionClient.findOrderByTag(attemptTag)
+                                        .flatMap(existing -> {
+                                            if (isBlank(existing.getOrderId())) {
+                                                return Mono.just(exitPending(
+                                                        request,
+                                                        null,
+                                                        "Broker history returned an exit order without "
+                                                                + "an order ID. Trade remains EXIT_PENDING; "
+                                                                + "manual reconciliation is required. "
+                                                                + "No replacement order was submitted."));
+                                            }
+
+                                            return persistExitOrderId(
+                                                    claimedTrade,
+                                                    existing.getOrderId(),
+                                                    request.getQuantity())
+                                                    .then(Mono.defer(() -> reconcileExitOrder(
+                                                            request,
+                                                            claimedTrade,
+                                                            existing.getOrderId(),
+                                                            0)));
+                                        })
+                                        .switchIfEmpty(Mono.defer(() -> submitExitOrder(
+                                                request,
+                                                claimedTrade,
+                                                remaining,
+                                                orderType,
+                                                attemptTag)))
+                                        .onErrorResume(error -> {
+                                            log.error(
+                                                    "EXIT PROCESSING FAILED SAFELY | SignalId={} | Attempt={} | Reason={}",
+                                                    request.getSignalId(), claimedAttempt,
+                                                    safeMessage(error), error);
+
+                                            return Mono.just(exitPending(
+                                                    request,
+                                                    claimedTrade.getExitOrderId(),
+                                                    "Exit processing could not be safely confirmed. "
+                                                            + "Trade remains EXIT_PENDING; reconcile broker "
+                                                            + "history before retrying: "
+                                                            + safeMessage(error)));
+                                        });
+                            });
+                });
+    }
+
+    /**
+     * Outcome of releasing the broker stop before a market exit: either the refreshed
+     * trade a market exit may proceed with, or a final response (the stop already
+     * closed the position, or the exit must not proceed).
+     */
+    private record ProtectiveRelease(ExecutedTradeRecord trade, TradeExecutionResponse response) {
+        static ProtectiveRelease proceed(ExecutedTradeRecord trade) {
+            return new ProtectiveRelease(trade, null);
+        }
+
+        static ProtectiveRelease done(TradeExecutionResponse response) {
+            return new ProtectiveRelease(null, response);
+        }
+    }
+
+    /**
+     * Ensures no broker stop can still fill before a market exit is submitted.
+     * A working stop is cancelled and its terminal state confirmed; any quantity it
+     * filled is booked as a broker stop-loss exit. Errors mean the stop state is not
+     * confirmed and the caller must not submit a market exit.
+     */
+    private Mono<ProtectiveRelease> releaseProtectiveStopBeforeExit(ExecutedTradeRecord trade) {
+        String orderId = trade.getProtectiveOrderId();
+        String status = trade.getProtectiveOrderStatus();
+
+        if (!isBlank(orderId)) {
+            return cancelAndSettleProtectiveStop(trade, orderId);
+        }
+        if (isBlank(status) || isProtectiveOrderTerminalWithoutFill(status)
+                || "UNPROTECTED_NO_STOP_PRICE".equalsIgnoreCase(status)) {
+            return Mono.just(ProtectiveRelease.proceed(trade));
+        }
+
+        // Submission outcome was never confirmed: the stop may exist under its tag.
+        String tag = isBlank(trade.getProtectiveOrderTag())
+                ? protectiveTag(trade.getSignalId()) : trade.getProtectiveOrderTag();
+        return brokerExecutionClient.findOrderByTag(tag)
+                .flatMap(history -> {
+                    if (isBlank(history.getOrderId())) {
+                        return Mono.error(new IllegalStateException(
+                                "Protective stop tag " + tag + " matched an order without an ID"));
+                    }
+                    log.warn("PROTECTIVE STOP RECOVERED BY TAG BEFORE EXIT | SignalId={} | OrderId={} | Tag={}",
+                            trade.getSignalId(), history.getOrderId(), tag);
+                    return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                    trade.getSignalId(), history.getOrderId(), "RECONCILING", null, null, tag))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .flatMap(saved -> cancelAndSettleProtectiveStop(saved, history.getOrderId()));
+                })
+                .switchIfEmpty(Mono.defer(() -> Mono.fromCallable(() ->
+                                executedTradeRepository.updateProtectiveOrderState(
+                                        trade.getSignalId(), null, "NOT_FOUND", null, null, null))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .map(ProtectiveRelease::proceed)));
+    }
+
+    private Mono<ProtectiveRelease> cancelAndSettleProtectiveStop(ExecutedTradeRecord trade, String orderId) {
+        return brokerExecutionClient.getOrderDetails(orderId)
+                .switchIfEmpty(Mono.error(new IllegalStateException(
+                        "No broker details for protective order " + orderId)))
+                .flatMap(details -> {
+                    if (isTerminalStatus(normalizeStatus(details.getStatus()))) {
+                        return settleTerminalProtectiveStop(trade, orderId, details);
+                    }
+                    log.warn("CANCELLING PROTECTIVE STOP BEFORE MARKET EXIT | SignalId={} | OrderId={} | Status={}",
+                            trade.getSignalId(), orderId, details.getStatus());
+                    return brokerExecutionClient.cancelOrder(orderId)
+                            .flatMap(acknowledged -> Boolean.TRUE.equals(acknowledged)
+                                    ? awaitTerminalOrder(orderId, 1)
+                                    : Mono.error(new IllegalStateException(
+                                    "Broker did not acknowledge cancellation of protective order " + orderId)))
+                            // A cancel can be refused because the stop just triggered;
+                            // the broker's current state decides what happened.
+                            .onErrorResume(cancelError -> {
+                                log.warn("PROTECTIVE STOP CANCEL NOT CONFIRMED; RE-CHECKING BROKER STATE | OrderId={} | Reason={}",
+                                        orderId, safeMessage(cancelError));
+                                return awaitTerminalOrder(orderId, 1);
+                            })
+                            .flatMap(terminal -> settleTerminalProtectiveStop(trade, orderId, terminal));
+                });
+    }
+
+    /** Polls order details until a terminal status; errors if still working after the window. */
+    private Mono<UpstoxOrderDetailsResponse.DataResponse> awaitTerminalOrder(String orderId, int attempt) {
+        return brokerExecutionClient.getOrderDetails(orderId)
+                .switchIfEmpty(Mono.error(new IllegalStateException(
+                        "No broker details for order " + orderId)))
+                .flatMap(details -> {
+                    String status = normalizeStatus(details.getStatus());
+                    if (isTerminalStatus(status)) {
+                        return Mono.just(details);
+                    }
+                    if (attempt >= reconciliationMaxAttempts) {
+                        return Mono.error(new IllegalStateException(
+                                "Order " + orderId + " is still " + status + " after cancellation was requested"));
+                    }
+                    return Mono.delay(Duration.ofMillis(reconciliationIntervalMs))
+                            .then(Mono.defer(() -> awaitTerminalOrder(orderId, attempt + 1)));
+                });
+    }
+
+    private Mono<ProtectiveRelease> settleTerminalProtectiveStop(
+            ExecutedTradeRecord trade,
+            String orderId,
+            UpstoxOrderDetailsResponse.DataResponse details) {
+
+        String status = normalizeStatus(details.getStatus());
+        Integer filled = details.getFilledQuantity();
+        if (filled == null || filled < 0) {
+            return Mono.error(new IllegalStateException(
+                    "Terminal protective order " + orderId + " has no valid filled quantity"));
+        }
+
+        if (filled == 0) {
+            if (isComplete(status)) {
+                return Mono.error(new IllegalStateException(
+                        "Protective order " + orderId + " reports complete with zero fill"));
+            }
+            String terminalState = "rejected".equals(status) ? "REJECTED"
+                    : "expired".equals(status) ? "EXPIRED" : "CANCELLED";
+            return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                            trade.getSignalId(), orderId, terminalState, null, null, null))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .map(ProtectiveRelease::proceed);
+        }
+
+        return Mono.fromCallable(() -> executedTradeRepository.applyProtectiveStopFill(
+                        trade.getSignalId(), orderId, filled, details.getAveragePrice()))
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(saved -> {
+                    log.warn("BROKER STOP-LOSS FILL BOOKED | SignalId={} | OrderId={} | FilledQty={} | AvgPrice={} | Status={} | Remaining={}",
+                            saved.getSignalId(), orderId, filled, details.getAveragePrice(),
+                            saved.getStatus(), saved.getRemainingQuantity());
+                    if (!"CLOSED".equalsIgnoreCase(saved.getStatus())) {
+                        return ProtectiveRelease.proceed(saved);
+                    }
+                    return ProtectiveRelease.done(TradeExecutionResponse.builder()
+                            .success(true)
+                            .signalId(saved.getSignalId())
+                            .symbol(saved.getSymbol())
+                            .signal("BUY".equalsIgnoreCase(saved.getSide()) ? "SELL" : "BUY")
+                            .quantity(filled)
+                            .filledQuantity(filled)
+                            .executedPrice(saved.getExitAveragePrice())
+                            .orderId(orderId)
+                            .status("CLOSED")
+                            .message("Position was closed by the broker stop-loss order; no market exit was submitted")
+                            .build());
+                });
+    }
+
+    /**
+     * Runs {@code action} while holding the per-position lock, or {@code whenBusy}
+     * if another protective-stop/exit operation for the same position is in flight.
+     */
+    private <T> Mono<T> withPositionLock(Long signalId, Supplier<Mono<T>> action, Supplier<Mono<T>> whenBusy) {
+        return Mono.defer(() -> {
+            if (signalId == null || !positionsInFlight.add(signalId)) {
+                return whenBusy.get();
+            }
+            return Mono.defer(action).doFinally(signal -> positionsInFlight.remove(signalId));
+        });
+    }
+
+    private int remainingQuantity(ExecutedTradeRecord trade) {
+        return trade.getRemainingQuantity() == null
+                ? Math.max(0, valueOrZero(trade.getFilledQuantity()) - valueOrZero(trade.getExitFilledQuantity()))
+                : trade.getRemainingQuantity();
     }
 
     private Mono<TradeExecutionResponse> submitExitOrder(
@@ -1389,19 +1994,15 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                     )));
         }
 
-        return idempotencyRepository.tryClaim(
-                        request.getSignalId(),
-                        tag,
-                        request.getSymbol(),
-                        normalizeSignal(request.getSignal()),
-                        request.getQuantity(),
-                        request.getInstrumentKey(),
-                        request.getEntryPrice(),
-                        request.getRequiredMargin(),
-                        request.getStopLoss(),
-                        request.getTarget())
-                .flatMap(claimed -> {
-                    if (claimed) {
+        return admitAndClaim(request, tag)
+                .flatMap(admission -> {
+                    if (admission.rejectionReason() != null) {
+                        log.warn("LIVE ENTRY REJECTED BY RISK GUARD | SignalId={} | Symbol={} | Reason={}",
+                                request.getSignalId(), request.getSymbol(), admission.rejectionReason());
+                        return Mono.just(failure(request, "RISK_REJECTED",
+                                admission.rejectionReason() + ". No order was submitted."));
+                    }
+                    if (admission.claimed()) {
                         return executeBrokerOrder(request, tag, orderType);
                     }
 
@@ -1430,6 +2031,45 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                                             + "; no duplicate order was submitted"
                             )));
                 });
+    }
+
+    private record EntryAdmission(boolean claimed, String rejectionReason) {
+    }
+
+    /**
+     * Evaluates account limits and inserts the idempotency claim under one lock, so
+     * two concurrent entries cannot both pass a position or daily limit. An existing
+     * claim for the same signal is reported as not claimed (caller recovers it);
+     * the limits apply only to brand-new claims.
+     */
+    private Mono<EntryAdmission> admitAndClaim(TradeExecutionRequest request, String tag) {
+        return Mono.fromCallable(() -> {
+                    entryAdmissionLock.lock();
+                    try {
+                        if (idempotencyRepository.find(request.getSignalId()).block() == null) {
+                            String rejection = riskGuard.evaluateNewEntry(request);
+                            if (rejection != null) {
+                                return new EntryAdmission(false, rejection);
+                            }
+                        }
+                        Boolean claimed = idempotencyRepository.tryClaim(
+                                        request.getSignalId(),
+                                        tag,
+                                        request.getSymbol(),
+                                        normalizeSignal(request.getSignal()),
+                                        request.getQuantity(),
+                                        request.getInstrumentKey(),
+                                        request.getEntryPrice(),
+                                        request.getRequiredMargin(),
+                                        request.getStopLoss(),
+                                        request.getTarget())
+                                .block();
+                        return new EntryAdmission(Boolean.TRUE.equals(claimed), null);
+                    } finally {
+                        entryAdmissionLock.unlock();
+                    }
+                })
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     private boolean matchesExecutionClaim(
@@ -2031,6 +2671,18 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                             "Idempotency record missing after broker accepted order")))
                     .flatMap(record -> linkOrderIdSafely(request, orderId, record).thenReturn(record))
                     .then(reconcileUntilTerminal(request, orderId, 1));
+        }
+
+        // The broker client reports REJECTED without an order ID only when the order
+        // definitively does not exist (request refused, or never sent). Recording it
+        // as UNKNOWN would leave an unresolved claim that blocks startup readiness.
+        if (brokerResponse != null && "REJECTED".equalsIgnoreCase(brokerResponse.getStatus())
+                && isBlank(brokerResponse.getOrderId())) {
+            String reason = firstNonBlank(brokerResponse.getMessage(), "Broker rejected the order");
+            log.warn("LIVE ENTRY REJECTED BY BROKER | SignalId={} | Tag={} | Reason={}",
+                    request.getSignalId(), tag, reason);
+            return idempotencyRepository.updateRejected(request.getSignalId(), null, reason)
+                    .thenReturn(failureWithOrder(request, "REJECTED", null, reason));
         }
 
         // The broker may have accepted the order even if the HTTP response was
@@ -2776,10 +3428,191 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                                 + request.getSignalId(),
                         ex);
             }
-        }).subscribeOn(Schedulers.boundedElastic());
+        }).subscribeOn(Schedulers.boundedElastic())
+                // The fill is real broker exposure whether or not the stop can be placed,
+                // so a protection failure must not fail entry bookkeeping (the claim would
+                // stay unresolved). Runtime reconciliation retries protection.
+                .flatMap(saved -> withPositionLock(saved.getSignalId(),
+                        () -> ensureProtectiveStop(saved),
+                        () -> Mono.just(saved))
+                        .onErrorResume(error -> {
+                            log.error("POSITION OPEN WITHOUT CONFIRMED BROKER STOP | SignalId={} | Symbol={} | Qty={} | Reason={}",
+                                    saved.getSignalId(), saved.getSymbol(), saved.getRemainingQuantity(),
+                                    safeMessage(error), error);
+                            return Mono.just(saved);
+                        }));
     }
 
+    /**
+     * Places one broker-side stop for the confirmed remaining position. The deterministic
+     * tag is reconciled before submission; uncertain outcomes never trigger a blind retry.
+     */
+    private Mono<ExecutedTradeRecord> ensureProtectiveStop(ExecutedTradeRecord trade) {
+        if (trade == null || trade.getSignalId() == null) {
+            return Mono.error(new IllegalStateException("Cannot protect an absent persisted trade"));
+        }
+        // Do not submit broker orders while live execution is disabled. This also keeps
+        // paper-mode reconciliation read-only.
+        if (!liveEnabled) {
+            return Mono.just(trade);
+        }
+        int remaining = trade.getRemainingQuantity() == null
+                ? Math.max(0, valueOrZero(trade.getFilledQuantity()) - valueOrZero(trade.getExitFilledQuantity()))
+                : trade.getRemainingQuantity();
+        BigDecimal stop = trade.getCurrentStopLoss() != null
+                ? trade.getCurrentStopLoss() : trade.getInitialStopLoss();
+        if (remaining <= 0) {
+            return Mono.just(trade);
+        }
+        if (stop == null || stop.compareTo(BigDecimal.ZERO) <= 0) {
+            return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                            trade.getSignalId(), null, "UNPROTECTED_NO_STOP_PRICE", null, null, null))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMap(ignored -> Mono.error(new IllegalStateException(
+                            "Filled position has no valid stop-loss; broker protection was not placed. SignalId="
+                                    + trade.getSignalId())));
+        }
+        if (trade.getProtectiveOrderId() != null && !trade.getProtectiveOrderId().isBlank()) {
+            if (trade.getProtectiveOrderQuantity() == null
+                    || trade.getProtectiveOrderQuantity() != remaining
+                    || trade.getProtectiveTriggerPrice() == null
+                    || trade.getProtectiveTriggerPrice().compareTo(stop) != 0) {
+                return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                trade.getSignalId(), trade.getProtectiveOrderId(),
+                                "RECONCILIATION_REQUIRED", remaining, stop, trade.getProtectiveOrderTag()))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .flatMap(ignored -> Mono.error(new IllegalStateException(
+                                "Existing protective order quantity/trigger does not match the open position. "
+                                        + "No replacement submitted automatically. SignalId=" + trade.getSignalId())));
+            }
+            return verifyProtectiveOrder(trade, trade.getProtectiveOrderId(), remaining, stop,
+                    trade.getProtectiveOrderTag());
+        }
 
+        if (trade.getProtectiveOrderStatus() != null
+                && !trade.getProtectiveOrderStatus().isBlank()) {
+            return Mono.error(new IllegalStateException(
+                    "Protective order has a persisted unresolved state=" + trade.getProtectiveOrderStatus()
+                            + "; reconcile it before any new submission. SignalId=" + trade.getSignalId()));
+        }
+
+        String tag = protectiveTag(trade.getSignalId());
+        return brokerExecutionClient.findOrderByTag(tag)
+                .flatMap(history -> {
+                    String orderId = history.getOrderId();
+                    if (isBlank(orderId)) {
+                        return Mono.error(new IllegalStateException(
+                                "Protective stop tag exists without an order ID; manual reconciliation required. SignalId="
+                                        + trade.getSignalId()));
+                    }
+                    return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                    trade.getSignalId(), orderId, "RECONCILING", remaining, stop, tag))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .then(verifyProtectiveOrder(trade, orderId, remaining, stop, tag));
+                })
+                .switchIfEmpty(Mono.defer(() -> submitProtectiveStop(trade, remaining, stop, tag)));
+    }
+
+    private Mono<ExecutedTradeRecord> submitProtectiveStop(
+            ExecutedTradeRecord trade, int quantity, BigDecimal stop, String tag) {
+        String side = "BUY".equalsIgnoreCase(trade.getSide()) ? "SELL" : "BUY";
+        String type = protectiveStopOrderType == null ? "SL-M" : protectiveStopOrderType.trim().toUpperCase();
+        if (!"SL-M".equals(type) && !"SL".equals(type)) {
+            return Mono.error(new IllegalStateException("execution.protection.order-type must be SL or SL-M"));
+        }
+        BrokerOrderRequest request = BrokerOrderRequest.builder()
+                .symbol(trade.getSymbol())
+                .instrumentKey(trade.getInstrumentKey())
+                .signal(side)
+                .transactionType(side)
+                .quantity(quantity)
+                .triggerPrice(stop)
+                .price("SL".equals(type) ? stop : BigDecimal.ZERO)
+                .orderType(type)
+                .product("I")
+                .validity("DAY")
+                .tag(tag)
+                .build();
+        return brokerExecutionClient.executeOrder(request)
+                .switchIfEmpty(Mono.error(new IllegalStateException("Empty protective-stop placement response")))
+                .flatMap(response -> {
+                    if (isBlank(response.getOrderId()) && "REJECTED".equalsIgnoreCase(response.getStatus())) {
+                        // Definitive: no stop order exists at the broker.
+                        return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                        trade.getSignalId(), null, "REJECTED", quantity, stop, tag))
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .then(Mono.error(new IllegalStateException(
+                                        "Broker rejected protective stop: " + response.getMessage()
+                                                + ". SignalId=" + trade.getSignalId())));
+                    }
+                    if (isBlank(response.getOrderId())) {
+                        return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                        trade.getSignalId(), null, "SUBMISSION_OUTCOME_UNKNOWN",
+                                        quantity, stop, tag))
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .then(Mono.error(new IllegalStateException(
+                                        "Protective stop submission has no confirmed order ID. Do not retry blindly. SignalId="
+                                                + trade.getSignalId())));
+                    }
+                    String initialStatus = response.isSuccess() ? "SUBMITTED" : "SUBMISSION_FAILED";
+                    return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                    trade.getSignalId(), response.getOrderId(), initialStatus,
+                                    quantity, stop, tag))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .flatMap(saved -> {
+                                if (!response.isSuccess()) {
+                                    return Mono.error(new IllegalStateException(
+                                            "Broker did not accept protective stop: " + response.getMessage()));
+                                }
+                                return verifyProtectiveOrder(saved, response.getOrderId(), quantity, stop, tag);
+                            });
+                });
+    }
+
+    private Mono<ExecutedTradeRecord> verifyProtectiveOrder(
+            ExecutedTradeRecord trade, String orderId, int quantity, BigDecimal stop, String tag) {
+        return brokerExecutionClient.getOrderDetails(orderId)
+                .switchIfEmpty(Mono.error(new IllegalStateException("No broker details for protective order " + orderId)))
+                .flatMap(details -> {
+                    String status = details.getStatus() == null ? "UNKNOWN" : details.getStatus().trim();
+                    boolean quantityMatches = details.getQuantity() != null && details.getQuantity() == quantity;
+                    boolean triggerMatches = details.getTriggerPrice() != null
+                            && details.getTriggerPrice().compareTo(stop) == 0;
+                    boolean working = isWorkingProtectiveStatus(status);
+                    String persistedStatus = working && quantityMatches && triggerMatches ? "ACTIVE" : "RECONCILIATION_REQUIRED";
+                    return Mono.fromCallable(() -> executedTradeRepository.updateProtectiveOrderState(
+                                    trade.getSignalId(), orderId, persistedStatus, quantity, stop, tag))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .flatMap(saved -> {
+                                if (!working || !quantityMatches || !triggerMatches) {
+                                    return Mono.error(new IllegalStateException(
+                                            "Broker protective stop is not confirmed active/matching. OrderId="
+                                                    + orderId + ", status=" + status + ", quantity="
+                                                    + details.getQuantity() + ", trigger=" + details.getTriggerPrice()));
+                                }
+                                log.info("BROKER STOP PROTECTION ACTIVE | SignalId={} | OrderId={} | Qty={} | Trigger={}",
+                                        trade.getSignalId(), orderId, quantity, stop);
+                                return Mono.just(saved);
+                            });
+                });
+    }
+
+    /** Upstox states in which a stop order is accepted and can still trigger. */
+    private boolean isWorkingProtectiveStatus(String status) {
+        String normalized = status == null ? "" : status.trim().toLowerCase().replace('_', ' ');
+        return normalized.equals("open") || normalized.equals("trigger pending")
+                || normalized.equals("validation pending") || normalized.equals("put order req received")
+                || normalized.equals("open pending") || normalized.equals("modified")
+                || normalized.equals("not modified") || normalized.equals("not cancelled");
+    }
+
+    private boolean isTerminalStatus(String normalizedStatus) {
+        return isComplete(normalizedStatus) || isRejectedOrCancelled(normalizedStatus);
+    }
+
+    private String protectiveTag(Long signalId) {
+        return "AI-SL-" + signalId;
+    }
 
     private TradeExecutionResponse success(
             TradeExecutionRequest request,
@@ -2890,6 +3723,24 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
                 || "expired".equalsIgnoreCase(status);
     }
 
+    /** Aligns the entry request's stop and target to the exchange tick before anything is persisted. */
+    private void alignProtectivePrices(TradeExecutionRequest request) {
+        if (request == null) {
+            return;
+        }
+        request.setStopLoss(PriceTicks.alignStop(request.getStopLoss(), request.getSignal(), priceTickSize));
+        request.setTarget(PriceTicks.alignTarget(request.getTarget(), request.getSignal(), priceTickSize));
+    }
+
+    private TradeProtectionUpdateRequest alignProtectivePrices(
+            TradeProtectionUpdateRequest request, String positionSide) {
+        return new TradeProtectionUpdateRequest(
+                request.signalId(),
+                PriceTicks.alignStop(request.stopLoss(), positionSide, priceTickSize),
+                PriceTicks.alignTarget(request.targetPrice(), positionSide, priceTickSize),
+                request.targetExtended());
+    }
+
     private String validate(TradeExecutionRequest request) {
         if (request == null) return "Request is required";
         if (request.getSignalId() == null) return "signalId is required for idempotent execution";
@@ -2904,6 +3755,16 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
         }
         if ("INVALID".equals(normalizeOrderType(request.getOrderType()))) {
             return "orderType must be MARKET, LIMIT, SL or SL-M";
+        }
+        // Every live position gets a broker stop at this price; a missing or
+        // wrong-side stop would leave it unprotected or trigger immediately.
+        if (request.getStopLoss() == null || request.getStopLoss().compareTo(BigDecimal.ZERO) <= 0) {
+            return "stopLoss must be greater than zero";
+        }
+        boolean buy = "BUY".equalsIgnoreCase(request.getSignal());
+        if (buy ? request.getStopLoss().compareTo(request.getEntryPrice()) >= 0
+                : request.getStopLoss().compareTo(request.getEntryPrice()) <= 0) {
+            return buy ? "BUY stopLoss must be below entryPrice" : "SELL stopLoss must be above entryPrice";
         }
         // requiredMargin is sizing metadata owned by Signal Service. It is not used
         // to calculate or reserve position size in TradeExecutionService.
@@ -3004,6 +3865,21 @@ public class TradeExecutionServiceImpl implements TradeExecutionService {
             if (value != null && !value.isBlank()) return value;
         }
         return null;
+    }
+
+    private boolean isProtectiveOrderTerminalWithoutFill(String status) {
+        if (status == null || status.isBlank()) {
+            return true;
+        }
+        String normalized = status.trim().toUpperCase(java.util.Locale.ROOT);
+        // FILL_APPLIED: a partial stop fill was booked and the stop order is terminal.
+        // NOT_FOUND: a confirmed broker lookup found no stop order for the tag.
+        return "CANCELLED".equals(normalized)
+                || "CANCELED".equals(normalized)
+                || "REJECTED".equals(normalized)
+                || "EXPIRED".equals(normalized)
+                || "FILL_APPLIED".equals(normalized)
+                || "NOT_FOUND".equals(normalized);
     }
 
     private boolean isBlank(String value) {

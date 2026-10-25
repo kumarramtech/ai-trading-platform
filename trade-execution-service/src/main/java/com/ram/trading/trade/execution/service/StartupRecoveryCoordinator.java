@@ -46,8 +46,11 @@ public class StartupRecoveryCoordinator {
         readiness.beginRecovery();
         log.warn("EXECUTION READINESS CLOSED | Startup recovery in progress");
 
-        tradeExecutionService.recoverPendingExitsAfterStartup()
-                .then(tradeExecutionService.recoverPendingEntriesAfterStartup())
+        // Earlier-session leftovers cannot be reconciled (the broker only returns the
+        // current day's orders) and would otherwise keep readiness FAILED forever.
+        tradeExecutionService.expirePriorSessionState()
+                .then(Mono.defer(tradeExecutionService::recoverPendingExitsAfterStartup))
+                .then(Mono.defer(tradeExecutionService::recoverPendingEntriesAfterStartup))
                 .then(validateNoOrphanedClaims())
                 .then(recoverFilledClaimsWithoutPersistedTrade())
                 // Recovery methods can intentionally return a PENDING response

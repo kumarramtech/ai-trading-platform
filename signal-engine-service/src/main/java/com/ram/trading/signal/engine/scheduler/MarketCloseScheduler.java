@@ -16,8 +16,13 @@ public class MarketCloseScheduler {
 
     private final TradingSessionService tradingSessionService;
 
+    /*
+     * Runs every minute of the afternoon; shouldForceCloseTrades() limits it to
+     * trading.market.close .. trading.market.end, so a later pass retries any
+     * position the previous pass could not close.
+     */
     @Scheduled(
-            cron = "0 20-29 15 * * MON-FRI",
+            cron = "${trading.market.square-off-cron:0 * 14-15 * * MON-FRI}",
             zone = "Asia/Kolkata"
     )
     public void autoSquareOff() {

@@ -68,6 +68,10 @@ public class PaperTradingService {
 
     private final BalanceMarginClient balanceMarginClient;
 
+    /** Paper trades currently being closed (guards against a double close). */
+    private final java.util.Set<Long> closingTradeIds =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
 
     @Value("${trading.reentry.cooldown-minutes:15}")
@@ -191,18 +195,26 @@ public class PaperTradingService {
          * STEP 6 : CALCULATE CURRENT AVAILABLE CAPITAL
          * ============================================================
          */
-        double availableCapital =
-                getAvailableCapital();
+        /*
+         * Capital is owned by Balance Margin Service (paper account: reserved
+         * and released per trade, realized P&L applied, reset daily). Its
+         * balance came back with the sizing margin call; the local
+         * total-capital estimate is only a fallback if it is missing.
+         */
+        boolean accountBalanceAvailable =
+                sizingResult.getAvailableBalance() != null;
+
+        double availableCapital = accountBalanceAvailable
+                ? sizingResult.getAvailableBalance()
+                : getAvailableCapital();
 
         double investmentAmount =
                 quantity * signal.getEntryPrice();
 
         log.info("======================================");
         log.info("CAPITAL CHECK");
-        log.info("Total Capital       : {}", totalCapital);
-        log.info(
-                "Used Capital        : {}",
-                totalCapital - availableCapital);
+        log.info("Capital Source      : {}", accountBalanceAvailable
+                ? "BALANCE_MARGIN_ACCOUNT" : "LOCAL_ESTIMATE");
         log.info("Available Capital   : {}", availableCapital);
         log.info("Required Margin     : {}", requiredMargin);
         log.info("Minimum Capital     : {}", minAvailableCapital);
@@ -2099,6 +2111,23 @@ public class PaperTradingService {
             ExitDecision decision,
             Tick tick) {
 
+        /*
+         * One close per trade. A tick exit and the market-close square-off can
+         * race for the same trade; closing twice would release its margin (and
+         * apply its P&L) to the Balance Margin account twice.
+         */
+        Long tradeId = trade.getId();
+
+        if (tradeId != null && !closingTradeIds.add(tradeId)) {
+
+            log.warn(
+                    "Trade close already in progress. Skipping duplicate close | TradeId={} | Symbol={}",
+                    tradeId,
+                    trade.getSymbol());
+
+            return Mono.empty();
+        }
+
         log.info("==========================================");
         log.info("Trade Closing.......");
         log.info("Symbol      : {}", trade.getSymbol());
@@ -2136,8 +2165,34 @@ public class PaperTradingService {
 
         log.info("Profit/Loss : {}", pnl);
 
-        return Mono.fromCallable(() -> repository.save(trade))
+        return Mono.fromCallable(() -> {
+
+                    // Re-check persisted state: an earlier close may already have finished.
+                    if (tradeId != null) {
+
+                        PaperTrade current =
+                                repository.findById(tradeId).orElse(null);
+
+                        if (current == null
+                                || current.getStatus() != SignalStatus.OPEN) {
+
+                            log.warn(
+                                    "Trade is no longer OPEN. Skipping close | TradeId={} | Status={}",
+                                    tradeId,
+                                    current != null ? current.getStatus() : null);
+
+                            return null;
+                        }
+                    }
+
+                    return repository.save(trade);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
+
+                // Return the reserved margin plus realized P&L to the paper account
+                .flatMap(savedTrade ->
+                        releaseAccountMargin(savedTrade)
+                                .thenReturn(savedTrade))
 
                 // Update Portfolio
                 .flatMap(savedTrade ->
@@ -2225,8 +2280,61 @@ public class PaperTradingService {
                     log.info("PnL    : {}", trade.getProfitLoss());
                     log.info("==========================================");
 
+                })
+
+                .doFinally(signal -> {
+                    if (tradeId != null) {
+                        closingTradeIds.remove(tradeId);
+                    }
                 });
 
+    }
+
+    /**
+     * Releases the margin reserved when the paper trade opened and applies its
+     * realized P&L, so the Balance Margin account (the owner of paper capital)
+     * reflects closed trades. Without this, available capital only shrank during
+     * the day and new trades were refused once it was used up.
+     *
+     * A failure is logged but does not undo the close: the trade is closed, and
+     * the daily 08:30 account reset restores the balance.
+     */
+    private Mono<Void> releaseAccountMargin(PaperTrade trade) {
+
+        Double requiredMargin = trade.getRequiredMargin();
+
+        if (requiredMargin == null
+                || !Double.isFinite(requiredMargin)
+                || requiredMargin <= 0) {
+
+            log.warn(
+                    "MARGIN RELEASE SKIPPED | No reserved margin recorded | Symbol={} | TradeId={}",
+                    trade.getSymbol(),
+                    trade.getId());
+
+            return Mono.empty();
+        }
+
+        double profitLoss = trade.getProfitLoss() != null
+                ? trade.getProfitLoss() : 0.0;
+
+        return balanceMarginClient
+                .releaseMargin(requiredMargin, profitLoss)
+                .doOnSuccess(v -> log.info(
+                        "MARGIN RELEASED | Symbol={} | Margin={} | PnL={}",
+                        trade.getSymbol(),
+                        requiredMargin,
+                        profitLoss))
+                .onErrorResume(ex -> {
+                    log.error(
+                            "MARGIN RELEASE FAILED | Symbol={} | Margin={} | PnL={} | "
+                                    + "Paper account balance is understated until the daily reset",
+                            trade.getSymbol(),
+                            requiredMargin,
+                            profitLoss,
+                            ex);
+                    return Mono.empty();
+                });
     }
 
     private Double calculatePnL(PaperTrade trade) {

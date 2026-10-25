@@ -26,6 +26,61 @@ class BrokerExecutionClientImplTest {
         client = new BrokerExecutionClientImpl(webClientBuilder, brokerClient);
     }
 
+    private BrokerOrderRequest marketOrder() {
+        return BrokerOrderRequest.builder()
+                .symbol("TCS").instrumentKey("NSE_EQ|TEST").signal("BUY").transactionType("BUY")
+                .quantity(2).price(new java.math.BigDecimal("100.00")).orderType("MARKET").tag("AI-900")
+                .build();
+    }
+
+    /** Real WebClient whose placement POST answers with the given status and history GET is empty. */
+    private BrokerExecutionClientImpl clientWithPlacementStatus(org.springframework.http.HttpStatus placementStatus) {
+        org.springframework.web.reactive.function.client.ExchangeFunction exchange = request -> {
+            boolean placement = request.method() == org.springframework.http.HttpMethod.POST;
+            org.springframework.http.HttpStatus status = placement ? placementStatus : org.springframework.http.HttpStatus.OK;
+            String body = placement ? "{\"status\":\"error\",\"errors\":[{\"message\":\"Insufficient funds\"}]}"
+                    : "{\"status\":\"success\",\"data\":[]}";
+            return Mono.just(org.springframework.web.reactive.function.client.ClientResponse.create(status)
+                    .header("Content-Type", "application/json").body(body).build());
+        };
+        when(brokerClient.getAccessToken()).thenReturn(Mono.just("token"));
+        BrokerExecutionClientImpl realClient = new BrokerExecutionClientImpl(
+                WebClient.builder().exchangeFunction(exchange), brokerClient);
+        org.springframework.test.util.ReflectionTestUtils.setField(realClient, "upstoxOrderUrl", "https://broker.test/order/place");
+        org.springframework.test.util.ReflectionTestUtils.setField(realClient, "upstoxOrderHistoryUrl", "https://broker.test/order/history");
+        return realClient;
+    }
+
+    @Test
+    void clientErrorWithConfirmedEmptyHistoryIsADefinitiveRejection() {
+        BrokerOrderResponse response = clientWithPlacementStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                .executeOrder(marketOrder()).block();
+
+        assertNotNull(response);
+        assertEquals("REJECTED", response.getStatus());
+        assertTrue(response.getMessage().contains("Insufficient funds"));
+    }
+
+    @Test
+    void serverErrorWithEmptyHistoryRemainsAmbiguous() {
+        BrokerOrderResponse response = clientWithPlacementStatus(org.springframework.http.HttpStatus.BAD_GATEWAY)
+                .executeOrder(marketOrder()).block();
+
+        assertNotNull(response);
+        assertEquals("UNKNOWN", response.getStatus());
+    }
+
+    @Test
+    void missingAccessTokenIsADefinitiveRejectionWithoutHttpCall() {
+        when(brokerClient.getAccessToken()).thenReturn(Mono.empty());
+
+        BrokerOrderResponse response = client.executeOrder(marketOrder()).block();
+
+        assertNotNull(response);
+        assertEquals("REJECTED", response.getStatus());
+        verifyNoInteractions(webClientBuilder);
+    }
+
     @Test
     void nullOrderRequestIsRejectedWithoutTokenOrHttpCall() {
         BrokerOrderResponse response = client.executeOrder(null).block();
@@ -33,6 +88,54 @@ class BrokerExecutionClientImplTest {
         assertNotNull(response);
         assertFalse(response.isSuccess());
         assertEquals("INVALID_REQUEST", response.getStatus());
+        verifyNoInteractions(webClientBuilder, brokerClient);
+    }
+
+    @Test
+    void modifyOrderRejectsBlankOrderIdWithoutTokenOrHttpCall() {
+        BrokerOrderRequest request = BrokerOrderRequest.builder()
+                .symbol("TCS")
+                .instrumentKey("NSE_EQ|TEST")
+                .signal("SELL")
+                .transactionType("SELL")
+                .quantity(2)
+                .triggerPrice(new java.math.BigDecimal("99.00"))
+                .price(java.math.BigDecimal.ZERO)
+                .orderType("SL-M")
+                .product("I")
+                .validity("DAY")
+                .tag("AI-SL-601")
+                .build();
+
+        BrokerOrderResponse response = client.modifyOrder(" ", request).block();
+
+        assertNotNull(response);
+        assertFalse(response.isSuccess());
+        assertEquals("INVALID_REQUEST", response.getStatus());
+        verifyNoInteractions(webClientBuilder, brokerClient);
+    }
+
+    @Test
+    void modifyOrderRejectsStopOrderWithoutPositiveTriggerPrice() {
+        BrokerOrderRequest request = BrokerOrderRequest.builder()
+                .symbol("TCS")
+                .instrumentKey("NSE_EQ|TEST")
+                .signal("SELL")
+                .transactionType("SELL")
+                .quantity(2)
+                .price(java.math.BigDecimal.ZERO)
+                .orderType("SL-M")
+                .product("I")
+                .validity("DAY")
+                .tag("AI-SL-601")
+                .build();
+
+        BrokerOrderResponse response = client.modifyOrder("order-601", request).block();
+
+        assertNotNull(response);
+        assertFalse(response.isSuccess());
+        assertEquals("INVALID_REQUEST", response.getStatus());
+        assertTrue(response.getMessage().contains("trigger price"));
         verifyNoInteractions(webClientBuilder, brokerClient);
     }
 

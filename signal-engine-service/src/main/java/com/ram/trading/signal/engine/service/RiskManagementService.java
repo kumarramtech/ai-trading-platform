@@ -1,6 +1,8 @@
 package com.ram.trading.signal.engine.service;
 
+import com.ram.trading.signal.engine.client.TradeExecutionClient.TradeExecutionPosition;
 import com.ram.trading.signal.engine.contant.SignalStatus;
+import com.ram.trading.signal.engine.risk.LiveTradeSnapshotService;
 import com.ram.trading.signal.engine.risk.RiskCheckResponse;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
@@ -9,27 +11,54 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
+/**
+ * Owns trading-risk limits (daily loss, trades per symbol, open trades, losing
+ * streak) for new entries. Paper mode reads PaperTrade rows; live mode reads the
+ * positions owned by Trade Execution Service, because live entries never create
+ * PaperTrade rows.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class RiskManagementService {
 
+    private static final Set<String> ACTIVE_LIVE_STATUSES = Set.of("OPEN", "ENTRY_PENDING", "EXIT_PENDING");
+
     private final PaperTradeRepository repository;
 
-    private static final double MAX_DAILY_LOSS = 2000;
+    private final LiveTradeSnapshotService liveTradeSnapshotService;
 
-    private static final int MAX_OPEN_TRADES = 20;
+    /** New entries stop for the day after this many losing trades in a row. */
+    @Value("${trading.risk.max-consecutive-losses:100}")
+    private int maxConsecutiveLosses = 100;
 
-    private static final int MAX_CONSECUTIVE_LOSSES = 100;
+    @Value("${trading.risk.max-daily-loss:2000}")
+    private double maxDailyLoss;
+
+    @Value("${trading.risk.max-open-trades:20}")
+    private int maxOpenTrades;
 
     @Value("${trading.max-trades-per-symbol-per-day}")
     private int maxTradesPerSymbolPerDay;
 
+    /** Same cooldown paper mode applies in PaperTradingService.validateTradeCreation. */
+    @Value("${trading.reentry.cooldown-minutes:15}")
+    private long reentryCooldownMinutes = 15;
+
     public RiskCheckResponse validateTrade(String symbol) {
+
+        if (liveTradeSnapshotService.isLiveMode()) {
+            return validateLiveTrade(symbol);
+        }
 
         List<String> violations = new ArrayList<>();
 
@@ -53,10 +82,102 @@ public class RiskManagementService {
                     "Maximum consecutive losses reached.");
         }
 
-        boolean allowed = violations.isEmpty();
+        return response(violations);
+    }
 
+    /**
+     * Same limits as paper mode, evaluated against today's live positions. Fails
+     * closed when the live snapshot is unavailable or stale.
+     */
+    private RiskCheckResponse validateLiveTrade(String symbol) {
+
+        Optional<List<TradeExecutionPosition>> snapshot = liveTradeSnapshotService.freshTrades();
+        if (snapshot.isEmpty()) {
+            log.warn("LIVE RISK CHECK BLOCKED | Symbol={} | Live position data from Trade Execution is unavailable or stale",
+                    symbol);
+            return response(List.of(
+                    "Live position data from Trade Execution is unavailable or stale. Trading halted until it recovers."));
+        }
+
+        List<TradeExecutionPosition> trades = snapshot.get();
+        List<String> violations = new ArrayList<>();
+
+        double todayPnL = trades.stream()
+                .map(TradeExecutionPosition::realizedPnl)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(BigDecimal::doubleValue)
+                .sum();
+        long symbolTradesToday = trades.stream()
+                .filter(trade -> symbol != null && symbol.equalsIgnoreCase(trade.symbol()))
+                .count();
+        long openTrades = trades.stream()
+                .filter(trade -> isActiveLiveStatus(trade.status()))
+                .count();
+        boolean symbolPositionOpen = trades.stream()
+                .anyMatch(trade -> symbol != null && symbol.equalsIgnoreCase(trade.symbol())
+                        && isActiveLiveStatus(trade.status()));
+
+        log.info("LIVE RISK CHECK | Symbol={} | TodayRealizedPnL={} | SymbolTradesToday={} | OpenTrades={}",
+                symbol, todayPnL, symbolTradesToday, openTrades);
+
+        if (symbolTradesToday >= maxTradesPerSymbolPerDay) {
+            violations.add("Maximum daily trades reached for symbol: " + symbol);
+        }
+        if (todayPnL <= -maxDailyLoss) {
+            violations.add("Daily loss limit exceeded. Trading halted.");
+        }
+        if (openTrades >= maxOpenTrades) {
+            violations.add("Maximum open trades reached.");
+        }
+        if (symbolPositionOpen) {
+            violations.add("Open live position already exists for symbol: " + symbol);
+        }
+        LocalDateTime cooldownUntil = liveReentryCooldownUntil(trades, symbol);
+        if (cooldownUntil != null && LocalDateTime.now().isBefore(cooldownUntil)) {
+            violations.add("Re-entry cooldown active for symbol: " + symbol + " until " + cooldownUntil);
+        }
+        if (liveConsecutiveLosses(trades) >= maxConsecutiveLosses) {
+            violations.add("Maximum consecutive losses reached.");
+        }
+
+        return response(violations);
+    }
+
+    private static boolean isActiveLiveStatus(String status) {
+        return status != null && ACTIVE_LIVE_STATUSES.contains(status.trim().toUpperCase(java.util.Locale.ROOT));
+    }
+
+    private LocalDateTime liveReentryCooldownUntil(List<TradeExecutionPosition> trades, String symbol) {
+        if (symbol == null || reentryCooldownMinutes <= 0) {
+            return null;
+        }
+        return trades.stream()
+                .filter(trade -> symbol.equalsIgnoreCase(trade.symbol()) && trade.closedAt() != null)
+                .map(TradeExecutionPosition::closedAt)
+                .max(Comparator.naturalOrder())
+                .map(closedAt -> closedAt.plusMinutes(reentryCooldownMinutes))
+                .orElse(null);
+    }
+
+    private static int liveConsecutiveLosses(List<TradeExecutionPosition> trades) {
+        List<TradeExecutionPosition> closed = trades.stream()
+                .filter(trade -> "CLOSED".equalsIgnoreCase(trade.status()) && trade.realizedPnl() != null)
+                .sorted(Comparator.comparing(TradeExecutionPosition::closedAt,
+                        Comparator.nullsLast(Comparator.<LocalDateTime>reverseOrder())))
+                .toList();
+        int losses = 0;
+        for (TradeExecutionPosition trade : closed) {
+            if (trade.realizedPnl().signum() >= 0) {
+                break;
+            }
+            losses++;
+        }
+        return losses;
+    }
+
+    private static RiskCheckResponse response(List<String> violations) {
         return RiskCheckResponse.builder()
-                .allowed(allowed)
+                .allowed(violations.isEmpty())
                 .violations(violations)
                 .build();
     }
@@ -85,7 +206,7 @@ public class RiskManagementService {
                 "Today's PnL = {}",
                 todayPnL);
 
-        return todayPnL <= -MAX_DAILY_LOSS;
+        return todayPnL <= -maxDailyLoss;
     }
 
     private boolean maxTradesPerSymbolPerDayReached(String symbol) {
@@ -122,7 +243,7 @@ public class RiskManagementService {
                 "Open Trades = {}",
                 openTrades);
 
-        return openTrades >= MAX_OPEN_TRADES;
+        return openTrades >= maxOpenTrades;
     }
 
     private boolean consecutiveLossesExceeded() {
@@ -131,8 +252,16 @@ public class RiskManagementService {
                 repository.findAllByOrderByEntryTimeDesc();
 
         int consecutiveLosses = 0;
+        LocalDate today = LocalDate.now();
 
         for (PaperTrade trade : trades) {
+
+            // The streak is a daily breaker, as in live mode; an older streak
+            // would otherwise block entries forever (no new trade can reset it).
+            if (trade.getEntryTime() == null
+                    || !trade.getEntryTime().toLocalDate().equals(today)) {
+                break;
+            }
 
             if (trade.getProfitLoss() == null) {
                 continue;
@@ -143,7 +272,7 @@ public class RiskManagementService {
                 consecutiveLosses++;
 
                 if (consecutiveLosses
-                        >= MAX_CONSECUTIVE_LOSSES) {
+                        >= maxConsecutiveLosses) {
 
                     log.warn(
                             "Consecutive losses reached = {}",

@@ -12,4 +12,10 @@ public interface PaperTradingAccountService {
     Mono<Void> releaseMargin(Double requiredMargin, Double profitLoss);
 
     Mono<Void> resetAccount();
+
+    /**
+     * Returns today's opening broker funds, recording {@code currentBrokerFunds}
+     * as the opening value on the first call of the day.
+     */
+    Mono<Double> brokerOpeningFunds(double currentBrokerFunds);
 }

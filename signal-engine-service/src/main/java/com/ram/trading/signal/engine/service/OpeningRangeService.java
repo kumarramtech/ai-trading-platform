@@ -9,16 +9,20 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class OpeningRangeService {
+
+    private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
 
     private static final LocalTime OPENING_RANGE_START =
             LocalTime.of(9, 15);
@@ -43,6 +47,14 @@ public class OpeningRangeService {
     private final Map<String, OpeningRange> openingRanges =
             new ConcurrentHashMap<>();
 
+    /**
+     * "symbol|date" keys already warned about as INCOMPLETE, so the warning
+     * is logged once per symbol per day instead of once per candle
+     * (it produced ~84,000 lines in one session).
+     */
+    private final Set<String> incompleteWarned =
+            ConcurrentHashMap.newKeySet();
+
 
     /**
      * Calculate the opening range for one symbol.
@@ -66,7 +78,7 @@ public class OpeningRangeService {
         }
 
         LocalDate today =
-                LocalDate.now();
+                LocalDate.now(MARKET_ZONE);
 
         LocalDateTime start =
                 LocalDateTime.of(
@@ -106,13 +118,26 @@ public class OpeningRangeService {
          */
         if (!hasCompleteRange(candles)) {
 
-            log.warn(
-                    "OPENING RANGE INCOMPLETE | " +
-                            "Symbol={} | Expected={} | Actual={}",
-                    symbol,
-                    EXPECTED_CANDLE_COUNT,
-                    candles.size()
-            );
+            if (incompleteWarned.add(symbol + "|" + today)) {
+
+                log.warn(
+                        "OPENING RANGE INCOMPLETE | " +
+                                "Symbol={} | Expected={} | Actual={}",
+                        symbol,
+                        EXPECTED_CANDLE_COUNT,
+                        candles.size()
+                );
+
+            } else {
+
+                log.debug(
+                        "OPENING RANGE INCOMPLETE (repeat) | " +
+                                "Symbol={} | Expected={} | Actual={}",
+                        symbol,
+                        EXPECTED_CANDLE_COUNT,
+                        candles.size()
+                );
+            }
 
             return null;
         }
@@ -253,7 +278,28 @@ public class OpeningRangeService {
             return null;
         }
 
-        return openingRanges.get(symbol);
+        OpeningRange cached = openingRanges.get(symbol);
+
+        if (cached == null) {
+
+            return null;
+        }
+
+        /*
+         * Never serve a previous day's range. The cache is not cleared at
+         * day rollover, so a JVM that stays up overnight would otherwise
+         * evaluate today's candles against yesterday's high/low.
+         */
+        if (cached.getTradingDate() == null
+                || !cached.getTradingDate()
+                .equals(LocalDate.now(MARKET_ZONE))) {
+
+            openingRanges.remove(symbol, cached);
+
+            return null;
+        }
+
+        return cached;
     }
 
 
@@ -287,7 +333,7 @@ public class OpeningRangeService {
 
         LocalDateTime expected =
                 LocalDateTime.of(
-                        LocalDate.now(),
+                        LocalDate.now(MARKET_ZONE),
                         OPENING_RANGE_START
                 );
 
