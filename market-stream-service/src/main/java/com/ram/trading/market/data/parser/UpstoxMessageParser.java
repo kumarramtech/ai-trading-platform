@@ -132,6 +132,7 @@ public class UpstoxMessageParser {
                         .volume(snapshot.volume())
                         .timestamp(ltpc.getLtt())
                         .previousClose(previousClose)
+                        .dayOpenPrice(extractDayOpen(feed))
                         .change(change)
                         .changePercentage(changePercentage)
                         .build();
@@ -234,6 +235,39 @@ public class UpstoxMessageParser {
         }
 
         return FullFeedSnapshot.empty();
+    }
+
+    /**
+     * Today's session open from the "1d" OHLC entry. Index feeds carry it
+     * in IndexFF, stock feeds in MarketFF. Null when the feed omits it.
+     */
+    private Double extractDayOpen(MarketDataFeed.Feed feed) {
+
+        if (!feed.hasFullFeed()) {
+            return null;
+        }
+
+        var fullFeed = feed.getFullFeed();
+        MarketDataFeed.MarketOHLC marketOhlc = null;
+
+        if (fullFeed.hasMarketFF() && fullFeed.getMarketFF().hasMarketOHLC()) {
+            marketOhlc = fullFeed.getMarketFF().getMarketOHLC();
+        } else if (fullFeed.hasIndexFF() && fullFeed.getIndexFF().hasMarketOHLC()) {
+            marketOhlc = fullFeed.getIndexFF().getMarketOHLC();
+        }
+
+        if (marketOhlc == null) {
+            return null;
+        }
+
+        for (var ohlc : marketOhlc.getOhlcList()) {
+
+            if ("1d".equalsIgnoreCase(ohlc.getInterval()) && ohlc.getOpen() > 0) {
+                return ohlc.getOpen();
+            }
+        }
+
+        return null;
     }
 
     private record FullFeedSnapshot(

@@ -35,6 +35,9 @@ public class Tick {
 
     private Double previousClose;
 
+    /** Today's session open from the feed's 1d OHLC; openPrice is the I1 candle's open. */
+    private Double dayOpenPrice;
+
     private Double change;
 
     private Double changePercentage;
