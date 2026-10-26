@@ -30,4 +30,6 @@ public class TradingSignal {
     private String riskLevel;
     private String exitStrategy;
     private String positionSize;
+    /** Entry setup (JUDAS, ORB, MIDDAY) carried through to the trade. */
+    private String strategy;
 }

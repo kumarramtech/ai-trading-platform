@@ -226,6 +226,17 @@ public class RiskManagementService {
         return -pnl < notional * scratchLossPct / 100.0;
     }
 
+    /**
+     * Whether the setup won or lost on price: gross P&L when recorded. Net P&L
+     * also carries ~0.13% round-trip charges, which would turn every
+     * break-even exit into a "real loss"; money limits (daily loss) use net.
+     */
+    private static Double priceOutcome(PaperTrade trade) {
+        return trade.getGrossProfitLoss() != null
+                ? trade.getGrossProfitLoss()
+                : trade.getProfitLoss();
+    }
+
     private boolean isRealLoss(double pnl, Double entryPrice, Integer quantity) {
         return pnl < 0 && !isScratch(pnl, entryPrice, quantity);
     }
@@ -245,8 +256,8 @@ public class RiskManagementService {
                                 trade.getExitTime() != null
                                         && trade.getExitTime().toLocalDate().equals(today))
                         .filter(trade ->
-                                trade.getProfitLoss() != null
-                                        && isRealLoss(trade.getProfitLoss(), trade.getEntryPrice(), trade.getQuantity()))
+                                priceOutcome(trade) != null
+                                        && isRealLoss(priceOutcome(trade), trade.getEntryPrice(), trade.getQuantity()))
                         .count();
 
         log.info(
@@ -351,15 +362,17 @@ public class RiskManagementService {
                 break;
             }
 
-            if (trade.getProfitLoss() == null) {
+            Double outcome = priceOutcome(trade);
+
+            if (outcome == null) {
                 continue;
             }
 
-            if (isScratch(trade.getProfitLoss(), trade.getEntryPrice(), trade.getQuantity())) {
+            if (isScratch(outcome, trade.getEntryPrice(), trade.getQuantity())) {
                 continue;
             }
 
-            if (trade.getProfitLoss() < 0) {
+            if (outcome < 0) {
 
                 consecutiveLosses++;
 

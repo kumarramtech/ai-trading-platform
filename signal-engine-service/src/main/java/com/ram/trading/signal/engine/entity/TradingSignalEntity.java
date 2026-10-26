@@ -68,4 +68,8 @@ public class TradingSignalEntity {
     @Column(length = 1000)
     private String newsSummary;
 
+    /** Entry setup (JUDAS, ORB, MIDDAY) that produced the signal. */
+    @Column(name = "setup_strategy")
+    private String strategy;
+
 }

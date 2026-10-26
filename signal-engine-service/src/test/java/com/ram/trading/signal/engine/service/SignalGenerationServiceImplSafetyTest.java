@@ -231,7 +231,9 @@ class SignalGenerationServiceImplSafetyTest {
         verify(paperTradingService).createTrade(eq(entity), eq(indicator),
                 // The service forwards the validated sizing result to paper execution.
                 argThat(sizing -> sizing != null
-                        && sizing.isValid() && sizing.getMarginBasedQuantity() == 10));
+                        && sizing.isValid() && sizing.getMarginBasedQuantity() == 10),
+                // and the fresh market price, which the paper fill is based on (as a live MARKET order).
+                eq(100.0));
         verifyNoInteractions(tradeExecutionClient);
     }
 

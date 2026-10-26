@@ -84,4 +84,31 @@ public class PaperTrade {
 
     @Column(name = "target_extension_reason")
     private String targetExtensionReason;
+
+    /** Entry setup that produced the trade: JUDAS, ORB or MIDDAY. */
+    @Column(name = "setup_strategy")
+    private String strategy;
+
+    /** Market price the fill was based on, before slippage (entry and exit). */
+    @Column(name = "reference_entry_price")
+    private Double referenceEntryPrice;
+
+    @Column(name = "reference_exit_price")
+    private Double referenceExitPrice;
+
+    /** Planned loss at the initial stop: |entry - initial stop| x quantity (1R). */
+    @Column(name = "planned_risk")
+    private Double plannedRisk;
+
+    /** P&L before charges. profitLoss is net of charges, as a live account would show. */
+    @Column(name = "gross_profit_loss")
+    private Double grossProfitLoss;
+
+    /** Brokerage + STT + exchange + SEBI + stamp duty + GST for the round trip. */
+    @Column(name = "charges")
+    private Double charges;
+
+    /** Net P&L in units of planned risk (profitLoss / plannedRisk). */
+    @Column(name = "r_multiple")
+    private Double rMultiple;
 }

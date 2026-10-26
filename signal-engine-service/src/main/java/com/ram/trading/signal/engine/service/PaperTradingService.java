@@ -23,6 +23,7 @@ import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.risk.PositionSizingResult;
 import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
+import com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import com.ram.trading.signal.engine.util.TradeUtil;
 import com.ram.trading.signal.engine.util.TradingSessionService;
@@ -74,6 +75,16 @@ public class PaperTradingService {
 
     private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
 
+    private final IntradayChargesCalculator chargesCalculator;
+
+    /**
+     * Adverse slippage per fill, in % of price. Live entries and exits are
+     * MARKET orders (and the protective stop is SL-M), which fill across the
+     * spread, so a paper fill at the exact LTP would flatter every trade.
+     */
+    @Value("${paper.trading.slippage-pct:0.03}")
+    private double slippagePct;
+
     @Value("${trading.reentry.cooldown-minutes:15}")
     private long reentryCooldownMinutes;
 
@@ -88,6 +99,19 @@ public class PaperTradingService {
             TradingSignalEntity signal,
             TechnicalIndicatorResponse indicatorResponse,
             PositionSizingResult sizingResult) {
+        createTrade(signal, indicatorResponse, sizingResult, null);
+    }
+
+    /**
+     * @param marketPrice price at the moment of execution (what a live MARKET
+     *                    order would fill against); the signal's entry price is
+     *                    used when it is unavailable
+     */
+    public synchronized void createTrade(
+            TradingSignalEntity signal,
+            TechnicalIndicatorResponse indicatorResponse,
+            PositionSizingResult sizingResult,
+            Double marketPrice) {
 
         /*
          * ============================================================
@@ -343,6 +367,47 @@ public class PaperTradingService {
 
         /*
          * ============================================================
+         * STEP 10B : LIVE-LIKE FILL
+         * ============================================================
+         *
+         * A live MARKET entry fills at the price when the order reaches
+         * the exchange (after the AI call), across the spread; stop and
+         * target stay at their planned levels. A fill already through
+         * either level is a trade live would not want, so skip it.
+         */
+        double referenceEntryPrice =
+                marketPrice != null && Double.isFinite(marketPrice) && marketPrice > 0
+                        ? marketPrice
+                        : signal.getEntryPrice();
+
+        boolean longTrade = SignalType.BUY.name().equalsIgnoreCase(signal.getSignal());
+
+        double entryFill = round(slip(referenceEntryPrice, longTrade));
+
+        boolean fillBeyondPlan = longTrade
+                ? entryFill <= signal.getStopLoss() || entryFill >= signal.getTargetPrice()
+                : entryFill >= signal.getStopLoss() || entryFill <= signal.getTargetPrice();
+
+        if (fillBeyondPlan) {
+
+            log.warn(
+                    "PAPER FILL REJECTED | Symbol={} | Signal={} | SignalEntry={} | MarketPrice={} | "
+                            + "Fill={} | Stop={} | Target={} | Price already through stop or target",
+                    signal.getSymbol(),
+                    signal.getSignal(),
+                    signal.getEntryPrice(),
+                    referenceEntryPrice,
+                    entryFill,
+                    signal.getStopLoss(),
+                    signal.getTargetPrice());
+
+            return;
+        }
+
+        investmentAmount = quantity * entryFill;
+
+        /*
+         * ============================================================
          * STEP 11 : APPROVED EXECUTION DATA
          * ============================================================
          *
@@ -430,8 +495,16 @@ public class PaperTradingService {
                                     signal.getSignal())
 
                             .entryPrice(
-                                    round(
-                                            signal.getEntryPrice()))
+                                    entryFill)
+
+                            .referenceEntryPrice(
+                                    round(referenceEntryPrice))
+
+                            .strategy(
+                                    signal.getStrategy())
+
+                            .plannedRisk(
+                                    round(Math.abs(entryFill - signal.getStopLoss()) * quantity))
 
                             .quantity(
                                     quantity)
@@ -933,24 +1006,7 @@ public class PaperTradingService {
             return Mono.empty();
         }
 
-        trade.setExitPrice(exitPrice);
-
-        double profitLoss;
-
-        if (SignalType.SELL.name().equalsIgnoreCase(trade.getSignal())) {
-
-            profitLoss =
-                    (trade.getEntryPrice() - exitPrice)
-                            * trade.getQuantity();
-
-        } else {
-
-            profitLoss =
-                    (exitPrice - trade.getEntryPrice())
-                            * trade.getQuantity();
-        }
-
-        trade.setProfitLoss(profitLoss);
+        settle(trade, exitPrice);
 
         trade.setStatus(status);
 
@@ -2167,14 +2223,16 @@ public class PaperTradingService {
             trade.setStatus(SignalStatus.CLOSED);
         }
 
-        trade.setExitPrice(round(tick.getLastTradedPrice()));
         trade.setExitTime(LocalDateTime.now());
 
-        Double pnl = round(calculatePnL(trade));
+        settle(trade, tick.getLastTradedPrice());
 
-        trade.setProfitLoss(pnl);
-
-        log.info("Profit/Loss : {}", pnl);
+        log.info(
+                "Profit/Loss : {} (gross {} - charges {}) | R={}",
+                trade.getProfitLoss(),
+                trade.getGrossProfitLoss(),
+                trade.getCharges(),
+                trade.getRMultiple());
 
         return Mono.fromCallable(() -> {
 
@@ -2346,6 +2404,45 @@ public class PaperTradingService {
                             ex);
                     return Mono.empty();
                 });
+    }
+
+    /**
+     * Fills the exit like a live MARKET / SL-M order (adverse slippage from the
+     * trigger price) and books P&L the way the broker account will: profitLoss
+     * is net of round-trip charges, with gross, charges and R kept alongside.
+     */
+    private void settle(PaperTrade trade, double referenceExitPrice) {
+
+        boolean longTrade = !SignalType.SELL.name().equalsIgnoreCase(trade.getSignal());
+
+        // Closing a long sells, closing a short buys.
+        trade.setReferenceExitPrice(round(referenceExitPrice));
+        trade.setExitPrice(round(slip(referenceExitPrice, !longTrade)));
+
+        double gross = calculatePnL(trade);
+
+        IntradayChargesCalculator.Charges charges =
+                chargesCalculator.roundTrip(
+                        trade.getSignal(),
+                        trade.getEntryPrice(),
+                        trade.getExitPrice(),
+                        trade.getQuantity());
+
+        double net = gross - charges.getTotal();
+
+        trade.setGrossProfitLoss(round(gross));
+        trade.setCharges(charges.getTotal());
+        trade.setProfitLoss(round(net));
+
+        if (trade.getPlannedRisk() != null && trade.getPlannedRisk() > 0) {
+            trade.setRMultiple(round(net / trade.getPlannedRisk()));
+        }
+    }
+
+    /** Price a market order fills at: worse by slippagePct for the side taken. */
+    private double slip(double price, boolean buying) {
+        double factor = slippagePct / 100.0;
+        return buying ? price * (1 + factor) : price * (1 - factor);
     }
 
     private Double calculatePnL(PaperTrade trade) {

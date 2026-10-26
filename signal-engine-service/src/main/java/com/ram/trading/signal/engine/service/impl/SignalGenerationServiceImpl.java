@@ -45,6 +45,8 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
+import com.ram.trading.signal.engine.service.performance.SetupEdgeGate;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -94,6 +96,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final ORBValidator orbValidator;
 
     private final PositionSizingService positionSizingService;
+
+    private final SetupEdgeGate setupEdgeGate;
 
     /**
      * Selects the entry execution path. PAPER remains the default;
@@ -739,6 +743,33 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         log.debug(
                 "======================================================");
 
+        /*
+         * EDGE GATE: skip setups whose strategy and time of day have lost
+         * money net of charges over enough recent trades (before spending
+         * an AI call on them).
+         */
+        SetupEdgeGate.EdgeDecision edge =
+                setupEdgeGate.evaluate(
+                        request.getSetupStrategy(),
+                        LocalTime.now(ZoneId.of("Asia/Kolkata")));
+
+        if (edge != null && !edge.allowed()) {
+
+            log.info(
+                    "EDGE GATE BLOCKED | Symbol={} | Strategy={} | EntryTime={} | {}",
+                    request.getSymbol(),
+                    edge.strategy(),
+                    edge.entryTime(),
+                    edge.reason());
+
+            return Mono.just(
+                    TradingSignal.builder()
+                            .symbol(request.getSymbol())
+                            .signal(SignalType.HOLD.name())
+                            .strategy(request.getSetupStrategy())
+                            .build());
+        }
+
         return tradingOrchestratorService
                 .executeTrade(request)
 
@@ -993,6 +1024,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 tradingSignalMapper.map(
                                         aiResponse,
                                         request);
+
+                        signal.setStrategy(request.getSetupStrategy());
 
                         /*
                          * The AI only confirms the direction. Stop-loss and
@@ -1611,7 +1644,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                                             paperTradingService.createTrade(
                                                                     entity,
                                                                     indicator,
-                                                                    sizingResult);
+                                                                    sizingResult,
+                                                                    freshMarketPrice);
                                                         })
                                                         .subscribeOn(
                                                                 Schedulers.boundedElastic())

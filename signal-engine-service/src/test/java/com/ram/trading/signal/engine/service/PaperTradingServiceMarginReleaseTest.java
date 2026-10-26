@@ -12,6 +12,7 @@ import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.exit.ExitDecision;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import com.ram.trading.signal.engine.service.ai.TradingFunnelStatisticsService;
+import com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator;
 import com.ram.trading.signal.engine.strategy.BasicTradingStrategy;
 import com.ram.trading.signal.engine.util.TradingSessionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,7 +59,8 @@ class PaperTradingServiceMarginReleaseTest {
                 mock(TradingSessionService.class),
                 tradingSignalService,
                 balanceMarginClient,
-                mock(TradingFunnelStatisticsService.class));
+                mock(TradingFunnelStatisticsService.class),
+                new IntradayChargesCalculator());
     }
 
     @Test
@@ -68,8 +70,10 @@ class PaperTradingServiceMarginReleaseTest {
         StepVerifier.create(service.closeTrade(openTrade(), targetExit(), tickAt(110.0)))
                 .verifyComplete();
 
-        // 10 shares, 100 -> 110: P&L +100 on Rs 10,000 reserved margin.
-        verify(balanceMarginClient).releaseMargin(10000.0, 100.0);
+        // 10 shares, 100 -> 110: gross +100 on Rs 10,000 reserved margin. The account
+        // receives it net of round-trip charges, as the broker account would.
+        double charges = new IntradayChargesCalculator().roundTrip("BUY", 100.0, 110.0, 10).getTotal();
+        verify(balanceMarginClient).releaseMargin(10000.0, Math.round((100.0 - charges) * 100.0) / 100.0);
     }
 
     @Test

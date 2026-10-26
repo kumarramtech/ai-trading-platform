@@ -34,6 +34,7 @@ public class TradingSignalService {
                 .stopLoss(round(signal.getStopLoss()))
                 .confidence(signal.getConfidence())
                 .reason(signal.getReason())
+                .strategy(signal.getStrategy())
 
                 // Engineering technical indicators
                 .rsi(round(signal.getRsi()))
