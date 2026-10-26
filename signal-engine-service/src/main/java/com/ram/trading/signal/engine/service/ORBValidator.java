@@ -5,6 +5,7 @@ import com.ram.trading.signal.engine.dto.premarket.ORBResult;
 import com.ram.trading.signal.engine.dto.premarket.OpeningRange;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -30,11 +31,12 @@ public class ORBValidator {
             LocalTime.of(9, 30);
 
     /**
-     * We don't allow an ORB setup to appear indefinitely
-     * throughout the entire trading day.
+     * Last minute an ORB confirmation can come from. Defaults to the entry
+     * cut so the system keeps looking for breakouts all session; the 1.2x
+     * opening-range volume rule filters out thin afternoon breakouts.
      */
-    private static final LocalTime ANALYSIS_END =
-            LocalTime.of(11, 30);
+    @Value("${trading.strategy.orb.end:${trading.market.entry.cut:14:30}}")
+    private LocalTime orbEnd = LocalTime.of(14, 30);
 
     /**
      * Confirmation volume must be at least 1.2x the average
@@ -106,7 +108,7 @@ public class ORBValidator {
         LocalDateTime analysisEnd =
                 LocalDateTime.of(
                         today,
-                        ANALYSIS_END
+                        orbEnd
                 );
 
         List<MinuteCandle> candles =

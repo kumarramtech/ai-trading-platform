@@ -11,12 +11,16 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class MarketScannerScheduler {
+
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     private final MarketScannerService marketScannerService;
 
@@ -71,7 +75,9 @@ public class MarketScannerScheduler {
     /**
      * V2.2 MIDDAY DISCOVERY
      *
-     * Runs once at 11:30 AM IST on weekdays.
+     * Runs every 30 minutes from 11:00 IST on weekdays
+     * (trading.strategy.midday.discovery-cron); runs at or after the
+     * 14:30 entry cut are skipped.
      *
      * Flow:
      *
@@ -92,7 +98,7 @@ public class MarketScannerScheduler {
      * - create paper trades
      */
     @Scheduled(
-            cron = "0 30 11 * * MON-FRI",
+            cron = "${trading.strategy.midday.discovery-cron:0 0/30 11-14 * * MON-FRI}",
             zone = "Asia/Kolkata"
     )
     public void discoverMiddayCandidates() {
@@ -109,7 +115,7 @@ public class MarketScannerScheduler {
 
         log.info("======================================================");
         log.info("V2.2 MIDDAY DISCOVERY STARTED");
-        log.info("Discovery Time : 11:30 AM IST");
+        log.info("Discovery Time : {} IST", LocalTime.now(IST).withNano(0));
         log.info("======================================================");
 
         middayCandidateService
@@ -139,7 +145,10 @@ public class MarketScannerScheduler {
     /**
      * V2.2 MIDDAY REVALIDATION + SIGNAL HANDOFF
      *
-     * Runs once at 12:00 PM IST on weekdays.
+     * Runs 15 minutes after each discovery (11:15, 11:45 ... 14:15 IST) on
+     * weekdays (trading.strategy.midday.revalidation-cron). A symbol that
+     * qualifies again on a later cycle is held back by the risk rules
+     * (open position, re-entry cooldown, per-symbol trade and loss limits).
      *
      * Flow:
      *
@@ -159,7 +168,7 @@ public class MarketScannerScheduler {
      * existing signal-generation pipeline.
      */
     @Scheduled(
-            cron = "0 0 12 * * MON-FRI",
+            cron = "${trading.strategy.midday.revalidation-cron:0 15/30 11-14 * * MON-FRI}",
             zone = "Asia/Kolkata"
     )
     public void revalidateAndGenerateSignals() {
@@ -176,7 +185,7 @@ public class MarketScannerScheduler {
 
         log.info("======================================================");
         log.info("V2.2 MIDDAY REVALIDATION STARTED");
-        log.info("Revalidation Time : 12:00 PM IST");
+        log.info("Revalidation Time : {} IST", LocalTime.now(IST).withNano(0));
         log.info("======================================================");
 
         middayRevalidationService

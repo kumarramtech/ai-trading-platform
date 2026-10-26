@@ -37,9 +37,21 @@ public class RiskManagementService {
 
     private final LiveTradeSnapshotService liveTradeSnapshotService;
 
-    /** New entries stop for the day after this many losing trades in a row. */
-    @Value("${trading.risk.max-consecutive-losses:100}")
-    private int maxConsecutiveLosses = 100;
+    /**
+     * New entries stop for the day after this many losing trades in a row,
+     * across all symbols. 0 disables it: the day is then halted only by
+     * max-daily-loss, and a losing stock is blocked by max-losses-per-symbol-per-day.
+     */
+    @Value("${trading.risk.max-consecutive-losses:0}")
+    private int maxConsecutiveLosses = 0;
+
+    /**
+     * A symbol takes no new entry for the rest of the day after this many
+     * losing trades in it (scratches excluded); other symbols keep trading.
+     * 0 disables it.
+     */
+    @Value("${trading.risk.max-losses-per-symbol-per-day:3}")
+    private int maxLossesPerSymbolPerDay = 3;
 
     /**
      * A loss smaller than this % of the position's notional is a scratch
@@ -75,6 +87,11 @@ public class RiskManagementService {
         if (maxTradesPerSymbolPerDayReached(symbol)) {
             violations.add(
                     "Maximum daily trades reached for symbol: " + symbol);
+        }
+
+        if (maxLossesPerSymbolPerDayReached(symbol)) {
+            violations.add(
+                    "Maximum daily losses reached for symbol: " + symbol);
         }
 
         if (dailyLossExceeded()) {
@@ -126,12 +143,22 @@ public class RiskManagementService {
         boolean symbolPositionOpen = trades.stream()
                 .anyMatch(trade -> symbol != null && symbol.equalsIgnoreCase(trade.symbol())
                         && isActiveLiveStatus(trade.status()));
+        long symbolLossesToday = trades.stream()
+                .filter(trade -> symbol != null && symbol.equalsIgnoreCase(trade.symbol()))
+                .filter(trade -> "CLOSED".equalsIgnoreCase(trade.status()) && trade.realizedPnl() != null)
+                .filter(trade -> isRealLoss(trade.realizedPnl().doubleValue(),
+                        trade.averageEntryPrice() == null ? null : trade.averageEntryPrice().doubleValue(),
+                        trade.filledQuantity()))
+                .count();
 
-        log.info("LIVE RISK CHECK | Symbol={} | TodayRealizedPnL={} | SymbolTradesToday={} | OpenTrades={}",
-                symbol, todayPnL, symbolTradesToday, openTrades);
+        log.info("LIVE RISK CHECK | Symbol={} | TodayRealizedPnL={} | SymbolTradesToday={} | SymbolLossesToday={} | OpenTrades={}",
+                symbol, todayPnL, symbolTradesToday, symbolLossesToday, openTrades);
 
         if (symbolTradesToday >= maxTradesPerSymbolPerDay) {
             violations.add("Maximum daily trades reached for symbol: " + symbol);
+        }
+        if (maxLossesPerSymbolPerDay > 0 && symbolLossesToday >= maxLossesPerSymbolPerDay) {
+            violations.add("Maximum daily losses reached for symbol: " + symbol);
         }
         if (todayPnL <= -maxDailyLoss) {
             violations.add("Daily loss limit exceeded. Trading halted.");
@@ -146,7 +173,7 @@ public class RiskManagementService {
         if (cooldownUntil != null && LocalDateTime.now().isBefore(cooldownUntil)) {
             violations.add("Re-entry cooldown active for symbol: " + symbol + " until " + cooldownUntil);
         }
-        if (liveConsecutiveLosses(trades) >= maxConsecutiveLosses) {
+        if (maxConsecutiveLosses > 0 && liveConsecutiveLosses(trades) >= maxConsecutiveLosses) {
             violations.add("Maximum consecutive losses reached.");
         }
 
@@ -197,6 +224,38 @@ public class RiskManagementService {
         }
         double notional = entryPrice * quantity;
         return -pnl < notional * scratchLossPct / 100.0;
+    }
+
+    private boolean isRealLoss(double pnl, Double entryPrice, Integer quantity) {
+        return pnl < 0 && !isScratch(pnl, entryPrice, quantity);
+    }
+
+    private boolean maxLossesPerSymbolPerDayReached(String symbol) {
+
+        if (maxLossesPerSymbolPerDay <= 0) {
+            return false;
+        }
+
+        LocalDate today = LocalDate.now();
+
+        long lossesToday =
+                repository.findBySymbol(symbol)
+                        .stream()
+                        .filter(trade ->
+                                trade.getExitTime() != null
+                                        && trade.getExitTime().toLocalDate().equals(today))
+                        .filter(trade ->
+                                trade.getProfitLoss() != null
+                                        && isRealLoss(trade.getProfitLoss(), trade.getEntryPrice(), trade.getQuantity()))
+                        .count();
+
+        log.info(
+                "Symbol = {}, Symbol Losses Today = {}, Max Losses Per Symbol Per Day = {}",
+                symbol,
+                lossesToday,
+                maxLossesPerSymbolPerDay);
+
+        return lossesToday >= maxLossesPerSymbolPerDay;
     }
 
     private static RiskCheckResponse response(List<String> violations) {
@@ -272,6 +331,10 @@ public class RiskManagementService {
     }
 
     private boolean consecutiveLossesExceeded() {
+
+        if (maxConsecutiveLosses <= 0) {
+            return false;
+        }
 
         List<PaperTrade> trades =
                 repository.findAllByOrderByEntryTimeDesc();

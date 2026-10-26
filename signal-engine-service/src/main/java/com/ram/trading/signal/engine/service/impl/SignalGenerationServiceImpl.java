@@ -49,6 +49,7 @@ import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
@@ -108,6 +109,10 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     @Value("${trading.market.strategy.entry.start:09:30}")
     private LocalTime strategyEntryStart = LocalTime.of(9, 30);
 
+    /** ORB entries run until this time (JUDAS stays an opening-hour setup, 09:30-10:30). */
+    @Value("${trading.strategy.orb.end:${trading.market.entry.cut:14:30}}")
+    private LocalTime orbEntryEnd = LocalTime.of(14, 30);
+
     /**
      * The 12:00 MIDDAY path enters on daily indicators and the discovery move,
      * without an intraday JUDAS/ORB trigger or a market-regime check.
@@ -125,6 +130,26 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private long detachedPipelineTimeoutSeconds = 90L;
 
     private final AtomicInteger detachedPipelinesInFlight = new AtomicInteger();
+
+    /** Index regime from the latest live tick, lent to the MIDDAY path (which has no tick). */
+    private record RegimeSnapshot(Trend trend, LocalDateTime seenAt) {}
+
+    private static final Duration REGIME_MAX_AGE = Duration.ofMinutes(5);
+
+    private final AtomicReference<RegimeSnapshot> latestMarketRegime = new AtomicReference<>();
+
+    /**
+     * The regime seen on a live tick in the last 5 minutes, so the market-regime
+     * guard can veto counter-trend MIDDAY entries; null (no veto, as before) if stale.
+     */
+    private Trend freshMarketTrend() {
+        RegimeSnapshot snapshot = latestMarketRegime.get();
+        if (snapshot == null
+                || snapshot.seenAt().isBefore(LocalDateTime.now().minus(REGIME_MAX_AGE))) {
+            return null;
+        }
+        return snapshot.trend();
+    }
 
     @PostConstruct
     private void validateExecutionTradeMode() {
@@ -374,6 +399,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     .setupStrategy("MIDDAY")
                     .setupDirection(SignalType.valueOf(direction))
                     .marketContext(MarketContext.builder()
+                            .marketTrend(freshMarketTrend())
                             .marketTime(LocalDateTime.now())
                             .build())
                     .build();
@@ -434,6 +460,10 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     tick.getSymbol());
 
             return Mono.empty();
+        }
+
+        if (toTrend(tick.getMarketRegime()) != null) {
+            latestMarketRegime.set(new RegimeSnapshot(toTrend(tick.getMarketRegime()), LocalDateTime.now()));
         }
 
         log.debug(
@@ -2002,11 +2032,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
          * ORB
          * ============================================================
          *
-         * 09:30 - 11:30. Confirmation must be from the current
-         * completed candle, not an older historical setup.
+         * 09:30 - trading.strategy.orb.end (entry cut by default).
+         * Confirmation must be from the current completed candle, not
+         * an older historical setup.
          */
         if (!candleTime.isBefore(strategyEntryStart)
-                && candleTime.isBefore(LocalTime.of(11, 30))) {
+                && candleTime.isBefore(orbEntryEnd)) {
 
             ORBResult orb =
                     orbValidator.validate(openingRange, candleTime);
