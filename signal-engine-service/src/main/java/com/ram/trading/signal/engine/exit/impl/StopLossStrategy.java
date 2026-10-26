@@ -32,13 +32,23 @@ public class StopLossStrategy implements ExitStrategy {
 
         if (stopLossHit) {
 
-            log.info("Stop Loss Triggered for {}", position.getSymbol());
+            /*
+             * A stop that has moved off its initial level was raised by
+             * TrailingStopService; label it so breakeven/profit exits are
+             * not reported as plain stop-loss losses.
+             */
+            boolean trailed = position.getInitialStopLoss() != null
+                    && Double.compare(position.getStopLoss(), position.getInitialStopLoss()) != 0;
+
+            log.info("{} Triggered for {}",
+                    trailed ? "Trailing Stop" : "Stop Loss",
+                    position.getSymbol());
 
             return ExitDecision.builder()
                     .exit(true)
-                    .reason(ExitReason.STOP_LOSS)
+                    .reason(trailed ? ExitReason.TRAILING_STOP : ExitReason.STOP_LOSS)
                     .exitPrice(currentPrice)
-                    .exitType(ExitType.STOP_LOSS)
+                    .exitType(trailed ? ExitType.TRAILING_STOP : ExitType.STOP_LOSS)
                     .build();
         }
 

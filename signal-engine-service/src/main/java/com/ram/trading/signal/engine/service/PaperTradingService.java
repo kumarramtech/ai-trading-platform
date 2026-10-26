@@ -1841,22 +1841,32 @@ public class PaperTradingService {
                                 t.getStatus() == SignalStatus.OPEN)
                         .count();
 
+        /*
+         * Wins/losses are classified by realized P&L, not exit status:
+         * a trailed stop (STOP_LOSS_HIT) can close at breakeven or profit,
+         * and must stay consistent with totalProfit/totalLoss below.
+         */
         int winningTrades =
                 (int) trades.stream()
                         .filter(t ->
-                                t.getStatus() == SignalStatus.TARGET_HIT)
+                                t.getStatus() != SignalStatus.OPEN
+                                        && t.getProfitLoss() != null
+                                        && t.getProfitLoss() > 0)
                         .count();
 
         int losingTrades =
                 (int) trades.stream()
                         .filter(t ->
-                                t.getStatus() == SignalStatus.STOP_LOSS_HIT)
+                                t.getStatus() != SignalStatus.OPEN
+                                        && t.getProfitLoss() != null
+                                        && t.getProfitLoss() < 0)
                         .count();
 
         double totalProfit =
                 trades.stream()
                         .filter(t ->
-                                t.getProfitLoss() != null
+                                t.getStatus() != SignalStatus.OPEN
+                                        && t.getProfitLoss() != null
                                         && t.getProfitLoss() > 0)
                         .mapToDouble(
                                 PaperTrade::getProfitLoss)
@@ -1865,7 +1875,8 @@ public class PaperTradingService {
         double totalLoss =
                 trades.stream()
                         .filter(t ->
-                                t.getProfitLoss() != null
+                                t.getStatus() != SignalStatus.OPEN
+                                        && t.getProfitLoss() != null
                                         && t.getProfitLoss() < 0)
                         .mapToDouble(
                                 PaperTrade::getProfitLoss)

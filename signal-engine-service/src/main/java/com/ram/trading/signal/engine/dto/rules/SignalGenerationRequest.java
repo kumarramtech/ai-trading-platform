@@ -42,4 +42,10 @@ public class SignalGenerationRequest {
 
     private SignalType setupDirection;
 
+    /**
+     * Price that invalidates the setup (JUDAS: the sweep candle's extreme).
+     * Null when the setup has no structural level of its own.
+     */
+    private Double setupInvalidationLevel;
+
 }

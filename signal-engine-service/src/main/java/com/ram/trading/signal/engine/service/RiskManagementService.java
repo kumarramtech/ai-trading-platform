@@ -41,6 +41,16 @@ public class RiskManagementService {
     @Value("${trading.risk.max-consecutive-losses:100}")
     private int maxConsecutiveLosses = 100;
 
+    /**
+     * A loss smaller than this % of the position's notional is a scratch
+     * (typically a break-even stop filled a tick or two worse). Scratches carry
+     * no information about the setup, so they neither extend nor reset the
+     * losing streak. On 2026-10-26 two scratches of Rs 3 and Rs 31 on ~Rs 50k
+     * positions counted as "losses" and halted trading at 09:55 IST.
+     */
+    @Value("${trading.risk.scratch-loss-pct:0.10}")
+    private double scratchLossPct = 0.10;
+
     @Value("${trading.risk.max-daily-loss:2000}")
     private double maxDailyLoss;
 
@@ -159,7 +169,7 @@ public class RiskManagementService {
                 .orElse(null);
     }
 
-    private static int liveConsecutiveLosses(List<TradeExecutionPosition> trades) {
+    private int liveConsecutiveLosses(List<TradeExecutionPosition> trades) {
         List<TradeExecutionPosition> closed = trades.stream()
                 .filter(trade -> "CLOSED".equalsIgnoreCase(trade.status()) && trade.realizedPnl() != null)
                 .sorted(Comparator.comparing(TradeExecutionPosition::closedAt,
@@ -167,12 +177,26 @@ public class RiskManagementService {
                 .toList();
         int losses = 0;
         for (TradeExecutionPosition trade : closed) {
-            if (trade.realizedPnl().signum() >= 0) {
+            double pnl = trade.realizedPnl().doubleValue();
+            if (pnl >= 0) {
                 break;
+            }
+            if (isScratch(pnl,
+                    trade.averageEntryPrice() == null ? null : trade.averageEntryPrice().doubleValue(),
+                    trade.filledQuantity())) {
+                continue;
             }
             losses++;
         }
         return losses;
+    }
+
+    private boolean isScratch(double pnl, Double entryPrice, Integer quantity) {
+        if (pnl >= 0 || entryPrice == null || quantity == null || entryPrice <= 0 || quantity <= 0) {
+            return false;
+        }
+        double notional = entryPrice * quantity;
+        return -pnl < notional * scratchLossPct / 100.0;
     }
 
     private static RiskCheckResponse response(List<String> violations) {
@@ -225,7 +249,7 @@ public class RiskManagementService {
                         .count();
 
         log.info(
-                "Symbol = {}, Trades Today = {}, Maximum Allowed = {}",
+                "Symbol = {}, Symbol Trades Today = {}, Max Per Symbol Per Day = {}",
                 symbol,
                 tradesToday,
                 maxTradesPerSymbolPerDay);
@@ -240,8 +264,9 @@ public class RiskManagementService {
                         SignalStatus.OPEN);
 
         log.info(
-                "Open Trades = {}",
-                openTrades);
+                "Open Trades = {}, Max Open Trades = {}",
+                openTrades,
+                maxOpenTrades);
 
         return openTrades >= maxOpenTrades;
     }
@@ -264,6 +289,10 @@ public class RiskManagementService {
             }
 
             if (trade.getProfitLoss() == null) {
+                continue;
+            }
+
+            if (isScratch(trade.getProfitLoss(), trade.getEntryPrice(), trade.getQuantity())) {
                 continue;
             }
 

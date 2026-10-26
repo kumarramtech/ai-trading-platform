@@ -52,10 +52,13 @@ public class JudasSwingDetector {
     private static final double MIN_REJECTION_WICK_BODY_RATIO = 1.0;
 
     /*
-     * Confirmation candle volume must be at least 1.2x
+     * Confirmation candle volume must be at least 1.5x
      * today's opening-range average volume.
+     *
+     * Raised from 1.2x (2026-10-26): a reversal on barely-above-average
+     * volume is not a rejection, and such entries scratched out.
      */
-    private static final double MIN_CONFIRMATION_VOLUME_RATIO = 1.20;
+    private static final double MIN_CONFIRMATION_VOLUME_RATIO = 1.50;
 
     private final MinuteCandleStore minuteCandleStore;
 
@@ -665,6 +668,11 @@ public class JudasSwingDetector {
                 )
                 .sweepPrice(
                         sweep.getClose()
+                )
+                .sweepExtreme(
+                        "HIGH_SWEEP".equals(sweepSide)
+                                ? sweep.getHigh()
+                                : sweep.getLow()
                 )
                 .confirmationPrice(
                         confirmation.getClose()

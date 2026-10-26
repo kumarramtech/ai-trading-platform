@@ -53,20 +53,30 @@ public class TrailingStopService {
      * - symbol price
      *
      * The stop is driven by actual trade profitability.
+     *
+     * Break-even arms at 1.00R (not 0.50R): stops are clamped to the
+     * opening range, so R is often only ~0.4% of price and 0.50R was
+     * ordinary intraday noise, pinning trades at entry within minutes.
+     *
+     * MIN_TRAIL_MOVE_PCT additionally requires a minimum favorable move
+     * in price terms before any trailing, so a very tight initial stop
+     * cannot arm break-even on a few ticks.
      */
 
-    private static final double BREAK_EVEN_R = 0.50;
+    private static final double MIN_TRAIL_MOVE_PCT = 0.50;
 
-    private static final double STAGE_2_TRIGGER_R = 0.75;
+    private static final double BREAK_EVEN_R = 1.00;
+
+    private static final double STAGE_2_TRIGGER_R = 1.25;
     private static final double STAGE_2_LOCK_R = 0.25;
 
-    private static final double STAGE_3_TRIGGER_R = 1.00;
+    private static final double STAGE_3_TRIGGER_R = 1.50;
     private static final double STAGE_3_LOCK_R = 0.50;
 
-    private static final double STAGE_4_TRIGGER_R = 1.50;
+    private static final double STAGE_4_TRIGGER_R = 2.00;
     private static final double STAGE_4_LOCK_R = 1.00;
 
-    private static final double STAGE_5_TRIGGER_R = 2.00;
+    private static final double STAGE_5_TRIGGER_R = 2.50;
     private static final double STAGE_5_LOCK_R = 1.50;
 
     private static final double STAGE_6_TRIGGER_R = 3.00;
@@ -115,7 +125,7 @@ public class TrailingStopService {
 
         double currentProfit = isBuy ? currentPrice - entry : entry - currentPrice;
         double currentR = currentProfit / initialRisk;
-        int step = calculateTrailingStep(currentR);
+        int step = calculateTrailingStep(currentR, currentProfit / entry * 100.0d);
         if (step == 0) {
             return Optional.empty();
         }
@@ -307,10 +317,12 @@ public class TrailingStopService {
          * DETERMINE TRAILING STAGE
          * --------------------------------------------------------
          */
-        int currentStep = calculateTrailingStep(currentR);
+        int currentStep = calculateTrailingStep(
+                currentR,
+                currentProfit / entryPrice * 100.0d);
 
         /*
-         * No trailing until 0.50R.
+         * No trailing until 1.00R and the minimum favorable move.
          */
         if (currentStep == 0) {
 
@@ -439,30 +451,32 @@ public class TrailingStopService {
      * Determines the profit protection stage.
      *
      * Step 0:
-     * No trailing.
+     * No trailing (below 1.00R or below MIN_TRAIL_MOVE_PCT).
      *
      * Step 1:
-     * 0.50R -> Break-even.
+     * 1.00R -> Break-even.
      *
      * Step 2:
-     * 0.75R -> Lock 0.25R.
+     * 1.25R -> Lock 0.25R.
      *
      * Step 3:
-     * 1.00R -> Lock 0.50R.
+     * 1.50R -> Lock 0.50R.
      *
      * Step 4:
-     * 1.50R -> Lock 1.00R.
+     * 2.00R -> Lock 1.00R.
      *
      * Step 5:
-     * 2.00R -> Lock 1.50R.
+     * 2.50R -> Lock 1.50R.
      *
      * Step 6:
      * 3.00R -> Lock 2.25R.
      */
     private int calculateTrailingStep(
-            double currentR) {
+            double currentR,
+            double profitPct) {
 
-        if (currentR < BREAK_EVEN_R) {
+        if (currentR < BREAK_EVEN_R
+                || profitPct < MIN_TRAIL_MOVE_PCT) {
 
             return 0;
         }
@@ -515,7 +529,7 @@ public class TrailingStopService {
          * STEP 1
          * --------------------------------------------------------
          *
-         * 0.50R profit
+         * 1.00R profit
          *
          * Move stop to entry.
          *

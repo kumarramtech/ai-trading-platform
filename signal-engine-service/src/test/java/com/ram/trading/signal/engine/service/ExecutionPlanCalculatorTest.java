@@ -2,9 +2,11 @@ package com.ram.trading.signal.engine.service;
 
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.premarket.OpeningRange;
+import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -76,6 +78,56 @@ class ExecutionPlanCalculatorTest {
 
         assertEquals(201.2, s.getStopLoss(), 0.01);
         assertEquals(197.6, s.getTargetPrice(), 0.01);
+    }
+
+    private static SignalGenerationRequest judas(double sweepExtreme) {
+        return SignalGenerationRequest.builder()
+                .symbol("ABC")
+                .setupStrategy("JUDAS")
+                .setupInvalidationLevel(sweepExtreme)
+                .build();
+    }
+
+    @Test
+    void judasSellStopSitsBeyondSweepHighNotAtIt() {
+        // COCHINSHIP 2026-10-26: entry 1135.6, OR high 1138.1, sweep high 1140.0.
+        when(openingRangeService.get("ABC")).thenReturn(range(1138.1, 1120.0));
+        TradingSignal s = signal("SELL", 1135.6);
+
+        assertTrue(calculator.apply(s, judas(1140.0)));
+
+        // 1140.0 + 0.10% buffer (1.1356) = 1141.1356 -> short stop rounds toward entry: 1141.10
+        // (old plan: 1140.10, a single tick above the sweep high)
+        assertEquals(1141.10, s.getStopLoss(), 0.001);
+        assertTrue(s.getTargetPrice() < 1135.6);
+    }
+
+    @Test
+    void lowPricedJudasStopStaysAtLeastOneTickBeyondSweep() {
+        TradingSignal s = signal("SELL", 29.80);
+
+        assertTrue(calculator.apply(s, judas(30.0)));
+
+        // 0.10% of 29.80 is 0.03 (< tick); the buffer is raised to one tick.
+        assertEquals(30.05, s.getStopLoss(), 0.001);
+    }
+
+    @Test
+    void judasBuyStopSitsBelowSweepLow() {
+        TradingSignal s = signal("BUY", 100.0);
+
+        assertTrue(calculator.apply(s, judas(99.5)));
+
+        assertTrue(s.getStopLoss() < 99.5);
+        assertEquals(99.4, s.getStopLoss(), 0.001);
+    }
+
+    @Test
+    void judasSweepTooFarAwayIsRejectedInsteadOfClamped() {
+        TradingSignal s = signal("SELL", 100.0);
+
+        assertFalse(calculator.apply(s, judas(101.5)));
+        assertNull(s.getStopLoss());
     }
 
     @Test

@@ -19,7 +19,9 @@ import org.springframework.stereotype.Component;
  *
  * Rules (deterministic and repeatable, so they can be back-tested):
  *
- *  - Stop   : just beyond the opposite Opening Range level
+ *  - Stop   : JUDAS -> beyond the sweep candle's extreme plus sweepBufferPct;
+ *             the trade is skipped if that is wider than maxRiskPct.
+ *             Others -> just beyond the opposite Opening Range level
  *             (BUY -> below OR low, SELL -> above OR high), plus a small buffer.
  *  - Risk   : the distance entry -> stop, clamped to [minRiskPct, maxRiskPct]
  *             of the entry price, so a very wide or very tight range cannot
@@ -51,6 +53,10 @@ public class ExecutionPlanCalculator {
     @Value("${trading.execution-plan.or-buffer-pct:0.05}")
     private double orBufferPct = 0.05;
 
+    /** JUDAS stop distance beyond the sweep extreme, so a plain retest of it does not stop the trade out. */
+    @Value("${trading.execution-plan.sweep-buffer-pct:0.10}")
+    private double sweepBufferPct = 0.10;
+
     /** Stop and target are aligned to the exchange tick so the broker accepts them. */
     @Value("${trading.price.tick-size:0.05}")
     private double priceTickSize = 0.05;
@@ -58,18 +64,21 @@ public class ExecutionPlanCalculator {
     /**
      * Overwrites stopLoss and targetPrice of a BUY/SELL signal.
      * HOLD signals and signals without a valid entry price are left untouched.
+     *
+     * @return false only when the setup must not be traded (its structural
+     *         stop is wider than maxRiskPct or already breached); true otherwise.
      */
-    public void apply(TradingSignal signal, SignalGenerationRequest request) {
+    public boolean apply(TradingSignal signal, SignalGenerationRequest request) {
 
         if (signal == null || signal.getSignal() == null) {
-            return;
+            return true;
         }
 
         final boolean buy = SignalType.BUY.name().equalsIgnoreCase(signal.getSignal());
         final boolean sell = SignalType.SELL.name().equalsIgnoreCase(signal.getSignal());
 
         if (!buy && !sell) {
-            return;
+            return true;
         }
 
         final Double entry = signal.getEntryPrice();
@@ -77,7 +86,7 @@ public class ExecutionPlanCalculator {
         if (entry == null || !Double.isFinite(entry) || entry <= 0.0) {
             log.warn("EXECUTION PLAN SKIPPED | Invalid entry price | Symbol={} | Entry={}",
                     signal.getSymbol(), entry);
-            return;
+            return true;
         }
 
         final double minRisk = entry * minRiskPct / 100.0;
@@ -86,11 +95,43 @@ public class ExecutionPlanCalculator {
         double risk = entry * fallbackRiskPct / 100.0;
         String source = "FALLBACK_PCT";
 
-        final OpeningRange openingRange = openingRangeService.get(signal.getSymbol());
+        final Double sweepExtreme = request != null ? request.getSetupInvalidationLevel() : null;
 
-        if (openingRange != null) {
+        if (sweepExtreme != null && Double.isFinite(sweepExtreme) && sweepExtreme > 0.0) {
 
-            final Double level = buy ? openingRange.getLow() : openingRange.getHigh();
+            /*
+             * JUDAS: the setup is wrong only once price trades back through the
+             * sweep extreme, so the stop sits beyond it with a real buffer.
+             * The OR-level stop clamped to 0.4% used to land within a tick or
+             * two of the sweep high (COCHINSHIP 2026-10-26: sweep 1140.0, stop
+             * 1140.1) and was taken out by an ordinary retest.
+             *
+             * The stop is never pulled inside the sweep to fit maxRiskPct; a
+             * sweep too far away to risk means the trade is skipped.
+             */
+            // At least one tick, so tick alignment (which rounds stops toward
+            // entry) can never put the stop back on the sweep extreme.
+            final double buffer = Math.max(entry * sweepBufferPct / 100.0, priceTickSize);
+
+            final double rawRisk = buy
+                    ? entry - (sweepExtreme - buffer)
+                    : (sweepExtreme + buffer) - entry;
+
+            if (rawRisk <= 0.0 || rawRisk > maxRisk) {
+                log.warn("EXECUTION PLAN REJECTED | Sweep stop outside allowed risk | Symbol={} | Signal={} | Entry={} | SweepExtreme={} | RiskPct={} | MaxRiskPct={}",
+                        signal.getSymbol(), signal.getSignal(), entry, sweepExtreme,
+                        round2(rawRisk / entry * 100.0), maxRiskPct);
+                return false;
+            }
+
+            risk = Math.max(rawRisk, minRisk);
+            source = (risk == rawRisk) ? "SWEEP_EXTREME" : "SWEEP_EXTREME_MIN_RISK";
+
+        } else {
+
+            final OpeningRange openingRange = openingRangeService.get(signal.getSymbol());
+            final Double level = openingRange == null ? null
+                    : (buy ? openingRange.getLow() : openingRange.getHigh());
 
             if (level != null && Double.isFinite(level) && level > 0.0) {
 
@@ -120,7 +161,7 @@ public class ExecutionPlanCalculator {
         if (!ordered || target <= 0.0 || stop <= 0.0) {
             log.warn("EXECUTION PLAN REJECTED | Unusable prices | Symbol={} | Signal={} | Entry={} | Stop={} | Target={}",
                     signal.getSymbol(), signal.getSignal(), entry, stop, target);
-            return;
+            return true;
         }
 
         signal.setStopLoss(stop);
@@ -135,6 +176,8 @@ public class ExecutionPlanCalculator {
                 target,
                 round2(risk / entry * 100.0),
                 rewardRisk);
+
+        return true;
     }
 
     private static double round2(double value) {

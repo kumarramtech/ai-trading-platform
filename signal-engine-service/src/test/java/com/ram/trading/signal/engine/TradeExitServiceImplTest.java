@@ -373,7 +373,7 @@ class TradeExitServiceImplTest {
         ReflectionTestUtils.setField(integrationService, "maxLossPerTrade", 250.0d);
 
         StepVerifier.create(integrationService.evaluateExit(
-                Tick.builder().symbol("TEST").lastTradedPrice(105.00d).build()))
+                Tick.builder().symbol("TEST").lastTradedPrice(110.00d).build()))
                 .verifyComplete();
 
         verify(tradeExecutionClient).updateProtection(argThat(request ->

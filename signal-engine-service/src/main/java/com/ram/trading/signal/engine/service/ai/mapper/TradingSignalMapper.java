@@ -36,19 +36,10 @@ public class TradingSignalMapper {
                 // from the current market price, NOT from AI.
                 .entryPrice(request.getCurrentPrice())
 
-                // AI can suggest the target price.
-                .targetPrice(
-                        aiResponse.getExecutionPlan() != null
-                                && aiResponse.getExecutionPlan().getTarget() != null
-                                ? aiResponse.getExecutionPlan().getTarget()
-                                : request.getCurrentPrice())
-
-                // AI can suggest the stop loss.
-                .stopLoss(
-                        aiResponse.getExecutionPlan() != null
-                                && aiResponse.getExecutionPlan().getStopLoss() != null
-                                ? aiResponse.getExecutionPlan().getStopLoss()
-                                : request.getCurrentPrice())
+                // IMPORTANT:
+                // The AI only confirms direction; the prompt forbids it
+                // from returning prices. Target and stop loss are seeded
+                // below and then owned by ExecutionPlanCalculator.
 
                 .reason(aiResponse.getAiReasoning())
 
@@ -109,7 +100,7 @@ public class TradingSignalMapper {
                 request.getEma50(),
                 request.getMacd());
 
-        validateExecutionPlan(signal);
+        seedExecutionPlan(signal);
 
         log.info(
                 "Mapped AI Response -> TradingSignal | Symbol={} Signal={} Confidence={} Entry={} Target={} StopLoss={}",
@@ -131,7 +122,15 @@ public class TradingSignalMapper {
 
     }
 
-    private void validateExecutionPlan(TradingSignal signal) {
+    /**
+     * Seeds a directionally valid safety plan for BUY/SELL signals.
+     *
+     * ExecutionPlanCalculator overwrites these values with the
+     * Opening Range based plan; the seed only survives if that
+     * calculator rejects its own prices, so the signal never
+     * carries stop == target == entry.
+     */
+    private void seedExecutionPlan(TradingSignal signal) {
 
         if (SignalType.HOLD.name()
                 .equalsIgnoreCase(signal.getSignal())) {
@@ -139,63 +138,17 @@ public class TradingSignalMapper {
             return;
         }
 
-        if (signal.getEntryPrice() == null ||
-                signal.getTargetPrice() == null ||
-                signal.getStopLoss() == null) {
+        if (signal.getEntryPrice() == null
+                || !Double.isFinite(signal.getEntryPrice())
+                || signal.getEntryPrice() <= 0.0) {
 
             log.error(
-                    "Invalid execution plan with null values | Symbol={} | Entry={} | Target={} | StopLoss={}",
+                    "Cannot seed execution plan without a valid entry price | Symbol={} | Entry={}",
                     signal.getSymbol(),
-                    signal.getEntryPrice(),
-                    signal.getTargetPrice(),
-                    signal.getStopLoss()
-            );
-
-            applySafeExecutionPlan(signal);
+                    signal.getEntryPrice());
 
             return;
         }
-
-        boolean invalid = false;
-
-        if (SignalType.BUY.name()
-                .equalsIgnoreCase(signal.getSignal())) {
-
-            invalid =
-                    signal.getTargetPrice() <= signal.getEntryPrice()
-                            || signal.getStopLoss() >= signal.getEntryPrice();
-
-        } else if (SignalType.SELL.name()
-                .equalsIgnoreCase(signal.getSignal())) {
-
-            invalid =
-                    signal.getTargetPrice() >= signal.getEntryPrice()
-                            || signal.getStopLoss() <= signal.getEntryPrice();
-        }
-
-        if (invalid) {
-
-            log.warn(
-                    "Invalid AI Execution Plan detected | Symbol={} | Signal={} | Entry={} | Target={} | StopLoss={} | Applying fallback",
-                    signal.getSymbol(),
-                    signal.getSignal(),
-                    signal.getEntryPrice(),
-                    signal.getTargetPrice(),
-                    signal.getStopLoss()
-            );
-
-            applySafeExecutionPlan(signal);
-
-        } else {
-
-            log.info(
-                    "AI Execution Plan Validated Successfully | Symbol={}",
-                    signal.getSymbol()
-            );
-        }
-    }
-
-    private void applySafeExecutionPlan(TradingSignal signal) {
 
         double entryPrice = signal.getEntryPrice();
 
@@ -212,8 +165,8 @@ public class TradingSignalMapper {
             signal.setStopLoss(entryPrice * 1.01);
         }
 
-        log.info(
-                "Fallback Execution Plan Applied | Symbol={} | Signal={} | Entry={} | Target={} | StopLoss={}",
+        log.debug(
+                "Seed Execution Plan Applied | Symbol={} | Signal={} | Entry={} | Target={} | StopLoss={}",
                 signal.getSymbol(),
                 signal.getSignal(),
                 signal.getEntryPrice(),

@@ -143,7 +143,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private record EntrySetup(
             String strategy,
             String direction,
-            LocalDateTime confirmationTime
+            LocalDateTime confirmationTime,
+            Double invalidationLevel
     ) {}
 
     @Override
@@ -291,7 +292,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 })
 
                 .doOnError(error ->
-                        log.error(
+                        log.debug(
                                 "Scanner analysis failed for {}",
                                 symbol,
                                 error));
@@ -967,10 +968,23 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                          * The AI only confirms the direction. Stop-loss and
                          * target are owned by the engine (Opening Range based).
                          */
-                        executionPlanCalculator.apply(signal, request);
+                        boolean planUsable =
+                                executionPlanCalculator.apply(signal, request);
 
                         log.debug(
                                 "STEP-4 Mapper Completed");
+
+                        if (!planUsable) {
+
+                            signal.setSignal(
+                                    SignalType.HOLD.name());
+
+                            log.warn(
+                                    "Trade skipped: setup stop is outside allowed risk. Returning HOLD | Symbol={}",
+                                    request.getSymbol());
+
+                            return Mono.just(signal);
+                        }
 
                         /*
                          * =================================================
@@ -1970,7 +1984,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     return new EntrySetup(
                             "JUDAS",
                             direction,
-                            judas.getConfirmationTime());
+                            judas.getConfirmationTime(),
+                            judas.getSweepExtreme());
                 }
 
                 log.debug(
@@ -2028,7 +2043,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     return new EntrySetup(
                             "ORB",
                             direction,
-                            orb.getConfirmationTime());
+                            orb.getConfirmationTime(),
+                            null);
                 }
 
                 log.debug(
@@ -2157,6 +2173,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                         SignalType.valueOf(
                                 entrySetup.direction()
                                         .toUpperCase()))
+                .setupInvalidationLevel(entrySetup.invalidationLevel())
                 .marketContext(buildMarketContext(tick))
                 .build();
     }

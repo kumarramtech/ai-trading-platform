@@ -5,6 +5,7 @@ import com.ram.trading.ai.engine.provider.LLMProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.api.ResponseFormat;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -59,6 +60,11 @@ public class OpenAIProvider implements LLMProvider {
                             org.springframework.ai.openai.OpenAiChatOptions.builder()
                                     .model("gpt-5.6-luna")
                                     .temperature(1.0)
+                                    // JSON mode: the API guarantees syntactically
+                                    // valid JSON (no trailing commas or prose).
+                                    .responseFormat(ResponseFormat.builder()
+                                            .type(ResponseFormat.Type.JSON_OBJECT)
+                                            .build())
                                     .build()
                     )
                     .call()

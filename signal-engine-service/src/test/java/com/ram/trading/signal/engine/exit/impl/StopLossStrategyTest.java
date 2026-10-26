@@ -61,4 +61,30 @@ class StopLossStrategyTest {
 
         assertFalse(decision.isExit());
     }
+
+    @Test
+    void untrailedStopIsLabelledStopLoss() {
+        OpenPosition position = OpenPosition.builder()
+                .symbol("TCS").signal("SELL").stopLoss(101.0).initialStopLoss(101.0).build();
+
+        ExitDecision decision = strategy.evaluate(position, Tick.builder()
+                .symbol("TCS").lastTradedPrice(101.0).build());
+
+        assertEquals(ExitReason.STOP_LOSS, decision.getReason());
+        assertEquals(ExitType.STOP_LOSS, decision.getExitType());
+    }
+
+    @Test
+    void trailedStopIsLabelledTrailingStop() {
+        // NBCC 2026-10-26: SELL stop trailed 68.05 -> 67.725, exited at 67.76
+        OpenPosition position = OpenPosition.builder()
+                .symbol("NBCC").signal("SELL").stopLoss(67.725).initialStopLoss(68.05).build();
+
+        ExitDecision decision = strategy.evaluate(position, Tick.builder()
+                .symbol("NBCC").lastTradedPrice(67.76).build());
+
+        assertTrue(decision.isExit());
+        assertEquals(ExitReason.TRAILING_STOP, decision.getReason());
+        assertEquals(ExitType.TRAILING_STOP, decision.getExitType());
+    }
 }

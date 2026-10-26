@@ -57,10 +57,11 @@ public class HistoricalCandleServiceImpl implements HistoricalCandleService {
 
                 .map(response -> {
 
-                    log.info("========== UPSTOX HISTORICAL RAW RESPONSE ==========");
-                    log.info("Symbol : {}", symbol);
-                    log.info("Response : {}", response);
-                    log.info("====================================================");
+                    // Raw payload is ~20KB per symbol x ~2700 symbols per bootstrap; DEBUG only.
+                    log.debug("========== UPSTOX HISTORICAL RAW RESPONSE ==========");
+                    log.debug("Symbol : {}", symbol);
+                    log.debug("Response : {}", response);
+                    log.debug("====================================================");
 
                     ObjectMapper mapper = new ObjectMapper();
 

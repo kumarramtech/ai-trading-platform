@@ -32,6 +32,8 @@ public class JudasSwingResult {
     private Double openingRangeLow;
 
     private Double sweepPrice;
+    /** High of the sweep candle (HIGH_SWEEP) or its low (LOW_SWEEP): the setup's invalidation level. */
+    private Double sweepExtreme;
 
     private Double confirmationPrice;
 

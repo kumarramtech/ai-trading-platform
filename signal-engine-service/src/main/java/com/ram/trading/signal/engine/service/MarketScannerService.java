@@ -142,13 +142,18 @@ public class MarketScannerService {
                         );
                     }
                 })
-                .doOnError(error ->
-                        log.error(
-                                "Market Scan Failed : {}",
+                /*
+                 * The scanner path is analysis-only, so one symbol without a
+                 * live price must not escalate. The error consumer also stops
+                 * Reactor from reporting "onErrorDropped" for every failure.
+                 */
+                .subscribe(
+                        ignored -> { },
+                        error -> log.warn(
+                                "Market Scan Failed : {} | {}",
                                 symbol,
-                                error
+                                error.getMessage()
                         )
-                )
-                .subscribe();
+                );
     }
 }
