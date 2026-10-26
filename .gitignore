@@ -1,3 +1,13 @@
 /ai-trading-platform.iml
 /logs
 /.idea
+
+# Claude Code local state and session worktrees
+/.claude/
+
+# Extracted jar contents and log copies downloaded from EC2
+/BOOT-INF/
+/aws logs/
+
+# Per-service runtime logs
+*/logs/
