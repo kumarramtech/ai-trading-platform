@@ -47,6 +47,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import com.ram.trading.signal.engine.service.performance.SetupEdgeGate;
+import com.ram.trading.signal.engine.service.performance.SetupQualityScorer;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -98,6 +99,22 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final PositionSizingService positionSizingService;
 
     private final SetupEdgeGate setupEdgeGate;
+
+    private final SetupQualityScorer setupQualityScorer;
+
+    private final RiskManagementService riskManagementService;
+
+    /** Setups scoring below this are not traded at all (0 = off). */
+    @Value("${trading.quality.min-score:40}")
+    private int minQualityScore = 40;
+
+    /**
+     * When only one open-trade slot is left, it is kept for a setup scoring at
+     * least this much, so a mediocre early signal cannot take the last slot
+     * from a better one a few minutes later (0 = off).
+     */
+    @Value("${trading.quality.last-slot-min-score:60}")
+    private int lastSlotMinScore = 60;
 
     /**
      * Selects the entry execution path. PAPER remains the default;
@@ -173,7 +190,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             String strategy,
             String direction,
             LocalDateTime confirmationTime,
-            Double invalidationLevel
+            Double invalidationLevel,
+            Double volumeRatio
     ) {}
 
     @Override
@@ -770,6 +788,55 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                             .build());
         }
 
+        /*
+         * SETUP QUALITY: rank the setup 0-100 on evidence that differs between
+         * setups. Weak setups are skipped, and the last open slot is kept for a
+         * strong one instead of going to whichever signal arrives first.
+         */
+        SetupQualityScorer.QualityScore quality =
+                setupQualityScorer.score(request, edge);
+
+        Integer qualityScore = quality != null ? quality.score() : null;
+
+        if (quality != null) {
+
+            log.info(
+                    "SETUP QUALITY | Symbol={} | Strategy={} | Direction={} | Score={} | {}",
+                    request.getSymbol(),
+                    request.getSetupStrategy(),
+                    request.getSetupDirection(),
+                    quality.score(),
+                    quality.breakdown());
+
+            String rejection = null;
+
+            if (minQualityScore > 0 && quality.score() < minQualityScore) {
+                rejection = "score below trading.quality.min-score=" + minQualityScore;
+            } else if (lastSlotMinScore > 0
+                    && quality.score() < lastSlotMinScore
+                    && riskManagementService.openSlotsLeft() == 1) {
+                rejection = "last open slot is reserved for score >= " + lastSlotMinScore;
+            }
+
+            if (rejection != null) {
+
+                log.info(
+                        "SETUP QUALITY BLOCKED | Symbol={} | Strategy={} | Score={} | Reason={}",
+                        request.getSymbol(),
+                        request.getSetupStrategy(),
+                        quality.score(),
+                        rejection);
+
+                return Mono.just(
+                        TradingSignal.builder()
+                                .symbol(request.getSymbol())
+                                .signal(SignalType.HOLD.name())
+                                .strategy(request.getSetupStrategy())
+                                .qualityScore(qualityScore)
+                                .build());
+            }
+        }
+
         return tradingOrchestratorService
                 .executeTrade(request)
 
@@ -1026,6 +1093,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         request);
 
                         signal.setStrategy(request.getSetupStrategy());
+                        signal.setQualityScore(qualityScore);
 
                         /*
                          * The AI only confirms the direction. Stop-loss and
@@ -2049,7 +2117,12 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                             "JUDAS",
                             direction,
                             judas.getConfirmationTime(),
-                            judas.getSweepExtreme());
+                            judas.getSweepExtreme(),
+                            judas.getConfirmationVolume() != null
+                                    && judas.getAverageVolume() != null
+                                    && judas.getAverageVolume() > 0
+                                    ? judas.getConfirmationVolume() / judas.getAverageVolume()
+                                    : null);
                 }
 
                 log.debug(
@@ -2109,7 +2182,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                             "ORB",
                             direction,
                             orb.getConfirmationTime(),
-                            null);
+                            null,
+                            orb.getVolumeRatio());
                 }
 
                 log.debug(
@@ -2239,6 +2313,7 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 entrySetup.direction()
                                         .toUpperCase()))
                 .setupInvalidationLevel(entrySetup.invalidationLevel())
+                .setupVolumeRatio(entrySetup.volumeRatio())
                 .marketContext(buildMarketContext(tick))
                 .build();
     }

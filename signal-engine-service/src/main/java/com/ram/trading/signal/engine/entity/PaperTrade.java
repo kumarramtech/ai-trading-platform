@@ -89,6 +89,21 @@ public class PaperTrade {
     @Column(name = "setup_strategy")
     private String strategy;
 
+    /** Setup quality 0-100 at entry (SetupQualityScorer); reported by band to check it predicts results. */
+    @Column(name = "quality_score")
+    private Integer qualityScore;
+
+    /**
+     * Furthest the price went for (MFE) and against (MAE) the trade while it was
+     * open, in R. Losers with a high MFE say the target or trailing was wrong;
+     * winners with a deep MAE say the stop was too tight to be safe.
+     */
+    @Column(name = "mfe_r")
+    private Double mfeR;
+
+    @Column(name = "mae_r")
+    private Double maeR;
+
     /** Market price the fill was based on, before slippage (entry and exit). */
     @Column(name = "reference_entry_price")
     private Double referenceEntryPrice;

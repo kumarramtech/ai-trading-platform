@@ -48,4 +48,7 @@ public class SignalGenerationRequest {
      */
     private Double setupInvalidationLevel;
 
+    /** Confirmation-candle volume / opening-range average volume (JUDAS, ORB); null otherwise. */
+    private Double setupVolumeRatio;
+
 }

@@ -503,6 +503,9 @@ public class PaperTradingService {
                             .strategy(
                                     signal.getStrategy())
 
+                            .qualityScore(
+                                    signal.getQualityScore())
+
                             .plannedRisk(
                                     round(Math.abs(entryFill - signal.getStopLoss()) * quantity))
 
@@ -980,95 +983,6 @@ public class PaperTradingService {
                 .totalProfit(totalProfit)
                 .winRate(Math.round(winRate * 100.0) / 100.0)
                 .build();
-    }
-
-    public Mono<Void> closeTrade(Long signalId,Double exitPrice,SignalStatus status) {
-
-        PaperTrade trade =
-                repository.findBySignalIdAndStatus(signalId,SignalStatus.OPEN)
-                        .orElse(null);
-
-        if (trade == null) {
-
-            log.warn("Trade Not Found : {}", signalId);
-
-            return Mono.empty();
-        }
-
-        if (trade.getStatus() != SignalStatus.OPEN) {
-
-            log.warn("==========================================");
-            log.warn("Trade Already Closed");
-            log.warn("Trade Id : {}", trade.getId());
-            log.warn("Status   : {}", trade.getStatus());
-            log.warn("==========================================");
-
-            return Mono.empty();
-        }
-
-        settle(trade, exitPrice);
-
-        trade.setStatus(status);
-
-        trade.setExitTime(LocalDateTime.now());
-
-        return Mono.fromCallable(() -> repository.save(trade))
-                .subscribeOn(Schedulers.boundedElastic())
-
-                .flatMap(savedTrade ->
-
-                        portfolioClient
-                                .closePosition(
-                                        savedTrade.getSymbol(),
-                                        savedTrade.getQuantity())
-
-                                .doOnSuccess(v ->
-                                        log.info(
-                                                "Portfolio Updated Successfully : {}",
-                                                savedTrade.getSymbol()))
-
-                                .onErrorResume(ex -> {
-                                    log.error(
-                                            "Portfolio Update Failed",
-                                            ex);
-                                    return Mono.empty();
-                                })
-
-                                .thenReturn(savedTrade)
-                )
-
-
-                .flatMap(savedTrade -> {
-
-                    NotificationRequest request =
-                            NotificationRequest.builder()
-                                    .channel(NotificationChannel.SLACK)
-                                    .title("TRADE CLOSED")
-                                    .message(
-                                            "Symbol: " + savedTrade.getSymbol()
-                                                    + ", Status: " + savedTrade.getStatus()
-                                                    + ", Entry: " + trade.getEntryPrice()
-                                                    + ", Exit: " + savedTrade.getExitPrice()
-                                                    + ", PnL: " + trade.getProfitLoss())
-                                    .build();
-
-                    return notificationClient
-                            .sendNotification(request)
-                            .doOnError(ex ->
-                                    log.error(
-                                            "Failed to send notification",
-                                            ex))
-                            .onErrorResume(ex -> Mono.empty())
-                            .then();
-                })
-
-                .doOnSuccess(v ->
-
-                        log.info(
-                                "Trade Closed | Symbol={} | Status={} | P/L={}",
-                                trade.getSymbol(),
-                                trade.getStatus(),
-                                trade.getProfitLoss()));
     }
 
     public List<PaperTrade> getHistory() {
@@ -2437,6 +2351,47 @@ public class PaperTradingService {
         if (trade.getPlannedRisk() != null && trade.getPlannedRisk() > 0) {
             trade.setRMultiple(round(net / trade.getPlannedRisk()));
         }
+
+        recordExcursion(trade, referenceExitPrice);
+    }
+
+    /** Highest and lowest price seen per open trade id, for MFE / MAE at close. */
+    private final java.util.Map<Long, double[]> priceExtremes =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Called on every tick of an open paper trade. In memory: a restart keeps only later ticks. */
+    public void recordPrice(PaperTrade trade, Double price) {
+        if (trade == null || trade.getId() == null || price == null || !Double.isFinite(price) || price <= 0) {
+            return;
+        }
+        priceExtremes.merge(trade.getId(), new double[]{price, price},
+                (seen, now) -> new double[]{Math.max(seen[0], now[0]), Math.min(seen[1], now[1])});
+    }
+
+    /** MFE / MAE in R from the extremes seen, the entry and the exit trigger price. */
+    private void recordExcursion(PaperTrade trade, double referenceExitPrice) {
+
+        double[] seen = trade.getId() == null ? null : priceExtremes.remove(trade.getId());
+        double high = Math.max(trade.getEntryPrice(), referenceExitPrice);
+        double low = Math.min(trade.getEntryPrice(), referenceExitPrice);
+        if (seen != null) {
+            high = Math.max(high, seen[0]);
+            low = Math.min(low, seen[1]);
+        }
+
+        Double riskPerShare = trade.getPlannedRisk() != null && trade.getQuantity() != null && trade.getQuantity() > 0
+                ? trade.getPlannedRisk() / trade.getQuantity()
+                : null;
+        if (riskPerShare == null || riskPerShare <= 0) {
+            return;
+        }
+
+        boolean longTrade = !SignalType.SELL.name().equalsIgnoreCase(trade.getSignal());
+        double favourable = longTrade ? high - trade.getEntryPrice() : trade.getEntryPrice() - low;
+        double adverse = longTrade ? trade.getEntryPrice() - low : high - trade.getEntryPrice();
+
+        trade.setMfeR(round(Math.max(0, favourable) / riskPerShare));
+        trade.setMaeR(round(Math.max(0, adverse) / riskPerShare));
     }
 
     /** Price a market order fills at: worse by slippagePct for the side taken. */

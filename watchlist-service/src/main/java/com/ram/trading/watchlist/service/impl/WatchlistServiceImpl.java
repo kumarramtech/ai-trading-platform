@@ -42,6 +42,23 @@ public class WatchlistServiceImpl implements WatchlistService {
     @Value("${watchlist.max-size:100}")
     private int maxWatchlistSize;
 
+    /**
+     * ETFs and liquid funds are listed as NSE EQ but barely move intraday, so
+     * they only take watchlist and scan slots from stocks that can trade.
+     * Matched against the trading symbol and the company name.
+     */
+    @Value("${watchlist.exclude-pattern:(?i).*(\\bETF\\b|BEES|LIQUID|\\bIETF\\b|GILT|\\bMF\\b|MUTUAL FUND).*}")
+    private String excludePattern = "(?i).*(\\bETF\\b|BEES|LIQUID|\\bIETF\\b|GILT|\\bMF\\b|MUTUAL FUND).*";
+
+    boolean isExcludedInstrument(TradableInstrumentResponse instrument) {
+        if (excludePattern == null || excludePattern.isBlank()) {
+            return false;
+        }
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(excludePattern);
+        return (instrument.getTradingSymbol() != null && pattern.matcher(instrument.getTradingSymbol()).matches())
+                || (instrument.getCompanyName() != null && pattern.matcher(instrument.getCompanyName()).matches());
+    }
+
     private final StockServiceClient stockServiceClient;
     private final SignalEngineClient signalEngineClient;
     private final TechnicalScoringService technicalScoringService;
@@ -146,6 +163,16 @@ public class WatchlistServiceImpl implements WatchlistService {
                                                                     .getTradingSymbol()
                                                                     .isBlank()
                                                     )
+                                                    .filter(instrument -> {
+                                                        boolean excluded = isExcludedInstrument(instrument);
+                                                        if (excluded) {
+                                                            log.debug(
+                                                                    "Watchlist excluded ETF/fund | Symbol={} | Name={}",
+                                                                    instrument.getTradingSymbol(),
+                                                                    instrument.getCompanyName());
+                                                        }
+                                                        return !excluded;
+                                                    })
                                                     .collect(
                                                             java.util.stream.Collectors.toMap(
                                                                     instrument ->

@@ -50,7 +50,8 @@ public class StrategyPerformanceService {
                 group(trades, StrategyPerformanceService::strategyOf),
                 group(trades, t -> strategyOf(t) + " " + directionOf(t)),
                 group(trades, t -> strategyOf(t) + " " + TimeBucket.of(entryTimeOf(t)).label()),
-                group(trades, t -> t.getExitReason() == null ? "UNKNOWN" : t.getExitReason().name()));
+                group(trades, t -> t.getExitReason() == null ? "UNKNOWN" : t.getExitReason().name()),
+                group(trades, StrategyPerformanceService::qualityBandOf));
     }
 
     /** Statistics for one strategy and entry-time bucket over the last {@code lookbackDays}. */
@@ -92,7 +93,8 @@ public class StrategyPerformanceService {
 
         int count = trades.size();
         double gross = 0, charges = 0, net = 0, winSum = 0, lossSum = 0, rSum = 0, holdMinutes = 0;
-        int wins = 0, losses = 0, rCount = 0, holdCount = 0;
+        double mfeSum = 0, maeSum = 0;
+        int wins = 0, losses = 0, rCount = 0, holdCount = 0, mfeCount = 0, maeCount = 0;
         double equity = 0, peak = 0, maxDrawdown = 0;
         Double best = null, worst = null;
 
@@ -112,6 +114,14 @@ public class StrategyPerformanceService {
             if (t.getRMultiple() != null) {
                 rSum += t.getRMultiple();
                 rCount++;
+            }
+            if (t.getMfeR() != null) {
+                mfeSum += t.getMfeR();
+                mfeCount++;
+            }
+            if (t.getMaeR() != null) {
+                maeSum += t.getMaeR();
+                maeCount++;
             }
             if (t.getEntryTime() != null && t.getExitTime() != null) {
                 holdMinutes += Duration.between(t.getEntryTime(), t.getExitTime()).toSeconds() / 60.0;
@@ -148,6 +158,8 @@ public class StrategyPerformanceService {
                 best == null ? null : round(best),
                 worst == null ? null : round(worst),
                 holdCount == 0 ? null : round(holdMinutes / holdCount),
+                mfeCount == 0 ? null : round(mfeSum / mfeCount),
+                maeCount == 0 ? null : round(maeSum / maeCount),
                 verdict);
     }
 
@@ -157,6 +169,24 @@ public class StrategyPerformanceService {
 
     private static String normalizeStrategy(String strategy) {
         return strategy == null || strategy.isBlank() ? UNKNOWN_STRATEGY : strategy.trim().toUpperCase();
+    }
+
+    /** Quality-score band, to check that higher-scored setups really do better. */
+    private static String qualityBandOf(PaperTrade trade) {
+        Integer score = trade.getQualityScore();
+        if (score == null) {
+            return "NOT_SCORED";
+        }
+        if (score >= 80) {
+            return "SCORE 80-100";
+        }
+        if (score >= 60) {
+            return "SCORE 60-79";
+        }
+        if (score >= 40) {
+            return "SCORE 40-59";
+        }
+        return "SCORE 0-39";
     }
 
     private static String directionOf(PaperTrade trade) {
@@ -234,6 +264,8 @@ public class StrategyPerformanceService {
             Double bestTrade,
             Double worstTrade,
             Double averageHoldMinutes,
+            Double averageMfeR,
+            Double averageMaeR,
             Verdict verdict) {
     }
 
@@ -245,6 +277,7 @@ public class StrategyPerformanceService {
             List<GroupStats> byStrategy,
             List<GroupStats> byStrategyAndDirection,
             List<GroupStats> byStrategyAndEntryTime,
-            List<GroupStats> byExitReason) {
+            List<GroupStats> byExitReason,
+            List<GroupStats> byQualityScore) {
     }
 }

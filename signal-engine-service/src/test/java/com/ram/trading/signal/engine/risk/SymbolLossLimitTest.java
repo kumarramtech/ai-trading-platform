@@ -115,6 +115,23 @@ class SymbolLossLimitTest {
     }
 
     @Test
+    void liveDailyLossCountsCharges() {
+        // Five shorts of 50 @ 1000 covered @ 1007.80: Rs 1,950 gross loss, ~Rs 2,275 after charges.
+        List<TradeExecutionPosition> trades = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            trades.add(new TradeExecutionPosition(
+                    (long) i, (long) i, "S" + i, "NSE_EQ|TEST", "SELL", 50, 50, new BigDecimal("1000"),
+                    null, null, null, "CLOSED", null, null, 50, 50, 0, new BigDecimal("1007.80"), null,
+                    new BigDecimal("-390"), null,
+                    null, LocalDateTime.now().minusMinutes(60 - i), null, null, false));
+        }
+        when(snapshotService.isLiveMode()).thenReturn(true);
+        when(snapshotService.freshTrades()).thenReturn(Optional.of(trades));
+
+        assertTrue(service.validateTrade("TCS").getViolations().contains(DAILY_LOSS));
+    }
+
+    @Test
     void liveSymbolWithThreeRealLossesIsBlockedButOthersTrade() {
         when(snapshotService.isLiveMode()).thenReturn(true);
         when(snapshotService.freshTrades()).thenReturn(Optional.of(List.of(

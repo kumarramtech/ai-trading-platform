@@ -32,4 +32,6 @@ public class TradingSignal {
     private String positionSize;
     /** Entry setup (JUDAS, ORB, MIDDAY) carried through to the trade. */
     private String strategy;
+    /** Setup quality 0-100 from SetupQualityScorer (ranks setups; AI confidence does not). */
+    private Integer qualityScore;
 }

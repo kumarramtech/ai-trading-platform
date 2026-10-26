@@ -367,9 +367,15 @@ public class AiDecisionPromptBuilder {
 
             When confirming Engineering BUY or SELL:
 
-            - Keep confidence reasonably aligned with Engineering
-              confidence.
-            - Do not arbitrarily increase confidence.
+            - Score YOUR OWN confidence in this specific trade from
+              all the evidence: the JUDAS/ORB setup, market regime,
+              intraday price action, news and portfolio context.
+            - Engineering confidence is a coarse daily-trend score
+              that takes only a few fixed values. Treat it as one
+              input; do not copy it.
+            - Use the full scale so setups can be compared:
+              50-59 marginal, 60-69 acceptable, 70-79 good,
+              80-89 strong, 90+ exceptional.
             - Do not arbitrarily reduce confidence because optional
               information is unavailable.
 

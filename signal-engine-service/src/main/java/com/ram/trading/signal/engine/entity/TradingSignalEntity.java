@@ -72,4 +72,8 @@ public class TradingSignalEntity {
     @Column(name = "setup_strategy")
     private String strategy;
 
+    /** Setup quality 0-100 at signal time (SetupQualityScorer). */
+    @Column(name = "quality_score")
+    private Integer qualityScore;
+
 }

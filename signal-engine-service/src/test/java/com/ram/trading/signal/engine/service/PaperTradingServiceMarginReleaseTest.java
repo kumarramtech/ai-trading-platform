@@ -20,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -74,6 +77,24 @@ class PaperTradingServiceMarginReleaseTest {
         // receives it net of round-trip charges, as the broker account would.
         double charges = new IntradayChargesCalculator().roundTrip("BUY", 100.0, 110.0, 10).getTotal();
         verify(balanceMarginClient).releaseMargin(10000.0, Math.round((100.0 - charges) * 100.0) / 100.0);
+    }
+
+    @Test
+    void closeRecordsGrossChargesNetAndExcursionInR() {
+        PaperTrade trade = openTrade();
+        trade.setPlannedRisk(50.0);                  // 10 shares x Rs 5 stop distance = 1R
+        when(repository.findById(1L)).thenReturn(Optional.of(openTrade()));
+
+        service.recordPrice(trade, 97.0);            // 3 against = 0.6R
+        service.recordPrice(trade, 112.5);           // 12.5 for = 2.5R
+        StepVerifier.create(service.closeTrade(trade, targetExit(), tickAt(110.0)))
+                .verifyComplete();
+
+        assertEquals(100.0, trade.getGrossProfitLoss(), 0.001);
+        assertTrue(trade.getCharges() > 0);
+        assertEquals(100.0 - trade.getCharges(), trade.getProfitLoss(), 0.011);
+        assertEquals(2.5, trade.getMfeR(), 0.001);
+        assertEquals(0.6, trade.getMaeR(), 0.001);
     }
 
     @Test

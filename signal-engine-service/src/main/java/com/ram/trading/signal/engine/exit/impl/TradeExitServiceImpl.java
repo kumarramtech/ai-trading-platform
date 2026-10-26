@@ -191,6 +191,8 @@ public class TradeExitServiceImpl implements TradeExitService {
 
         log.debug("OPEN Trade Found");
 
+        paperTradingService.recordPrice(trade, tick.getLastTradedPrice());
+
         log.debug(
                 "TradeId      : {}",
                 trade.getId());

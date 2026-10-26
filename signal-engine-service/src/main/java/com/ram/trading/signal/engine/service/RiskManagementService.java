@@ -4,6 +4,7 @@ import com.ram.trading.signal.engine.client.TradeExecutionClient.TradeExecutionP
 import com.ram.trading.signal.engine.contant.SignalStatus;
 import com.ram.trading.signal.engine.risk.LiveTradeSnapshotService;
 import com.ram.trading.signal.engine.risk.RiskCheckResponse;
+import com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,10 @@ public class RiskManagementService {
     private final PaperTradeRepository repository;
 
     private final LiveTradeSnapshotService liveTradeSnapshotService;
+
+    /** Live realized P&L comes from Trade Execution gross of charges; the daily limit uses net. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private IntradayChargesCalculator chargesCalculator = new IntradayChargesCalculator();
 
     /**
      * New entries stop for the day after this many losing trades in a row,
@@ -75,6 +80,19 @@ public class RiskManagementService {
     /** Same cooldown paper mode applies in PaperTradingService.validateTradeCreation. */
     @Value("${trading.reentry.cooldown-minutes:15}")
     private long reentryCooldownMinutes = 15;
+
+    /** Open trade slots left now (paper rows, or live positions from Trade Execution). */
+    public long openSlotsLeft() {
+        long open;
+        if (liveTradeSnapshotService.isLiveMode()) {
+            open = liveTradeSnapshotService.freshTrades()
+                    .map(trades -> trades.stream().filter(t -> isActiveLiveStatus(t.status())).count())
+                    .orElse(0L);
+        } else {
+            open = repository.countByStatus(SignalStatus.OPEN);
+        }
+        return Math.max(0, maxOpenTrades - open);
+    }
 
     public RiskCheckResponse validateTrade(String symbol) {
 
@@ -130,9 +148,8 @@ public class RiskManagementService {
         List<String> violations = new ArrayList<>();
 
         double todayPnL = trades.stream()
-                .map(TradeExecutionPosition::realizedPnl)
-                .filter(java.util.Objects::nonNull)
-                .mapToDouble(BigDecimal::doubleValue)
+                .filter(trade -> trade.realizedPnl() != null)
+                .mapToDouble(trade -> trade.realizedPnl().doubleValue() - liveCharges(trade))
                 .sum();
         long symbolTradesToday = trades.stream()
                 .filter(trade -> symbol != null && symbol.equalsIgnoreCase(trade.symbol()))
@@ -178,6 +195,22 @@ public class RiskManagementService {
         }
 
         return response(violations);
+    }
+
+    /** Round-trip charges for a closed (or partly exited) live position; 0 when prices are missing. */
+    private double liveCharges(TradeExecutionPosition trade) {
+        BigDecimal exit = trade.exitAveragePrice() != null ? trade.exitAveragePrice() : trade.exitPrice();
+        Integer quantity = trade.exitFilledQuantity() != null && trade.exitFilledQuantity() > 0
+                ? trade.exitFilledQuantity()
+                : trade.filledQuantity();
+        if (trade.averageEntryPrice() == null || exit == null || quantity == null) {
+            return 0.0;
+        }
+        return chargesCalculator.roundTrip(
+                trade.side(),
+                trade.averageEntryPrice().doubleValue(),
+                exit.doubleValue(),
+                quantity).getTotal();
     }
 
     private static boolean isActiveLiveStatus(String status) {
