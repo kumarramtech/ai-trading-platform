@@ -35,7 +35,7 @@ public class ShadowTrade {
     /** BUY or SELL. */
     private String direction;
 
-    /** Filter that rejected the setup: REGIME_GUARD, FRESH_REGIME_FLIP, MIDDAY_SIDEWAYS, EXTENDED. */
+    /** Filter that rejected the setup: REGIME_GUARD, FRESH_REGIME_FLIP, MIDDAY_SIDEWAYS, EXTENDED, AI_VETO. */
     @Column(name = "rejected_by", length = 32)
     private String rejectedBy;
 

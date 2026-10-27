@@ -73,7 +73,8 @@ public class StrategyPerformanceService {
         return minTrades;
     }
 
-    private List<PaperTrade> closedTrades(LocalDateTime from, LocalDateTime to) {
+    /** Closed trades with a net P&L, oldest exit first, exiting in [from, to). */
+    public List<PaperTrade> closedTrades(LocalDateTime from, LocalDateTime to) {
         return repository.findByExitTimeBetweenOrderByExitTimeDesc(from, to).stream()
                 .filter(t -> t.getProfitLoss() != null && t.getExitTime() != null)
                 .sorted(Comparator.comparing(PaperTrade::getExitTime))
@@ -89,7 +90,7 @@ public class StrategyPerformanceService {
         return result;
     }
 
-    GroupStats stats(String name, List<PaperTrade> trades) {
+    public GroupStats stats(String name, List<PaperTrade> trades) {
 
         int count = trades.size();
         double gross = 0, charges = 0, net = 0, winSum = 0, lossSum = 0, rSum = 0, holdMinutes = 0;

@@ -107,6 +107,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     /** Follows filter-rejected setups as if traded, to measure each filter. */
     private final com.ram.trading.signal.engine.service.shadow.ShadowTradeService shadowTradeService;
 
+    /** Only stocks that can be exited near the planned price (min price, min daily turnover). */
+    private final com.ram.trading.signal.engine.risk.LiquidityFilter liquidityFilter;
+
     /** Setups scoring below this are not traded at all (0 = off). */
     @Value("${trading.quality.min-score:40}")
     private int minQualityScore = 40;
@@ -474,6 +477,15 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             return Mono.empty();
         }
 
+        java.util.Optional<String> illiquid =
+                liquidityFilter.rejection(symbol, result.getCurrentPrice(), null);
+
+        if (illiquid.isPresent()) {
+            log.info("LIQUIDITY FILTER | Entry skipped | Symbol={} | Strategy=MIDDAY | Reason={}",
+                    symbol, illiquid.get());
+            return Mono.empty();
+        }
+
         String middayRejection = null;
 
         if (skipMiddayInSideways && freshMarketTrend() == Trend.SIDEWAYS) {
@@ -785,6 +797,23 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     .flatMap(indicator -> {
 
                                         recordStrategySetup(entrySetup);
+
+                                        java.util.Optional<String> illiquid =
+                                                liquidityFilter.rejection(
+                                                        tick.getSymbol(),
+                                                        tick.getLastTradedPrice(),
+                                                        indicator);
+
+                                        if (illiquid.isPresent()) {
+
+                                            log.info(
+                                                    "LIQUIDITY FILTER | Entry skipped | Symbol={} | Strategy={} | Reason={}",
+                                                    tick.getSymbol(),
+                                                    entrySetup.strategy(),
+                                                    illiquid.get());
+
+                                            return Mono.empty();
+                                        }
 
                                         log.debug(
                                                 "Technical Indicators Loaded");
@@ -1470,6 +1499,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                     request.getSymbol(),
                     technicalSignal);
 
+            recordAiVeto(request, technicalSignal);
+
             return TradingSignal.builder()
                     .symbol(request.getSymbol())
                     .signal(SignalType.HOLD.name())
@@ -1516,10 +1547,28 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 technicalSignal,
                 aiSignal);
 
+        recordAiVeto(request, technicalSignal);
+
         return TradingSignal.builder()
                 .symbol(request.getSymbol())
                 .signal(SignalType.HOLD.name())
                 .build();
+    }
+
+    /**
+     * Follows a setup the AI turned down as a shadow trade, so the AI layer is
+     * judged like every other filter: if the setups it vetoes would have made
+     * money, it costs more (calls, ~5-40s latency, missed trades) than it saves.
+     */
+    private void recordAiVeto(SignalGenerationRequest request, SignalType technicalSignal) {
+        shadowTradeService.recordRejectedSetup(
+                request,
+                technicalSignal.name(),
+                "AI_VETO",
+                request.getMarketContext() != null
+                        && request.getMarketContext().getMarketTrend() != null
+                        ? request.getMarketContext().getMarketTrend().name()
+                        : null);
     }
 
     private void logTradingContext(TradingContext context) {

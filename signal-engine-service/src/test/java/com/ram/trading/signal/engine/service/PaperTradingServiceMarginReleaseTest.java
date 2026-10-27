@@ -63,7 +63,8 @@ class PaperTradingServiceMarginReleaseTest {
                 tradingSignalService,
                 balanceMarginClient,
                 mock(TradingFunnelStatisticsService.class),
-                new IntradayChargesCalculator());
+                new IntradayChargesCalculator(),
+                new com.ram.trading.signal.engine.service.fill.OrderBookFillModel());
     }
 
     @Test

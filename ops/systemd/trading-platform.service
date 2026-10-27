@@ -1,0 +1,27 @@
+# Starts all trading services when the EC2 instance boots, in the health-checked
+# order of scripts/start.sh, and stops them cleanly on shutdown.
+#
+# Install (once):
+#   sudo cp ops/systemd/trading-platform.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable trading-platform
+#
+# Manual control: sudo systemctl start|stop|restart trading-platform
+[Unit]
+Description=AI trading platform (10 Spring Boot services)
+Wants=network-online.target
+After=network-online.target mysql.service redis-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ubuntu
+WorkingDirectory=/opt/trading-platform
+ExecStart=/bin/bash /opt/trading-platform/scripts/start.sh
+ExecStop=/bin/bash /opt/trading-platform/scripts/stop.sh
+# start.sh waits for each service's health check in turn.
+TimeoutStartSec=900
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

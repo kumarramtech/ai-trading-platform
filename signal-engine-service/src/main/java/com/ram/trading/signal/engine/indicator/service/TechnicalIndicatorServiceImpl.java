@@ -33,6 +33,9 @@ public class TechnicalIndicatorServiceImpl
 
     private static final int MINIMUM_CANDLES = 51;
 
+    /** Sessions averaged for the liquidity filter's daily turnover. */
+    private static final int TURNOVER_SESSIONS = 20;
+
     /**
      * Symbols found with fewer than MINIMUM_CANDLES daily candles are not
      * re-fetched for this long (2026-10-27: ~275 such symbols were requested,
@@ -208,6 +211,27 @@ public class TechnicalIndicatorServiceImpl
                 });
     }
 
+    /**
+     * Mean of close x volume over the last {@code sessions} daily candles
+     * (oldest first). Candles without close or volume are left out; null if none remain.
+     */
+    static Double averageDailyTurnover(List<Candle> candles, int sessions) {
+
+        List<Candle> recent = candles.subList(Math.max(0, candles.size() - sessions), candles.size());
+
+        double total = 0;
+        int counted = 0;
+
+        for (Candle candle : recent) {
+            if (candle.getClose() != null && candle.getVolume() != null && candle.getVolume() > 0) {
+                total += candle.getClose().doubleValue() * candle.getVolume();
+                counted++;
+            }
+        }
+
+        return counted == 0 ? null : total / counted;
+    }
+
     private List<Candle> toCandles(
             List<HistoricalPriceResponse> prices) {
 
@@ -331,6 +355,9 @@ public class TechnicalIndicatorServiceImpl
                 candles.get(candles.size() - 1)
                         .getClose()
                         .doubleValue());
+
+        response.setAverageDailyTurnover(
+                averageDailyTurnover(candles, TURNOVER_SESSIONS));
 
         log.info(
                 "MACD Strategy V2 -> Symbol={}, " +

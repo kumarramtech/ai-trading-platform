@@ -30,4 +30,7 @@ public class TechnicalIndicatorResponse {
     // Strategy V2
     private Double previousMacd;
     private Double previousSignalLine;
+
+    /** Average daily traded value (close x volume, rupees) over the last 20 sessions; null without volume data. */
+    private Double averageDailyTurnover;
 }
