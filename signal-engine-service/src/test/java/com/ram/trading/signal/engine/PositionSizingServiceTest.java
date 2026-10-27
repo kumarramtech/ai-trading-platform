@@ -25,7 +25,8 @@ class PositionSizingServiceTest {
     void setUp() {
         balanceMarginClient = mock(BalanceMarginClient.class);
         stockServiceClient = mock(StockServiceClient.class);
-        service = new PositionSizingService(balanceMarginClient, stockServiceClient);
+        service = new PositionSizingService(balanceMarginClient, stockServiceClient,
+                new com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator());
         // The service is instantiated directly in unit tests, so Spring @Value fields are not injected.
         ReflectionTestUtils.setField(service, "targetMarginPerTrade", 10_000.0);
         ReflectionTestUtils.setField(service, "maxLossPerTrade", 250.0);

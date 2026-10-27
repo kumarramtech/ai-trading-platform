@@ -8,6 +8,7 @@ import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.TradingDecision;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -20,6 +21,51 @@ import java.util.Objects;
 public class TradingDecisionEngine {
 
     private static final double MINIMUM_DOMINANCE_RATIO = 0.20;
+
+    /**
+     * For ORB and JUDAS in a regime aligned with the setup, the intraday trigger
+     * decides the direction; the daily EMA/MACD/RSI rules no longer force HOLD
+     * when they disagree or are mixed.
+     * A daily-trend conflict is still priced in by the setup-quality trend score
+     * (0/20 against the trend), and the trade still needs the regime guard, the
+     * AI and risk checks. 2026-10-27: 142 of 156 BUY setups were turned to HOLD
+     * by daily rules while most SELL setups passed, so only exhausted shorts traded.
+     */
+    @Value("${trading.decision.intraday-overrides-daily:true}")
+    private boolean intradayOverridesDaily = true;
+
+    /**
+     * Rule confidence is direction-agnostic (SELL=50 against a BUY setup still
+     * reads 71), so an overridden decision carries this fixed, deliberately low
+     * confidence instead: by default the engineering minimum for reaching the AI.
+     */
+    @Value("${trading.decision.override-confidence:${trading.engineering.min-ai-confidence:60}}")
+    private int overrideConfidence = 60;
+
+    /*
+     * Counter-regime ORB exception: a stock breaking against the index on its
+     * own news/flow (relative strength) is a real setup that the regime guard
+     * otherwise always blocks. Off in live unless ...live=true, so going live
+     * never inherits a paper experiment. A counter-regime setup scores at most
+     * 70 on quality (regime and NIFTY momentum both 0), hence the 55 floor.
+     */
+    @Value("${trading.regime.counter-trend-exception.enabled:true}")
+    private boolean counterTrendExceptionEnabled = true;
+
+    @Value("${trading.regime.counter-trend-exception.live:false}")
+    private boolean counterTrendExceptionLive = false;
+
+    @Value("${trading.regime.counter-trend-exception.min-relative-pct:1.5}")
+    private double counterTrendMinRelativePct = 1.5;
+
+    @Value("${trading.regime.counter-trend-exception.min-volume-ratio:2.0}")
+    private double counterTrendMinVolumeRatio = 2.0;
+
+    @Value("${trading.regime.counter-trend-exception.min-quality:55}")
+    private int counterTrendMinQuality = 55;
+
+    @Value("${execution.trade:paper}")
+    private String executionTradeMode = "paper";
 
     private final RuleEngine ruleEngine;
     private final RuleConfidenceCalculator confidenceCalculator;
@@ -52,14 +98,30 @@ public class TradingDecisionEngine {
 
         // Determine the technical signal and preserve setup-direction integrity.
         SignalType technicalSignal = determineSignal(results, setupDirection);
+
+        boolean dailyOverridden = false;
+        if (technicalSignal == SignalType.HOLD && intradaySetupDecides(request)) {
+            log.info("V2.2 DAILY CONFLICT OVERRIDDEN | Symbol={} | Strategy={} | Setup={} | BUY={} | SELL={} | Decision={}",
+                    request.getSymbol(), request.getSetupStrategy(), setupDirection,
+                    buyScore, sellScore, setupDirection);
+            technicalSignal = setupDirection;
+            dailyOverridden = true;
+        }
+
         SignalType signal = applyMarketRegimeGuard(request, technicalSignal);
 
         List<String> reasons = new ArrayList<>(collectReasons(results));
+        if (dailyOverridden) {
+            reasons.add("Daily indicators do not confirm the intraday " + request.getSetupStrategy()
+                    + " setup; direction taken from the intraday trigger.");
+        }
         if (technicalSignal != signal && signal == SignalType.HOLD) {
             reasons.add("Market regime / strategy alignment guard rejected the entry.");
         }
 
-        int confidence = confidenceCalculator.calculateScore(results);
+        int confidence = dailyOverridden
+                ? overrideConfidence
+                : confidenceCalculator.calculateScore(results);
         ConfidenceLevel level = confidenceCalculator.determineLevel(confidence);
 
         log.info(
@@ -110,12 +172,31 @@ public class TradingDecisionEngine {
                     ));
         }
 
+        boolean technicallyValid =
+                technicalSignal == SignalType.BUY || technicalSignal == SignalType.SELL;
+
+        boolean regimeRejected = technicallyValid
+                && signal == SignalType.HOLD
+                && isCounterTrend(request, technicalSignal);
+
+        boolean counterTrendException = technicallyValid
+                && signal == technicalSignal
+                && isCounterTrend(request, signal)
+                && "ORB".equalsIgnoreCase(
+                        request.getSetupStrategy() == null ? "" : request.getSetupStrategy().trim());
+
+        if (counterTrendException) {
+            reasons.add("Counter-regime ORB allowed on the stock's own relative strength and volume.");
+        }
+
         return TradingDecision.builder()
                 .signal(signal)
                 .confidence(confidence)
                 .confidenceLevel(level)
                 .reasons(reasons)
                 .ruleResults(results)
+                .filterRejection(regimeRejected ? "REGIME_GUARD" : null)
+                .counterTrendException(counterTrendException)
                 .build();
     }
 
@@ -164,6 +245,73 @@ public class TradingDecisionEngine {
         }
 
         return technicalDirection;
+    }
+
+    private boolean intradaySetupDecides(SignalGenerationRequest request) {
+        if (!intradayOverridesDaily) {
+            return false;
+        }
+        SignalType setupDirection = request.getSetupDirection();
+        if (setupDirection != SignalType.BUY && setupDirection != SignalType.SELL) {
+            return false;
+        }
+        String strategy = request.getSetupStrategy() == null
+                ? ""
+                : request.getSetupStrategy().trim().toUpperCase();
+        if (!"ORB".equals(strategy) && !"JUDAS".equals(strategy)) {
+            return false;
+        }
+        /*
+         * Only with the index behind the trade (BUY in BULLISH, SELL in BEARISH).
+         * In SIDEWAYS or an unknown regime the daily rules stay the filter:
+         * range days are where counter-trend breakouts fail most.
+         */
+        Trend regime = request.getMarketContext() != null
+                ? request.getMarketContext().getMarketTrend()
+                : null;
+        return (setupDirection == SignalType.BUY && regime == Trend.BULLISH)
+                || (setupDirection == SignalType.SELL && regime == Trend.BEARISH);
+    }
+
+    /**
+     * A counter-regime ORB is allowed only when the stock is clearly moving on
+     * its own: its day change runs against the index by at least
+     * counterTrendMinRelativePct, the setup volume is heavy, and the setup
+     * scores well. Paper only unless explicitly enabled for live.
+     */
+    private boolean hasOwnRelativeStrength(SignalGenerationRequest request, SignalType signal) {
+        if (!counterTrendExceptionEnabled
+                || (!"paper".equalsIgnoreCase(executionTradeMode.trim()) && !counterTrendExceptionLive)) {
+            return false;
+        }
+
+        Double stockChange = request.getStockChangePct();
+        Double niftyChange = request.getMarketContext() != null
+                ? request.getMarketContext().getNiftyChange()
+                : null;
+        Double volumeRatio = request.getSetupVolumeRatio();
+        Integer quality = request.getSetupQualityScore();
+
+        if (stockChange == null || niftyChange == null || volumeRatio == null || quality == null) {
+            return false;
+        }
+
+        // SELL: stock below the index; BUY: stock above it.
+        double relative = signal == SignalType.SELL
+                ? niftyChange - stockChange
+                : stockChange - niftyChange;
+
+        return relative >= counterTrendMinRelativePct
+                && volumeRatio >= counterTrendMinVolumeRatio
+                && quality >= counterTrendMinQuality;
+    }
+
+    private static boolean isCounterTrend(SignalGenerationRequest request, SignalType signal) {
+        Trend regime = request.getMarketContext() != null
+                ? request.getMarketContext().getMarketTrend()
+                : null;
+        return (regime == Trend.BULLISH && signal == SignalType.SELL)
+                || (regime == Trend.BEARISH && signal == SignalType.BUY);
     }
 
     private int score(List<RuleResult> results, SignalType signalType) {
@@ -259,6 +407,20 @@ public class TradingDecisionEngine {
                         request.getSymbol(),
                         marketTrend,
                         signal);
+                return signal;
+            }
+
+            if (orbSetup && hasOwnRelativeStrength(request, signal)) {
+                log.warn(
+                        "COUNTERTREND EXCEPTION | Symbol={} | Strategy=ORB | Regime={} | Signal={} | "
+                                + "StockChange={}% | NIFTY={}% | VolumeRatio={} | Quality={} | Passed to AI as ORB_RS",
+                        request.getSymbol(),
+                        marketTrend,
+                        signal,
+                        request.getStockChangePct(),
+                        request.getMarketContext().getNiftyChange(),
+                        request.getSetupVolumeRatio(),
+                        request.getSetupQualityScore());
                 return signal;
             }
 

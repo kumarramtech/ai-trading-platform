@@ -51,4 +51,10 @@ public class SignalGenerationRequest {
     /** Confirmation-candle volume / opening-range average volume (JUDAS, ORB); null otherwise. */
     private Double setupVolumeRatio;
 
+    /** The stock's % move since today's open (same basis as MarketContext.niftyChange); null when unknown. */
+    private Double stockChangePct;
+
+    /** SetupQualityScorer score 0-100, set once scored; null before that. */
+    private Integer setupQualityScore;
+
 }

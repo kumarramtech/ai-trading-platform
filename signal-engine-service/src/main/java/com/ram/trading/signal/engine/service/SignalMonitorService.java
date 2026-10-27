@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -77,9 +78,19 @@ public class SignalMonitorService {
          * ========================================================
          */
 
+        /*
+         * Intraday only: an OPEN signal from an earlier day is a leftover
+         * (it has no open position) and is not worth a price call per minute.
+         */
+        LocalDate today = tradingSessionService.today();
+
         List<TradingSignalEntity> signals =
                 repository.findByStatus(
-                        SignalStatus.OPEN);
+                                SignalStatus.OPEN)
+                        .stream()
+                        .filter(signal -> signal.getCreatedAt() == null
+                                || !signal.getCreatedAt().toLocalDate().isBefore(today))
+                        .toList();
 
 
         /*

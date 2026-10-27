@@ -7,8 +7,10 @@ import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
 import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
 import com.ram.trading.signal.engine.entity.PaperTrade;
 import com.ram.trading.signal.engine.repo.PaperTradeRepository;
+import com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -84,6 +86,16 @@ public class TrailingStopService {
 
     private final PaperTradeRepository repository;
     private final NotificationClient notificationClient;
+    private final IntradayChargesCalculator chargesCalculator;
+
+    /**
+     * Break-even means "no loss after costs": the stop sits beyond entry by the
+     * round-trip charges per share plus exit slippage. A stop at the bare entry
+     * still lost the charges (CRAFTSMAN 2026-10-27: reached 1.13R, exited at
+     * entry, -72 net on -17 gross).
+     */
+    @Value("${paper.trading.slippage-pct:0.03}")
+    private double slippagePct = 0.03;
 
 
 
@@ -101,6 +113,22 @@ public class TrailingStopService {
             BigDecimal initialStopLoss,
             BigDecimal currentStopLoss,
             double currentPrice) {
+
+        return calculateLiveTrailingStop(
+                side, entryPrice, initialStopLoss, currentStopLoss, currentPrice, 0);
+    }
+
+    /**
+     * As above; with a quantity, break-even and locked stops cover the
+     * round-trip charges and exit slippage (quantity <= 0 skips the cost offset).
+     */
+    public Optional<BigDecimal> calculateLiveTrailingStop(
+            String side,
+            BigDecimal entryPrice,
+            BigDecimal initialStopLoss,
+            BigDecimal currentStopLoss,
+            double currentPrice,
+            int quantity) {
 
         if (side == null || entryPrice == null || initialStopLoss == null
                 || currentStopLoss == null || !Double.isFinite(currentPrice)
@@ -147,7 +175,10 @@ public class TrailingStopService {
                     : entry - initialRisk * lockedR;
         }
 
-        if (!Double.isFinite(candidate) || candidate <= 0) {
+        candidate = coverCosts(candidate, side, entry, quantity, isBuy);
+
+        if (!Double.isFinite(candidate) || candidate <= 0
+                || (isBuy ? candidate >= currentPrice : candidate <= currentPrice)) {
             return Optional.empty();
         }
 
@@ -341,11 +372,22 @@ public class TrailingStopService {
          * CALCULATE NEW STOP
          * --------------------------------------------------------
          */
-        double newStop = calculateNewStop(
-                trade,
-                currentR,
-                initialRisk,
-                currentStep);
+        double newStop = coverCosts(
+                calculateNewStop(
+                        trade,
+                        currentR,
+                        initialRisk,
+                        currentStep),
+                trade.getSignal(),
+                entryPrice,
+                trade.getQuantity() != null ? trade.getQuantity() : 0,
+                isBuy);
+
+        // A cost-covering stop must still sit on the right side of the market.
+        if (isBuy ? newStop >= currentPrice : newStop <= currentPrice) {
+
+            return Mono.just(trade);
+        }
 
         /*
          * --------------------------------------------------------
@@ -598,6 +640,33 @@ public class TrailingStopService {
         }
     }
 
+
+    /**
+     * Pushes a trailing stop at least far enough past entry to cover the
+     * round-trip charges per share and exit slippage. Stops already beyond
+     * that point are unchanged.
+     */
+    private double coverCosts(
+            double stop,
+            String side,
+            double entryPrice,
+            int quantity,
+            boolean isBuy) {
+
+        if (quantity <= 0 || entryPrice <= 0) {
+            return stop;
+        }
+
+        double chargesPerShare = chargesCalculator
+                .roundTrip(side, entryPrice, entryPrice, quantity)
+                .getTotal() / quantity;
+
+        double costOffset = chargesPerShare + entryPrice * slippagePct / 100.0;
+
+        return isBuy
+                ? Math.max(stop, entryPrice + costOffset)
+                : Math.min(stop, entryPrice - costOffset);
+    }
 
     /**
      * Updates the PaperTrade entity in memory.

@@ -104,6 +104,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
     private final RiskManagementService riskManagementService;
 
+    /** Follows filter-rejected setups as if traded, to measure each filter. */
+    private final com.ram.trading.signal.engine.service.shadow.ShadowTradeService shadowTradeService;
+
     /** Setups scoring below this are not traded at all (0 = off). */
     @Value("${trading.quality.min-score:40}")
     private int minQualityScore = 40;
@@ -150,10 +153,38 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     @Value("${trading.pipeline.detached-timeout-seconds:90}")
     private long detachedPipelineTimeoutSeconds = 90L;
 
+    /**
+     * Reject entries whose entry-quality status is EXTENDED (price already far
+     * from EMA20 with RSI stretched in the trade direction, or moved >= 1% since
+     * the signal). RENUKA 2026-10-27 shorted at -13.6% vs EMA20, RSI 24.6.
+     */
+    @Value("${trading.entry-quality.reject-extended:true}")
+    private boolean rejectExtendedEntries = true;
+
     private final AtomicInteger detachedPipelinesInFlight = new AtomicInteger();
 
-    /** Index regime from the latest live tick, lent to the MIDDAY path (which has no tick). */
-    private record RegimeSnapshot(Trend trend, LocalDateTime seenAt) {}
+    /**
+     * Index regime from the latest live tick, lent to the MIDDAY path (which has no tick).
+     * changedAt is when this trend was first seen after a different one.
+     */
+    private record RegimeSnapshot(Trend trend, LocalDateTime seenAt, LocalDateTime changedAt) {}
+
+    /**
+     * No entry in the direction of a regime flip younger than this: a SELL right
+     * after the index turns BEARISH, or a BUY right after it turns BULLISH, enters
+     * at the extreme of the move that caused the flip (2026-10-27: BEARISH at 14:05,
+     * back to SIDEWAYS at 14:31; three shorts at 14:08-14:19 lost Rs 632). 0 = off.
+     */
+    @Value("${trading.regime.fresh-flip-minutes:15}")
+    private long freshRegimeFlipMinutes = 15;
+
+    /**
+     * MIDDAY follows the daily movers, which a range-bound index rarely carries
+     * further; while the live regime is SIDEWAYS no MIDDAY entry is taken.
+     * An unknown or stale regime does not block (no live tick to judge by).
+     */
+    @Value("${trading.strategy.midday.skip-sideways:true}")
+    private boolean skipMiddayInSideways = true;
 
     private static final Duration REGIME_MAX_AGE = Duration.ofMinutes(5);
 
@@ -170,6 +201,49 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             return null;
         }
         return snapshot.trend();
+    }
+
+    private void recordMarketRegime(Trend trend) {
+        LocalDateTime now = LocalDateTime.now();
+        latestMarketRegime.updateAndGet(previous ->
+                new RegimeSnapshot(
+                        trend,
+                        now,
+                        previous != null && previous.trend() == trend
+                                ? previous.changedAt()
+                                : now));
+    }
+
+    /**
+     * True when the entry would follow a regime flip in its own direction that is
+     * younger than trading.regime.fresh-flip-minutes.
+     */
+    private boolean chasesFreshRegimeFlip(String symbol, String strategy, String direction) {
+        RegimeSnapshot snapshot = latestMarketRegime.get();
+        if (freshRegimeFlipMinutes <= 0 || snapshot == null || direction == null
+                || snapshot.seenAt().isBefore(LocalDateTime.now().minus(REGIME_MAX_AGE))) {
+            return false;
+        }
+
+        boolean sameDirection =
+                (snapshot.trend() == Trend.BULLISH && "BUY".equalsIgnoreCase(direction))
+                        || (snapshot.trend() == Trend.BEARISH && "SELL".equalsIgnoreCase(direction));
+
+        LocalDateTime settledAt = snapshot.changedAt().plusMinutes(freshRegimeFlipMinutes);
+
+        if (!sameDirection || !LocalDateTime.now().isBefore(settledAt)) {
+            return false;
+        }
+
+        log.warn(
+                "FRESH REGIME FLIP | Entry skipped | Symbol={} | Strategy={} | Direction={} | Regime={} | Since={} | SettlesAt={}",
+                symbol,
+                strategy,
+                direction,
+                snapshot.trend(),
+                snapshot.changedAt().toLocalTime(),
+                settledAt.toLocalTime());
+        return true;
     }
 
     @PostConstruct
@@ -400,6 +474,33 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             return Mono.empty();
         }
 
+        String middayRejection = null;
+
+        if (skipMiddayInSideways && freshMarketTrend() == Trend.SIDEWAYS) {
+            log.info(
+                    "MIDDAY PIPELINE SKIPPED | Symbol={} | Direction={} | Reason=Index regime is SIDEWAYS",
+                    symbol,
+                    direction);
+            middayRejection = "MIDDAY_SIDEWAYS";
+        } else if (chasesFreshRegimeFlip(symbol, "MIDDAY", direction)) {
+            middayRejection = "FRESH_REGIME_FLIP";
+        }
+
+        if (middayRejection != null) {
+            Trend regime = freshMarketTrend();
+            shadowTradeService.recordRejectedSetup(
+                    SignalGenerationRequest.builder()
+                            .symbol(symbol)
+                            .currentPrice(result.getCurrentPrice())
+                            .setupStrategy("MIDDAY")
+                            .setupDirection(SignalType.valueOf(direction))
+                            .build(),
+                    direction,
+                    middayRejection,
+                    regime != null ? regime.name() : null);
+            return Mono.empty();
+        }
+
         try {
             TechnicalIndicatorResponse indicator = new TechnicalIndicatorResponse();
             indicator.setSymbol(symbol);
@@ -485,8 +586,10 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         }
 
         if (toTrend(tick.getMarketRegime()) != null) {
-            latestMarketRegime.set(new RegimeSnapshot(toTrend(tick.getMarketRegime()), LocalDateTime.now()));
+            recordMarketRegime(toTrend(tick.getMarketRegime()));
         }
+
+        shadowTradeService.onTick(tick.getSymbol(), tick.getLastTradedPrice());
 
         log.debug(
                 "Symbol : {}",
@@ -590,6 +693,18 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 return Mono.empty();
                             }
 
+                            if (technicalIndicatorService.hasInsufficientHistory(
+                                    tick.getSymbol())) {
+
+                                log.debug(
+                                        "ENTRY STRATEGY GATE | {} | " +
+                                                "Insufficient price history | " +
+                                                "Skipping entry evaluation",
+                                        tick.getSymbol());
+
+                                return Mono.empty();
+                            }
+
                             EntrySetup entrySetup =
                                     findEntrySetup(
                                             finalCompletedCandle);
@@ -612,6 +727,27 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     entrySetup.strategy(),
                                     entrySetup.direction(),
                                     entrySetup.confirmationTime());
+
+                            if (chasesFreshRegimeFlip(
+                                    tick.getSymbol(),
+                                    entrySetup.strategy(),
+                                    entrySetup.direction())) {
+
+                                shadowTradeService.recordRejectedSetup(
+                                        SignalGenerationRequest.builder()
+                                                .symbol(tick.getSymbol())
+                                                .currentPrice(tick.getLastTradedPrice())
+                                                .setupStrategy(entrySetup.strategy())
+                                                .setupDirection(SignalType.valueOf(
+                                                        entrySetup.direction().toUpperCase()))
+                                                .setupInvalidationLevel(entrySetup.invalidationLevel())
+                                                .build(),
+                                        entrySetup.direction().toUpperCase(),
+                                        "FRESH_REGIME_FLIP",
+                                        tick.getMarketRegime());
+
+                                return Mono.empty();
+                            }
 
                             return technicalIndicatorService
                                     .calculate(
@@ -797,6 +933,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 setupQualityScorer.score(request, edge);
 
         Integer qualityScore = quality != null ? quality.score() : null;
+
+        // The regime guard's counter-trend exception needs it.
+        request.setSetupQualityScore(qualityScore);
 
         if (quality != null) {
 
@@ -1092,8 +1231,19 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         aiResponse,
                                         request);
 
-                        signal.setStrategy(request.getSetupStrategy());
+                        // A counter-regime ORB let through on relative strength is reported
+                        // apart from ordinary ORB, so its results can be judged on their own.
+                        signal.setStrategy(
+                                pipelineResult.getTechnicalDecision() != null
+                                        && pipelineResult.getTechnicalDecision().isCounterTrendException()
+                                        ? "ORB_RS"
+                                        : request.getSetupStrategy());
                         signal.setQualityScore(qualityScore);
+                        signal.setMarketRegime(
+                                request.getMarketContext() != null
+                                        && request.getMarketContext().getMarketTrend() != null
+                                        ? request.getMarketContext().getMarketTrend().name()
+                                        : null);
 
                         /*
                          * The AI only confirms the direction. Stop-loss and
@@ -1527,12 +1677,13 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         }
 
         /*
-         * ENTRY QUALITY — diagnostic only; EXTENDED is not a rejection gate.
+         * ENTRY QUALITY
          *
-         * EXTENDED is rejected before position sizing, signal persistence,
-         * opportunity persistence, or paper-trade creation. CAUTION and
-         * UNAVAILABLE remain observable only; this change does not introduce
-         * unvalidated filters for those states or alter JUDAS/ORB/AI/RiskGuard.
+         * EXTENDED is rejected (trading.entry-quality.reject-extended) before
+         * position sizing, signal persistence, opportunity persistence, or
+         * paper-trade creation. CAUTION and UNAVAILABLE remain observable only;
+         * this does not introduce unvalidated filters for those states or
+         * alter JUDAS/ORB/AI/RiskGuard.
          */
         return marketDataProvider
                 .getStockPrice(signal.getSymbol())
@@ -1575,6 +1726,21 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                             entryQuality.getPriceVsEma50Pct(),
                             entryQuality.getPriceVsHistoricalClosePct(),
                             entryQuality.getReason());
+
+                    if (rejectExtendedEntries
+                            && "EXTENDED".equals(entryQuality.getStatus())) {
+                        log.warn(
+                                "ENTRY QUALITY REJECTED | Symbol={} | Direction={} | "
+                                        + "Status=EXTENDED | PriceVsEMA20={}% | Reason={}",
+                                entryQuality.getSymbol(),
+                                entryQuality.getDirection(),
+                                entryQuality.getPriceVsEma20Pct(),
+                                entryQuality.getReason());
+
+                        shadowTradeService.recordRejectedSignal(signal, "EXTENDED");
+
+                        return Mono.empty();
+                    }
 
                     /*
                      * POSITION SIZING
@@ -2314,8 +2480,23 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                         .toUpperCase()))
                 .setupInvalidationLevel(entrySetup.invalidationLevel())
                 .setupVolumeRatio(entrySetup.volumeRatio())
+                .stockChangePct(changeFromDayOpen(tick))
                 .marketContext(buildMarketContext(tick))
                 .build();
+    }
+
+    /**
+     * The stock's % move since today's open, on the same basis as the NIFTY
+     * change market-stream publishes (also from today's open), so the two can
+     * be compared; null when the day open is unknown.
+     */
+    private static Double changeFromDayOpen(Tick tick) {
+        Double open = tick.getDayOpenPrice();
+        Double last = tick.getLastTradedPrice();
+        if (open == null || last == null || open <= 0 || last <= 0) {
+            return null;
+        }
+        return (last - open) / open * 100.0;
     }
 
     private MarketContext buildMarketContext(Tick tick) {

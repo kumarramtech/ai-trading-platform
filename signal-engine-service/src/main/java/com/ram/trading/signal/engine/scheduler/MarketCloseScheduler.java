@@ -1,6 +1,7 @@
 package com.ram.trading.signal.engine.scheduler;
 
 import com.ram.trading.signal.engine.service.MarketCloseService;
+import com.ram.trading.signal.engine.service.shadow.ShadowTradeService;
 import com.ram.trading.signal.engine.util.TradingSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +16,8 @@ public class MarketCloseScheduler {
     private final MarketCloseService marketCloseService;
 
     private final TradingSessionService tradingSessionService;
+
+    private final ShadowTradeService shadowTradeService;
 
     /*
      * Runs every minute of the afternoon; shouldForceCloseTrades() limits it to
@@ -32,6 +35,9 @@ public class MarketCloseScheduler {
         }
 
         marketCloseService.closeOpenPositions().subscribe();
+
+        // Shadow trades close with the real ones (a no-op once none are open).
+        shadowTradeService.closeAllAtMarketClose();
     }
 
 }

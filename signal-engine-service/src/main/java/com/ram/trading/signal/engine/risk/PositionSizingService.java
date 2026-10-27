@@ -7,6 +7,7 @@ import com.ram.trading.signal.engine.dto.MarginCalculationResponse;
 import com.ram.trading.signal.engine.dto.MarginInstrumentRequest;
 import com.ram.trading.signal.engine.dto.TradingSignal;
 import com.ram.trading.signal.engine.dto.UpstoxMarginRequest;
+import com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +25,7 @@ public class PositionSizingService {
 
     private final BalanceMarginClient balanceMarginClient;
     private final StockServiceClient stockServiceClient;
+    private final IntradayChargesCalculator chargesCalculator;
 
     @Value("${trading.margin-per-trade:10000}")
     private double targetMarginPerTrade;
@@ -42,6 +44,19 @@ public class PositionSizingService {
      */
     @Value("${trading.risk.risk-per-trade:200}")
     private double riskPerTrade = 200;
+
+    /**
+     * When true, the risk cap budgets the full loss of a stopped-out trade:
+     * the stop distance plus adverse slippage on both fills plus round-trip
+     * charges. Without it a tight stop on a cheap stock overshoots the budget
+     * (RENUKA 2026-10-27: Rs 250 budget, Rs 357 realised).
+     */
+    @Value("${trading.risk.include-costs-in-sizing:true}")
+    private boolean includeCostsInSizing = true;
+
+    /** Adverse slippage per fill, % of price; the same value paper fills use. */
+    @Value("${paper.trading.slippage-pct:0.03}")
+    private double slippagePct = 0.03;
 
     /**
      * Position sizing starts from the broker's actual margin requirement.
@@ -206,7 +221,7 @@ public class PositionSizingService {
 
         if (riskPerTrade > 0 && marginResponse != null) {
 
-            int riskQuantity = (int) Math.floor(riskPerTrade / riskPerShare);
+            int riskQuantity = riskQuantity(signal, entryPrice, stopLoss, riskPerShare);
 
             if (riskQuantity < 1) {
                 return rejected(
@@ -324,12 +339,13 @@ public class PositionSizingService {
         }
 
         /*
-         * Expected stop-loss risk is bounded by risk-per-trade above.
+         * Expected stop-loss risk (incl. slippage and charges when enabled)
+         * is bounded by risk-per-trade above.
          * The ₹250 max-loss value remains the EXIT trigger handled by
          * the exit service (gap/slippage backstop).
          */
         double expectedStopLossRisk =
-                quantity * riskPerShare;
+                stopOutLoss(signal, entryPrice, stopLoss, riskPerShare, quantity);
 
         log.info(
                 "FINAL MARGIN SIZING | Symbol={} | Margin={} | " +
@@ -350,7 +366,7 @@ public class PositionSizingService {
                 .riskPerShare(riskPerShare)
                 .maxRiskPerTrade(maxLossPerTrade)
                 .riskBasedQuantity(riskPerTrade > 0
-                        ? (int) Math.floor(riskPerTrade / riskPerShare) : quantity)
+                        ? riskQuantity(signal, entryPrice, stopLoss, riskPerShare) : quantity)
                 .marginBasedQuantity(quantity)
                 .expectedRisk(expectedStopLossRisk)
                 .targetMargin(targetMarginPerTrade)
@@ -360,6 +376,74 @@ public class PositionSizingService {
                 .availableBalance(marginResponse.getAvailableBalance())
                 .rejectionReason(null)
                 .build();
+    }
+
+    /**
+     * Largest quantity whose stop-out loss stays within risk-per-trade.
+     * Charges depend on quantity (brokerage is capped per order), so the
+     * estimate is refined a few times and then stepped down until it fits.
+     */
+    private int riskQuantity(
+            TradingSignal signal,
+            double entryPrice,
+            double stopLoss,
+            double riskPerShare) {
+
+        int quantity = (int) Math.floor(riskPerTrade / riskPerShare);
+
+        if (!includeCostsInSizing || quantity < 1) {
+            return quantity;
+        }
+
+        double lossPerShare = riskPerShare + slippagePerShare(entryPrice, stopLoss);
+
+        quantity = (int) Math.floor(riskPerTrade / lossPerShare);
+
+        for (int i = 0; i < 5 && quantity > 0; i++) {
+            double charges = stopOutCharges(signal, entryPrice, stopLoss, quantity);
+            int next = (int) Math.floor((riskPerTrade - charges) / lossPerShare);
+            if (next == quantity) {
+                break;
+            }
+            quantity = next;
+        }
+
+        while (quantity > 0
+                && stopOutLoss(signal, entryPrice, stopLoss, riskPerShare, quantity) > riskPerTrade) {
+            quantity--;
+        }
+
+        return Math.max(quantity, 0);
+    }
+
+    private double stopOutLoss(
+            TradingSignal signal,
+            double entryPrice,
+            double stopLoss,
+            double riskPerShare,
+            int quantity) {
+
+        if (!includeCostsInSizing) {
+            return quantity * riskPerShare;
+        }
+
+        return quantity * (riskPerShare + slippagePerShare(entryPrice, stopLoss))
+                + stopOutCharges(signal, entryPrice, stopLoss, quantity);
+    }
+
+    private double slippagePerShare(double entryPrice, double stopLoss) {
+        return (entryPrice + stopLoss) * slippagePct / 100.0;
+    }
+
+    private double stopOutCharges(
+            TradingSignal signal,
+            double entryPrice,
+            double stopLoss,
+            int quantity) {
+
+        return chargesCalculator
+                .roundTrip(signal.getSignal(), entryPrice, stopLoss, quantity)
+                .getTotal();
     }
 
     private MarginCalculationResponse calculateMargin(

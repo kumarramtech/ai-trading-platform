@@ -93,6 +93,10 @@ public class PaperTrade {
     @Column(name = "quality_score")
     private Integer qualityScore;
 
+    /** Index regime at entry (BULLISH, BEARISH, SIDEWAYS), so results can be split by market type. */
+    @Column(name = "market_regime", length = 16)
+    private String marketRegime;
+
     /**
      * Furthest the price went for (MFE) and against (MAE) the trade while it was
      * open, in R. Losers with a high MFE say the target or trailing was wrong;

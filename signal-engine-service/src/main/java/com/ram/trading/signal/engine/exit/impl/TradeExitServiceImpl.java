@@ -758,7 +758,8 @@ public class TradeExitServiceImpl implements TradeExitService {
                 position.averageEntryPrice(),
                 position.initialStopLoss(),
                 BigDecimal.valueOf(currentStop),
-                tick.getLastTradedPrice());
+                tick.getLastTradedPrice(),
+                position.remainingQuantity() != null ? position.remainingQuantity() : 0);
         if (candidate.isEmpty()) {
             return Mono.just(false);
         }

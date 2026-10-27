@@ -44,6 +44,8 @@ public class TradingOrchestratorService {
 
     private final TradingFunnelStatisticsService tradingFunnelStatisticsService;
 
+    private final com.ram.trading.signal.engine.service.shadow.ShadowTradeService shadowTradeService;
+
     public Mono<TradingPipelineResult> executeTrade(
             SignalGenerationRequest signalRequest) {
 
@@ -91,6 +93,19 @@ public class TradingOrchestratorService {
                         ? signalRequest.getMarketContext().getMarketTrend().name()
                         : "UNKNOWN"
                         : "UNKNOWN");
+
+        if (technicalDecision != null
+                && technicalDecision.getFilterRejection() != null
+                && signalRequest.getSetupDirection() != null) {
+            shadowTradeService.recordRejectedSetup(
+                    signalRequest,
+                    signalRequest.getSetupDirection().name(),
+                    technicalDecision.getFilterRejection(),
+                    signalRequest.getMarketContext() != null
+                            && signalRequest.getMarketContext().getMarketTrend() != null
+                            ? signalRequest.getMarketContext().getMarketTrend().name()
+                            : null);
+        }
 
         if (technicalDecision != null && technicalDecision.getSignal() != null) {
             switch (technicalDecision.getSignal()) {
