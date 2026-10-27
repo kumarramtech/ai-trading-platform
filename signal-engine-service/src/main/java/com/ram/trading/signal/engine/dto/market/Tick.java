@@ -36,6 +36,15 @@ public class Tick {
     /** Today's session open (market-stream sends it); openPrice is the 1-minute candle's open. */
     private Double dayOpenPrice;
 
+    /** Order book from the full feed, best level first (up to 5); null without depth. */
+    private java.util.List<Double> bidPrices;
+
+    private java.util.List<Long> bidQuantities;
+
+    private java.util.List<Double> askPrices;
+
+    private java.util.List<Long> askQuantities;
+
     private Double change;
 
     private Double changePercentage;

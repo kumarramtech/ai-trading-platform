@@ -77,6 +77,9 @@ public class PaperTradingService {
 
     private final IntradayChargesCalculator chargesCalculator;
 
+    /** Walks the live order book for paper fills; slippagePct applies when no fresh book is known. */
+    private final com.ram.trading.signal.engine.service.fill.OrderBookFillModel fillModel;
+
     /**
      * Adverse slippage per fill, in % of price. Live entries and exits are
      * MARKET orders (and the protective stop is SL-M), which fill across the
@@ -382,7 +385,7 @@ public class PaperTradingService {
 
         boolean longTrade = SignalType.BUY.name().equalsIgnoreCase(signal.getSignal());
 
-        double entryFill = round(slip(referenceEntryPrice, longTrade));
+        double entryFill = round(fillPrice(signal.getSymbol(), referenceEntryPrice, longTrade, quantity));
 
         boolean fillBeyondPlan = longTrade
                 ? entryFill <= signal.getStopLoss() || entryFill >= signal.getTargetPrice()
@@ -2334,7 +2337,11 @@ public class PaperTradingService {
 
         // Closing a long sells, closing a short buys.
         trade.setReferenceExitPrice(round(referenceExitPrice));
-        trade.setExitPrice(round(slip(referenceExitPrice, !longTrade)));
+        trade.setExitPrice(round(fillPrice(
+                trade.getSymbol(),
+                referenceExitPrice,
+                !longTrade,
+                trade.getQuantity() != null ? trade.getQuantity() : 0)));
 
         double gross = calculatePnL(trade);
 
@@ -2395,6 +2402,17 @@ public class PaperTradingService {
 
         trade.setMfeR(round(Math.max(0, favourable) / riskPerShare));
         trade.setMaeR(round(Math.max(0, adverse) / riskPerShare));
+    }
+
+    /**
+     * Price a live MARKET order of this size would get: walked through the
+     * current order book when a fresh one is known, otherwise slippagePct
+     * worse than the reference price.
+     */
+    private double fillPrice(String symbol, double referencePrice, boolean buying, int quantity) {
+        return fillModel.bookFill(symbol, referencePrice, buying, quantity)
+                .map(com.ram.trading.signal.engine.service.fill.OrderBookFillModel.Fill::price)
+                .orElseGet(() -> slip(referencePrice, buying));
     }
 
     /** Price a market order fills at: worse by slippagePct for the side taken. */

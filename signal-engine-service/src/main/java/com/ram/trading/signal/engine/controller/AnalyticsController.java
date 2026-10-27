@@ -2,6 +2,7 @@ package com.ram.trading.signal.engine.controller;
 
 import com.ram.trading.signal.engine.dto.TradeInsightsResponse;
 import com.ram.trading.signal.engine.service.AnalyticsService;
+import com.ram.trading.signal.engine.service.performance.GoLiveReadinessService;
 import com.ram.trading.signal.engine.service.performance.SetupEdgeGate;
 import com.ram.trading.signal.engine.service.performance.StrategyPerformanceService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,8 @@ public class AnalyticsController {
 
     private final SetupEdgeGate setupEdgeGate;
 
+    private final GoLiveReadinessService goLiveReadinessService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -44,6 +47,23 @@ public class AnalyticsController {
         LocalDate start = from != null ? from : end.minusDays(30);
 
         return strategyPerformanceService.report(start, end);
+    }
+
+    /**
+     * Go-live criteria, monthly-target projection and per-filter shadow results
+     * since trading.go-live.measure-from. format=text returns the Slack version.
+     */
+    @GetMapping("/go-live-readiness")
+    public Object getGoLiveReadiness(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false, defaultValue = "json") String format) {
+
+        GoLiveReadinessService.ReadinessReport report =
+                goLiveReadinessService.report(to != null ? to : LocalDate.now());
+
+        return "text".equalsIgnoreCase(format)
+                ? goLiveReadinessService.toText(report)
+                : report;
     }
 
     /** What the edge gate would decide right now for every strategy and entry-time bucket. */

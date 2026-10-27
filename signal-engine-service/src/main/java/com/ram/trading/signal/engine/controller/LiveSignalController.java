@@ -19,10 +19,15 @@ public class LiveSignalController {
 
     private final SignalGenerationService signalGenerationService;
 
+    private final com.ram.trading.signal.engine.service.fill.OrderBookFillModel orderBookFillModel;
+
     @PostMapping("/live")
     public Mono<TradingSignal> processTick(@RequestBody Tick tick) {
 
         log.debug("LIVE REQUEST RECEIVED : {}", tick.getSymbol());
+
+        // First, so entries and exits triggered by this tick fill against its book.
+        orderBookFillModel.update(tick);
 
         long start = System.currentTimeMillis();
 

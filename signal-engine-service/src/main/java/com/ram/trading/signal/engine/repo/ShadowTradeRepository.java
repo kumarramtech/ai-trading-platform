@@ -14,4 +14,6 @@ public interface ShadowTradeRepository
     List<ShadowTrade> findByStatus(String status);
 
     List<ShadowTrade> findByEntryTimeGreaterThanEqual(LocalDateTime from);
+
+    List<ShadowTrade> findByEntryTimeBetween(LocalDateTime from, LocalDateTime to);
 }

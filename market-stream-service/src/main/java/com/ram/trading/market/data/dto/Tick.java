@@ -42,6 +42,18 @@ public class Tick {
 
     private Double changePercentage;
 
+    /**
+     * Order book from the full feed, best level first (up to 5 levels); null for
+     * indices and feeds without depth. Lets paper fills walk the real book.
+     */
+    private java.util.List<Double> bidPrices;
+
+    private java.util.List<Long> bidQuantities;
+
+    private java.util.List<Double> askPrices;
+
+    private java.util.List<Long> askQuantities;
+
     /** Market-wide context enriched by the market feed. */
     private Double niftyChange;
 

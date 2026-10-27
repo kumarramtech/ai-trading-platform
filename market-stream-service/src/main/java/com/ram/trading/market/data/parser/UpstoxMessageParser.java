@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 @Component
@@ -137,6 +139,8 @@ public class UpstoxMessageParser {
                         .changePercentage(changePercentage)
                         .build();
 
+                applyDepth(tick, feed);
+
                 /*
                  * IMPORTANT DIAGNOSTIC LOG
                  * Confirms that a valid Tick has been created.
@@ -206,6 +210,45 @@ public class UpstoxMessageParser {
         }
 
         return null;
+    }
+
+    /**
+     * Copies the full feed's order book (best level first) onto the tick.
+     * Empty or one-sided levels are skipped; with no usable level on either
+     * side the tick carries no book and paper fills fall back to fixed slippage.
+     */
+    static void applyDepth(Tick tick, MarketDataFeed.Feed feed) {
+
+        if (!feed.hasFullFeed()
+                || !feed.getFullFeed().hasMarketFF()
+                || !feed.getFullFeed().getMarketFF().hasMarketLevel()) {
+            return;
+        }
+
+        List<Double> bidPrices = new ArrayList<>();
+        List<Long> bidQuantities = new ArrayList<>();
+        List<Double> askPrices = new ArrayList<>();
+        List<Long> askQuantities = new ArrayList<>();
+
+        for (var quote : feed.getFullFeed().getMarketFF().getMarketLevel().getBidAskQuoteList()) {
+            if (quote.getBidP() > 0 && quote.getBidQ() > 0) {
+                bidPrices.add(quote.getBidP());
+                bidQuantities.add(quote.getBidQ());
+            }
+            if (quote.getAskP() > 0 && quote.getAskQ() > 0) {
+                askPrices.add(quote.getAskP());
+                askQuantities.add(quote.getAskQ());
+            }
+        }
+
+        if (bidPrices.isEmpty() || askPrices.isEmpty()) {
+            return;
+        }
+
+        tick.setBidPrices(bidPrices);
+        tick.setBidQuantities(bidQuantities);
+        tick.setAskPrices(askPrices);
+        tick.setAskQuantities(askQuantities);
     }
 
     private FullFeedSnapshot extractFullFeedSnapshot(
