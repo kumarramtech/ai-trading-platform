@@ -14,8 +14,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -29,9 +33,41 @@ public class TechnicalIndicatorServiceImpl
 
     private static final int MINIMUM_CANDLES = 51;
 
+    /**
+     * Symbols found with fewer than MINIMUM_CANDLES daily candles are not
+     * re-fetched for this long (2026-10-27: ~275 such symbols were requested,
+     * logged and retried). Bounded rather than all-day, so a transiently empty
+     * history response does not exclude a symbol for the session.
+     */
+    private static final Duration INSUFFICIENT_HISTORY_TTL = Duration.ofMinutes(60);
+
+    private final Map<String, LocalDateTime> insufficientHistoryUntil = new ConcurrentHashMap<>();
+
+    @Override
+    public boolean hasInsufficientHistory(String symbol) {
+        LocalDateTime until = symbol != null ? insufficientHistoryUntil.get(symbol) : null;
+        if (until == null) {
+            return false;
+        }
+        if (LocalDateTime.now().isAfter(until)) {
+            insufficientHistoryUntil.remove(symbol, until);
+            return false;
+        }
+        return true;
+    }
+
+    private void markInsufficientHistory(String symbol) {
+        insufficientHistoryUntil.put(symbol, LocalDateTime.now().plus(INSUFFICIENT_HISTORY_TTL));
+    }
+
 
     @Override
     public Mono<TechnicalIndicatorResponse> calculate(String symbol) {
+
+        if (hasInsufficientHistory(symbol)) {
+            log.debug("Skipping indicator calculation | Symbol={} | Insufficient history (cached)", symbol);
+            return Mono.empty();
+        }
 
         log.debug("==================================================");
         log.debug("TECHNICAL INDICATOR CALCULATION STARTED");
@@ -56,6 +92,8 @@ public class TechnicalIndicatorServiceImpl
                                 "No historical candles found for {}",
                                 symbol);
 
+                        markInsufficientHistory(symbol);
+
                         return Mono.empty();
                     }
 
@@ -69,6 +107,8 @@ public class TechnicalIndicatorServiceImpl
                                 symbol,
                                 prices.size(),
                                 MINIMUM_CANDLES);
+
+                        markInsufficientHistory(symbol);
 
                         return Mono.empty();
                     }

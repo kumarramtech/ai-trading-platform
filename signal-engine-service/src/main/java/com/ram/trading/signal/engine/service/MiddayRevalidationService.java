@@ -214,17 +214,26 @@ public class MiddayRevalidationService {
                 /*
                  * Explicitly identify market-data failures.
                  */
-                .doOnError(error ->
-                        log.error(
-                                "MIDDAY REVALIDATION | " +
-                                        "CURRENT PRICE FAILED | " +
-                                        "Symbol={} | ErrorType={} | Error={}",
+                .doOnError(error -> {
+                    // A symbol with no live price (404) is a data gap, not a fault:
+                    // one WARN line, no stack trace, no second ERROR below.
+                    if (isNotFound(error)) {
+                        log.warn(
+                                "MIDDAY REVALIDATION | NO LIVE PRICE | Symbol={} | Error={}",
                                 symbol,
-                                error.getClass().getSimpleName(),
-                                error.getMessage(),
-                                error
-                        )
-                )
+                                error.getMessage());
+                        return;
+                    }
+                    log.error(
+                            "MIDDAY REVALIDATION | " +
+                                    "CURRENT PRICE FAILED | " +
+                                    "Symbol={} | ErrorType={} | Error={}",
+                            symbol,
+                            error.getClass().getSimpleName(),
+                            error.getMessage(),
+                            error
+                    );
+                })
 
                 .flatMap(stock -> {
 
@@ -411,15 +420,17 @@ public class MiddayRevalidationService {
                  */
                 .onErrorResume(error -> {
 
-                    log.error(
-                            "MIDDAY REVALIDATION | " +
-                                    "UNEXPECTED FAILURE | " +
-                                    "Symbol={} | ErrorType={} | Error={}",
-                            symbol,
-                            error.getClass().getSimpleName(),
-                            error.getMessage(),
-                            error
-                    );
+                    if (!isNotFound(error)) {
+                        log.error(
+                                "MIDDAY REVALIDATION | " +
+                                        "UNEXPECTED FAILURE | " +
+                                        "Symbol={} | ErrorType={} | Error={}",
+                                symbol,
+                                error.getClass().getSimpleName(),
+                                error.getMessage(),
+                                error
+                        );
+                    }
 
                     return Mono.just(
                             rejected(
@@ -876,6 +887,10 @@ public class MiddayRevalidationService {
                 .status("REJECTED")
                 .reason(reason)
                 .build();
+    }
+
+    private static boolean isNotFound(Throwable error) {
+        return error instanceof org.springframework.web.reactive.function.client.WebClientResponseException.NotFound;
     }
 
     private String determineFailureReason(

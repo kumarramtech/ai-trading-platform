@@ -39,6 +39,11 @@ public class TradingSessionService {
         return ZoneId.of(timezone);
     }
 
+    /** Today's date in the trading timezone. */
+    public LocalDate today() {
+        return LocalDate.now(zoneId());
+    }
+
     /**
      * Market is open for monitoring.
      *

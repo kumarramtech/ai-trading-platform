@@ -196,7 +196,7 @@ class TradeExitServiceImplTest {
         when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
         when(trailingStopService.calculateLiveTrailingStop(
                 eq("BUY"), eq(new BigDecimal("100.00")), eq(new BigDecimal("90.00")),
-                eq(new BigDecimal("90.0")), eq(105.0d)))
+                eq(new BigDecimal("90.0")), eq(105.0d), eq(10)))
                 .thenReturn(Optional.of(new BigDecimal("100.00")));
         when(tradeExecutionClient.updateProtection(any())).thenReturn(Mono.just(updated));
 
@@ -221,7 +221,7 @@ class TradeExitServiceImplTest {
         when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
         when(trailingStopService.calculateLiveTrailingStop(
                 eq("SELL"), eq(new BigDecimal("100.00")), eq(new BigDecimal("110.00")),
-                eq(new BigDecimal("110.0")), eq(95.0d)))
+                eq(new BigDecimal("110.0")), eq(95.0d), eq(10)))
                 .thenReturn(Optional.of(new BigDecimal("100.00")));
         when(tradeExecutionClient.updateProtection(any())).thenReturn(Mono.just(updated));
 
@@ -240,7 +240,7 @@ class TradeExitServiceImplTest {
         TradeExecutionClient.TradeExecutionPosition position = livePosition(
                 53L, "BUY", "100.00", "90.00", "100.00", "130.00");
         when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
-        when(trailingStopService.calculateLiveTrailingStop(any(), any(), any(), any(), anyDouble()))
+        when(trailingStopService.calculateLiveTrailingStop(any(), any(), any(), any(), anyDouble(), anyInt()))
                 .thenReturn(Optional.empty());
 
         StepVerifier.create(service.evaluateExit(
@@ -258,7 +258,7 @@ class TradeExitServiceImplTest {
         TradeExecutionClient.TradeExecutionPosition mismatched = livePosition(
                 54L, "BUY", "100.00", "90.00", "99.00", "130.00");
         when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
-        when(trailingStopService.calculateLiveTrailingStop(any(), any(), any(), any(), anyDouble()))
+        when(trailingStopService.calculateLiveTrailingStop(any(), any(), any(), any(), anyDouble(), anyInt()))
                 .thenReturn(Optional.of(new BigDecimal("100.00")));
         when(tradeExecutionClient.updateProtection(any())).thenReturn(Mono.just(mismatched));
 
@@ -275,7 +275,7 @@ class TradeExitServiceImplTest {
         TradeExecutionClient.TradeExecutionPosition position = livePosition(
                 55L, "BUY", "100.00", "90.00", "90.00", "130.00");
         when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
-        when(trailingStopService.calculateLiveTrailingStop(any(), any(), any(), any(), anyDouble()))
+        when(trailingStopService.calculateLiveTrailingStop(any(), any(), any(), any(), anyDouble(), anyInt()))
                 .thenReturn(Optional.of(new BigDecimal("100.00")));
         when(tradeExecutionClient.updateProtection(any()))
                 .thenReturn(Mono.error(new RuntimeException("simulated timeout")));
@@ -355,13 +355,14 @@ class TradeExitServiceImplTest {
         TradeExecutionClient.TradeExecutionPosition position = livePosition(
                 59L, "BUY", "100.00", "90.00", "90.00", "130.00");
         TradeExecutionClient.TradeExecutionPosition persisted = livePosition(
-                59L, "BUY", "100.00", "90.00", "100.00", "130.00");
+                59L, "BUY", "100.00", "90.00", "100.30", "130.00");
 
         when(tradeExecutionClient.getOpenTrades()).thenReturn(Mono.just(List.of(position)));
         when(tradeExecutionClient.updateProtection(any())).thenReturn(Mono.just(persisted));
 
         TrailingStopService realCalculator = new TrailingStopService(
-                paperTradeRepository, mock(NotificationClient.class));
+                paperTradeRepository, mock(NotificationClient.class),
+                new com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator());
         TradeExitServiceImpl integrationService = new TradeExitServiceImpl(
                 paperTradeRepository,
                 tradeExecutionClient,
@@ -378,7 +379,7 @@ class TradeExitServiceImplTest {
 
         verify(tradeExecutionClient).updateProtection(argThat(request ->
                 request.signalId().equals(59L)
-                        && new BigDecimal("100.00").compareTo(request.stopLoss()) == 0
+                        && new BigDecimal("100.30").compareTo(request.stopLoss()) == 0
                         && request.targetPrice() == null
                         && request.targetExtended() == null));
         verify(tradeExecutionClient, never()).exitTrade(any());

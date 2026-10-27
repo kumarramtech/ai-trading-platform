@@ -34,4 +34,6 @@ public class TradingSignal {
     private String strategy;
     /** Setup quality 0-100 from SetupQualityScorer (ranks setups; AI confidence does not). */
     private Integer qualityScore;
+    /** Index regime (BULLISH, BEARISH, SIDEWAYS) at signal time; null when unknown. */
+    private String marketRegime;
 }

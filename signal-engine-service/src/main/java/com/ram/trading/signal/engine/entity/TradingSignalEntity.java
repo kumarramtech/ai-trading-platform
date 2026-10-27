@@ -76,4 +76,8 @@ public class TradingSignalEntity {
     @Column(name = "quality_score")
     private Integer qualityScore;
 
+    /** Index regime at signal time (BULLISH, BEARISH, SIDEWAYS); null when unknown. */
+    @Column(name = "market_regime", length = 16)
+    private String marketRegime;
+
 }

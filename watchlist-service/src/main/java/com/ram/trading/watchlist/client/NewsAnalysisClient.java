@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+
 @Component
 @RequiredArgsConstructor
 public class NewsAnalysisClient {
@@ -17,6 +19,13 @@ public class NewsAnalysisClient {
     @Value("${news.analysis.service.base-url}")
     private String newsAnalysisServiceBaseUrl;
 
+    /**
+     * News analysis answers after one or two AI calls (~40s each at worst), so
+     * the bound sits below its 180s async timeout but well above a normal call.
+     */
+    @Value("${news.analysis.service.timeout-seconds:150}")
+    private long timeoutSeconds = 150;
+
     public Mono<MarketTrendAnalysisResponse> getMarketTrend() {
 
         return webClientBuilder
@@ -25,7 +34,8 @@ public class NewsAnalysisClient {
                 .get()
                 .uri("/news/market-trend")
                 .retrieve()
-                .bodyToMono(MarketTrendAnalysisResponse.class);
+                .bodyToMono(MarketTrendAnalysisResponse.class)
+                .timeout(Duration.ofSeconds(timeoutSeconds));
     }
 
     public Mono<SectorStockAnalysisResponse> getMarketTrendStocks() {
@@ -36,6 +46,7 @@ public class NewsAnalysisClient {
                 .get()
                 .uri("/news/market-trend/stocks")
                 .retrieve()
-                .bodyToMono(SectorStockAnalysisResponse.class);
+                .bodyToMono(SectorStockAnalysisResponse.class)
+                .timeout(Duration.ofSeconds(timeoutSeconds));
     }
 }

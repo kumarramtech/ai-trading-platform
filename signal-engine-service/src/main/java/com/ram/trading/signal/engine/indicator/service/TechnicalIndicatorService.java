@@ -12,4 +12,12 @@ public interface TechnicalIndicatorService {
 
     Flux<TechnicalIndicatorResponse> calculateBulk(
             List<String> symbols);
+
+    /**
+     * True when a recent calculation found too little price history for this
+     * symbol (new listing, SME), so entry setups on it can be skipped early.
+     */
+    default boolean hasInsufficientHistory(String symbol) {
+        return false;
+    }
 }

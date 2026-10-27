@@ -18,7 +18,8 @@ class TrailingStopServiceLiveCalculationTest {
     @BeforeEach
     void setUp() {
         service = new TrailingStopService(
-                mock(PaperTradeRepository.class), mock(NotificationClient.class));
+                mock(PaperTradeRepository.class), mock(NotificationClient.class),
+                new com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator());
     }
 
     @Test
@@ -84,6 +85,25 @@ class TrailingStopServiceLiveCalculationTest {
         // 1.67R with a 0.50% move: trails, step 3 locks 0.50R
         assertEquals(bd("100.15"), service.calculateLiveTrailingStop(
                 "BUY", bd("100"), bd("99.70"), bd("99.70"), 100.50d).orElseThrow());
+    }
+
+    @Test
+    void breakEvenWithQuantityCoversRoundTripChargesAndExitSlippage() {
+        // CRAFTSMAN 2026-10-27: 2 shares, 1.03R. Charges ~54.97 (27.49/share) + 0.03% slippage (3.31).
+        BigDecimal stop = service.calculateLiveTrailingStop(
+                "BUY", bd("11021.31"), bd("10907.85"), bd("10907.85"), 11138.0d, 2).orElseThrow();
+
+        assertEquals(bd("11052.10"), stop);
+    }
+
+    @Test
+    void sellBreakEvenWithQuantityIsBelowEntryByTheCosts() {
+        // IFCI-like short: 520 shares at 60.62; costs ~0.13/share.
+        BigDecimal stop = service.calculateLiveTrailingStop(
+                "SELL", bd("60.62"), bd("61.05"), bd("61.05"), 60.10d, 520).orElseThrow();
+
+        assertTrue(stop.compareTo(bd("60.62")) < 0, "short stop must be below entry: " + stop);
+        assertTrue(stop.compareTo(bd("60.45")) > 0, "and only by the costs: " + stop);
     }
 
     private BigDecimal bd(String value) {

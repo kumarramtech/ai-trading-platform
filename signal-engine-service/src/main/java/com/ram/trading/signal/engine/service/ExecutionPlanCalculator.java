@@ -25,7 +25,9 @@ import org.springframework.stereotype.Component;
  *             (BUY -> below OR low, SELL -> above OR high), plus a small buffer.
  *  - Risk   : the distance entry -> stop, clamped to [minRiskPct, maxRiskPct]
  *             of the entry price, so a very wide or very tight range cannot
- *             produce an unusable stop.
+ *             produce an unusable stop. A structural stop closer than
+ *             minStopPct, or an OR stop wider than maxRiskPct, skips the
+ *             trade instead of being clamped.
  *  - Target : entry +/- rewardRisk x risk.
  *  - If no usable Opening Range exists, a fixed fallbackRiskPct is used.
  *
@@ -47,6 +49,19 @@ public class ExecutionPlanCalculator {
     @Value("${trading.execution-plan.max-risk-pct:1.00}")
     private double maxRiskPct = 1.00;
 
+    /**
+     * A setup whose structural stop (sweep extreme or OR level, with buffer) is
+     * closer than this % of entry is skipped, not widened: a stop that tight sits
+     * inside ordinary intraday noise (2026-10-26: five of five trades with stops of
+     * 0.38-0.49% were stopped out). 0 disables the rule.
+     */
+    @Value("${trading.execution-plan.min-stop-pct:0.60}")
+    private double minStopPct = 0.60;
+
+    /** Skip, rather than clamp, an opening-range stop wider than maxRiskPct. */
+    @Value("${trading.execution-plan.reject-clamped-or-stop:true}")
+    private boolean rejectClampedOrStop = true;
+
     @Value("${trading.execution-plan.fallback-risk-pct:0.60}")
     private double fallbackRiskPct = 0.60;
 
@@ -66,7 +81,8 @@ public class ExecutionPlanCalculator {
      * HOLD signals and signals without a valid entry price are left untouched.
      *
      * @return false only when the setup must not be traded (its structural
-     *         stop is wider than maxRiskPct or already breached); true otherwise.
+     *         stop is wider than maxRiskPct, tighter than minStopPct or already
+     *         breached); true otherwise.
      */
     public boolean apply(TradingSignal signal, SignalGenerationRequest request) {
 
@@ -124,6 +140,10 @@ public class ExecutionPlanCalculator {
                 return false;
             }
 
+            if (tooTight(signal, entry, rawRisk, "SWEEP_EXTREME")) {
+                return false;
+            }
+
             risk = Math.max(rawRisk, minRisk);
             source = (risk == rawRisk) ? "SWEEP_EXTREME" : "SWEEP_EXTREME_MIN_RISK";
 
@@ -142,6 +162,21 @@ public class ExecutionPlanCalculator {
                         : (level + buffer) - entry;
 
                 if (rawRisk > 0.0) {
+                    if (tooTight(signal, entry, rawRisk, "OPENING_RANGE")) {
+                        return false;
+                    }
+                    /*
+                     * An OR level further than maxRiskPct used to be clamped,
+                     * leaving the stop inside the range at no market level
+                     * (2026-10-27: 10 of 13 plans; every ORB/MIDDAY trade).
+                     * Like a far JUDAS sweep, such a setup is skipped.
+                     */
+                    if (rejectClampedOrStop && rawRisk > maxRisk) {
+                        log.warn("EXECUTION PLAN REJECTED | Opening-range stop outside allowed risk | Symbol={} | Signal={} | Entry={} | Level={} | RiskPct={} | MaxRiskPct={}",
+                                signal.getSymbol(), signal.getSignal(), entry, level,
+                                round2(rawRisk / entry * 100.0), maxRiskPct);
+                        return false;
+                    }
                     risk = Math.min(Math.max(rawRisk, minRisk), maxRisk);
                     source = (risk == rawRisk) ? "OPENING_RANGE" : "OPENING_RANGE_CLAMPED";
                 }
@@ -176,6 +211,20 @@ public class ExecutionPlanCalculator {
                 target,
                 round2(risk / entry * 100.0),
                 rewardRisk);
+
+        return true;
+    }
+
+    private boolean tooTight(TradingSignal signal, double entry, double rawRisk, String source) {
+
+        // Small tolerance so a stop at exactly minStopPct is not lost to floating point.
+        if (minStopPct <= 0.0 || rawRisk >= entry * minStopPct / 100.0 - 1e-9) {
+            return false;
+        }
+
+        log.warn("EXECUTION PLAN REJECTED | Structural stop tighter than minimum | Symbol={} | Signal={} | Source={} | Entry={} | RiskPct={} | MinStopPct={}",
+                signal.getSymbol(), signal.getSignal(), source, entry,
+                round2(rawRisk / entry * 100.0), minStopPct);
 
         return true;
     }

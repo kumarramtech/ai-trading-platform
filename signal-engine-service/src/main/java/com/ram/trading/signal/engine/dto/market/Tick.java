@@ -33,6 +33,9 @@ public class Tick {
 
     private Double previousClose;
 
+    /** Today's session open (market-stream sends it); openPrice is the 1-minute candle's open. */
+    private Double dayOpenPrice;
+
     private Double change;
 
     private Double changePercentage;

@@ -506,6 +506,9 @@ public class PaperTradingService {
                             .qualityScore(
                                     signal.getQualityScore())
 
+                            .marketRegime(
+                                    signal.getMarketRegime())
+
                             .plannedRisk(
                                     round(Math.abs(entryFill - signal.getStopLoss()) * quantity))
 

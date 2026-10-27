@@ -238,6 +238,99 @@ class SignalGenerationServiceImplSafetyTest {
     }
 
     @Test
+    void extendedEntryIsRejectedBeforeSizingPersistenceOrExecution() throws Exception {
+        Harness harness = newHarness();
+        ReflectionTestUtils.setField(harness.service, "executionTradeMode", "paper");
+
+        MarketDataProvider marketDataProvider = harness.mock(MarketDataProvider.class);
+        EntryQualityService entryQualityService = harness.mock(EntryQualityService.class);
+        PositionSizingService positionSizingService = harness.mock(PositionSizingService.class);
+        TradingSignalService tradingSignalService = harness.mock(TradingSignalService.class);
+        TradeExecutionClient tradeExecutionClient = harness.mock(TradeExecutionClient.class);
+        PaperTradingService paperTradingService = harness.mock(PaperTradingService.class);
+
+        when(harness.sessionService.canCreateStrategyEntry()).thenReturn(true, true, true);
+        when(marketDataProvider.getStockPrice("TCS")).thenReturn(Mono.just(
+                StockResponse.builder().symbol("TCS").price(100.0).build()));
+        when(entryQualityService.evaluate(anyString(), any(), any(), any(), any()))
+                .thenReturn(EntryQualityResult.builder()
+                        .symbol("TCS").direction("SELL").signalPrice(100.0)
+                        .freshMarketPrice(100.0).priceVsEma20Pct(-13.6)
+                        .status("EXTENDED").reason("test").build());
+
+        TradingSignal signal = TradingSignal.builder()
+                .symbol("TCS").signal("SELL")
+                .entryPrice(100.0).stopLoss(101.0).targetPrice(98.0)
+                .confidence(90).build();
+
+        Method postProcess = SignalGenerationServiceImpl.class.getDeclaredMethod(
+                "postProcessSignal", TradingSignal.class,
+                TechnicalIndicatorResponse.class, Double.class);
+        postProcess.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        Mono<TradingSignal> result = (Mono<TradingSignal>) postProcess.invoke(
+                harness.service, signal, new TechnicalIndicatorResponse(), 100.0);
+
+        assertNull(result.block());
+        verifyNoInteractions(positionSizingService, tradingSignalService,
+                paperTradingService, tradeExecutionClient);
+    }
+
+    @Test
+    void entryInTheDirectionOfAFreshRegimeFlipIsSkippedUntilItSettles() throws Exception {
+        Harness harness = newHarness();
+        Method record = SignalGenerationServiceImpl.class
+                .getDeclaredMethod("recordMarketRegime", com.ram.trading.signal.engine.contant.Trend.class);
+        record.setAccessible(true);
+        Method chases = SignalGenerationServiceImpl.class
+                .getDeclaredMethod("chasesFreshRegimeFlip", String.class, String.class, String.class);
+        chases.setAccessible(true);
+
+        record.invoke(harness.service, com.ram.trading.signal.engine.contant.Trend.SIDEWAYS);
+        record.invoke(harness.service, com.ram.trading.signal.engine.contant.Trend.BEARISH);
+
+        assertTrue((boolean) chases.invoke(harness.service, "MFSL", "ORB", "SELL"),
+                "a short right after the flip to BEARISH chases the move");
+        assertFalse((boolean) chases.invoke(harness.service, "GABRIEL", "ORB", "BUY"),
+                "the opposite direction is not chasing (the regime guard handles it)");
+
+        // Same regime seen again keeps the original flip time; once that is 15+ minutes old, entries resume.
+        Object snapshot = ((java.util.concurrent.atomic.AtomicReference<?>)
+                ReflectionTestUtils.getField(harness.service, "latestMarketRegime")).get();
+        Constructor<?> ctor = snapshot.getClass().getDeclaredConstructors()[0];
+        ctor.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.concurrent.atomic.AtomicReference<Object> ref =
+                (java.util.concurrent.atomic.AtomicReference<Object>)
+                        ReflectionTestUtils.getField(harness.service, "latestMarketRegime");
+        ref.set(ctor.newInstance(com.ram.trading.signal.engine.contant.Trend.BEARISH,
+                LocalDateTime.now(), LocalDateTime.now().minusMinutes(16)));
+        record.invoke(harness.service, com.ram.trading.signal.engine.contant.Trend.BEARISH);
+
+        assertFalse((boolean) chases.invoke(harness.service, "MFSL", "ORB", "SELL"));
+    }
+
+    @Test
+    void middayEntryIsSkippedWhileTheRegimeIsSideways() throws Exception {
+        Harness harness = newHarness();
+        when(harness.sessionService.canCreateStrategyEntry()).thenReturn(true);
+        Method record = SignalGenerationServiceImpl.class
+                .getDeclaredMethod("recordMarketRegime", com.ram.trading.signal.engine.contant.Trend.class);
+        record.setAccessible(true);
+        record.invoke(harness.service, com.ram.trading.signal.engine.contant.Trend.SIDEWAYS);
+
+        com.ram.trading.signal.engine.dto.watchlist.MiddayRevalidationResult kirlpnu =
+                com.ram.trading.signal.engine.dto.watchlist.MiddayRevalidationResult.builder()
+                        .tradingSymbol("KIRLPNU").direction("BEARISH").status("QUALIFIED")
+                        .currentPrice(529.5).rsi(27.49).ema20(646.17).ema50(690.87)
+                        .build();
+
+        assertNull(harness.service.generateMiddaySignal(kirlpnu).block());
+        verify(harness.sessionService).canCreateStrategyEntry();
+    }
+
+    @Test
     void invalidExecutionModeIsRejectedByConfigurationValidation() throws Exception {
         Harness harness = newHarness();
         ReflectionTestUtils.setField(harness.service, "executionTradeMode", "automatic");

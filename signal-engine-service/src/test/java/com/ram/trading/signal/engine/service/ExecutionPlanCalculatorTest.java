@@ -59,11 +59,21 @@ class ExecutionPlanCalculatorTest {
     }
 
     @Test
-    void wideRangeIsClampedToMaxRisk() {
+    void wideRangeIsSkippedInsteadOfClamped() {
         when(openingRangeService.get("ABC")).thenReturn(range(110.0, 90.0));
         TradingSignal s = signal("BUY", 100.0);
 
-        calculator.apply(s, null);
+        assertFalse(calculator.apply(s, null));
+        assertNull(s.getStopLoss());
+    }
+
+    @Test
+    void wideRangeIsClampedToMaxRiskWhenRejectionIsOff() {
+        org.springframework.test.util.ReflectionTestUtils.setField(calculator, "rejectClampedOrStop", false);
+        when(openingRangeService.get("ABC")).thenReturn(range(110.0, 90.0));
+        TradingSignal s = signal("BUY", 100.0);
+
+        assertTrue(calculator.apply(s, null));
 
         assertEquals(99.0, s.getStopLoss(), 0.01);
         assertEquals(102.0, s.getTargetPrice(), 0.01);
@@ -91,6 +101,8 @@ class ExecutionPlanCalculatorTest {
     @Test
     void judasSellStopSitsBeyondSweepHighNotAtIt() {
         // COCHINSHIP 2026-10-26: entry 1135.6, OR high 1138.1, sweep high 1140.0.
+        // Its 0.49% stop is now skipped by min-stop-pct; this test is about stop placement.
+        org.springframework.test.util.ReflectionTestUtils.setField(calculator, "minStopPct", 0.0);
         when(openingRangeService.get("ABC")).thenReturn(range(1138.1, 1120.0));
         TradingSignal s = signal("SELL", 1135.6);
 
@@ -128,6 +140,43 @@ class ExecutionPlanCalculatorTest {
 
         assertFalse(calculator.apply(s, judas(101.5)));
         assertNull(s.getStopLoss());
+    }
+
+    @Test
+    void judasStopTighterThanMinimumIsSkippedNotWidened() {
+        // Sweep 100.30 + 0.10 buffer -> 0.40% stop, under the 0.60% minimum.
+        TradingSignal s = signal("SELL", 100.0);
+
+        assertFalse(calculator.apply(s, judas(100.30)));
+        assertNull(s.getStopLoss());
+    }
+
+    @Test
+    void judasStopAtTheMinimumIsTraded() {
+        // Sweep 100.50 + 0.10 buffer -> exactly 0.60%.
+        TradingSignal s = signal("SELL", 100.0);
+
+        assertTrue(calculator.apply(s, judas(100.50)));
+        assertEquals(100.60, s.getStopLoss(), 0.001);
+    }
+
+    @Test
+    void openingRangeStopTighterThanMinimumIsSkipped() {
+        // OR high 100.30 + 0.05 buffer -> 0.35% stop.
+        when(openingRangeService.get("ABC")).thenReturn(range(100.30, 98.0));
+        TradingSignal s = signal("SELL", 100.0);
+
+        assertFalse(calculator.apply(s, null));
+        assertNull(s.getStopLoss());
+    }
+
+    @Test
+    void fallbackStopIsNotAffectedByTheMinimum() {
+        when(openingRangeService.get("ABC")).thenReturn(null);
+        TradingSignal s = signal("BUY", 200.0);
+
+        assertTrue(calculator.apply(s, null));
+        assertEquals(198.8, s.getStopLoss(), 0.01);
     }
 
     @Test
