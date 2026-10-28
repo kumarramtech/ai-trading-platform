@@ -78,7 +78,13 @@ public class StrategyReplayService {
     private final IntradayChargesCalculator charges;
     private final TrendPullbackShadowStrategy trendPullback;
     private final WebClient stockService;
-    private final Scheduler worker = Schedulers.newSingle("strategy-replay", true);
+    // A plain thread: the replay blocks on HTTP and JDBC, which Reactor forbids on its own non-blocking threads.
+    private final Scheduler worker = Schedulers.fromExecutorService(
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread thread = new Thread(r, "strategy-replay");
+                thread.setDaemon(true);
+                return thread;
+            }));
     private final AtomicReference<Status> status = new AtomicReference<>(Status.idle());
 
     @Value("${trading.strategy.orb.end:12:30}")
