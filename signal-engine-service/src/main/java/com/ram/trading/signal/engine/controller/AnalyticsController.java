@@ -36,6 +36,8 @@ public class AnalyticsController {
 
     private final StrategyReplayService strategyReplayService;
 
+    private final com.ram.trading.signal.engine.service.replay.SwingBacktestService swingBacktestService;
+
     private final com.ram.trading.signal.engine.service.playbook.OpeningPlaybookService openingPlaybookService;
 
     @GetMapping("/trade-insights")
@@ -116,6 +118,33 @@ public class AnalyticsController {
     @GetMapping(value = "/opening-playbook", produces = "text/plain")
     public String openingPlaybook(@RequestParam(required = false, defaultValue = "false") boolean rebuild) {
         return openingPlaybookService.toText(rebuild ? openingPlaybookService.build() : openingPlaybookService.today());
+    }
+
+    /**
+     * Starts the swing (multi-day, long-only, delivery) backtest on daily candles:
+     * breakout, pullback and weekly rotation over the last {@code years} years.
+     */
+    @PostMapping("/swing-backtest")
+    public ResponseEntity<String> startSwingBacktest(
+            @RequestParam(required = false, defaultValue = "3") int years,
+            @RequestParam(required = false, defaultValue = "300") int universe) {
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+        LocalTime t = now.toLocalTime();
+        if (now.getDayOfWeek().getValue() <= 5
+                && !t.isBefore(LocalTime.of(9, 0)) && t.isBefore(LocalTime.of(15, 35))) {
+            return ResponseEntity.status(409).body("Backtests are not run during market hours (09:00-15:35 IST).");
+        }
+        int y = Math.max(1, Math.min(years, 5));
+        int size = Math.max(20, Math.min(universe, 800));
+        return swingBacktestService.start(y, size)
+                ? ResponseEntity.accepted().body("Swing backtest started: " + y + " years, top " + size
+                + " stocks. GET /analytics/swing-backtest for the report.")
+                : ResponseEntity.status(409).body("A swing backtest is already running.");
+    }
+
+    @GetMapping(value = "/swing-backtest", produces = "text/plain")
+    public String swingBacktestStatus() {
+        return swingBacktestService.status();
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */
