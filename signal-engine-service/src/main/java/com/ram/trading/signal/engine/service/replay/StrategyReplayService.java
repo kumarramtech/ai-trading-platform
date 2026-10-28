@@ -371,7 +371,12 @@ public class StrategyReplayService {
                 }
 
                 // Research strategies: one gap trade per symbol (09:30), one fade per symbol and side.
-                ResearchStrategies.gap(candle, range, daily.statsBefore(symbol, day), t)
+                DailyBars.Stats dayStats = daily.statsBefore(symbol, day);
+                ResearchStrategies.gap(candle, range, dayStats, t)
+                        .ifPresent(s -> setups.add(new Setup(s.getStrategy(), s.getSignal(), null, s)));
+                ResearchStrategies.gapGoWide(candle, range, dayStats, t)
+                        .ifPresent(s -> setups.add(new Setup(s.getStrategy(), s.getSignal(), null, s)));
+                ResearchStrategies.gapGoLate(candle, range, dayStats, t)
                         .ifPresent(s -> setups.add(new Setup(s.getStrategy(), s.getSignal(), null, s)));
                 if (!t.isBefore(LocalTime.of(10, 0))) {
                     List<MinuteCandle> soFar = store.getToday(symbol);
@@ -556,12 +561,14 @@ public class StrategyReplayService {
                 kept.add(r);
                 continue;
             }
-            LocalTime free = busyUntil.get(r.symbol());
+            // Per symbol and strategy, so variants of one idea do not crowd each other out.
+            String key = r.symbol() + "|" + r.strategy();
+            LocalTime free = busyUntil.get(key);
             if (free != null && r.time().isBefore(free)) {
                 continue;
             }
             kept.add(r);
-            busyUntil.put(r.symbol(), r.exitTime().plusMinutes(cooldownMinutes));
+            busyUntil.put(key, r.exitTime().plusMinutes(cooldownMinutes));
         }
         return kept;
     }

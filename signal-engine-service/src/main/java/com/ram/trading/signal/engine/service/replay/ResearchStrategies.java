@@ -32,9 +32,14 @@ final class ResearchStrategies {
     static final String MEAN_REVERSION = "MEAN_REVERSION";
     static final String GAP_GO = "GAP_GO";
     static final String GAP_FILL = "GAP_FILL";
+    static final String GAP_GO_WIDE = "GAP_GO_WIDE";
+    static final String GAP_GO_LATE = "GAP_GO_LATE";
 
     static final double STRETCH_PCT = 1.2;
-    static final double MIN_GAP_PCT = 1.5;
+    // 1.0, not 1.5: the report splits results by gap size, so smaller gaps add sample, not bias.
+    static final double MIN_GAP_PCT = 1.0;
+    static final double WIDE_MIN_STOP_PCT = 1.0;
+    static final double WIDE_MAX_STOP_PCT = 4.0;
     static final double MIN_OPENING_RVOL = 0.10;
     static final double MIN_STOP_PCT = 0.60;
     static final double MAX_STOP_PCT = 1.50;
@@ -44,12 +49,13 @@ final class ResearchStrategies {
     private static final LocalTime MR_START = LocalTime.of(10, 0);
     private static final LocalTime MR_END = LocalTime.of(14, 30);
     private static final LocalTime GAP_TIME = LocalTime.of(9, 30);
+    private static final LocalTime LATE_GAP_TIME = LocalTime.of(9, 45);
 
     private ResearchStrategies() {
     }
 
     static boolean isRegimeFree(String strategy) {
-        return MEAN_REVERSION.equals(strategy) || GAP_GO.equals(strategy) || GAP_FILL.equals(strategy);
+        return MEAN_REVERSION.equals(strategy) || (strategy != null && strategy.startsWith("GAP_"));
     }
 
     /** @param today the symbol's candles so far, ending with {@code candle} */
@@ -118,17 +124,66 @@ final class ResearchStrategies {
             return Optional.of(signal(candle.getSymbol(), GAP_GO, gapUp ? "BUY" : "SELL", price,
                     gapUp ? price - risk : price + risk, gapUp ? price + 2 * risk : price - 2 * risk));
         }
-        if (fades) {
-            double stop = gapUp ? range.getHigh() + buffer : range.getLow() - buffer;
-            double risk = Math.max(Math.abs(stop - price), price * MIN_STOP_PCT / 100.0);
-            double target = stats.prevClose();
-            if (risk > price * MAX_GAP_STOP_PCT / 100.0 || Math.abs(price - target) < risk) {
-                return Optional.empty();
-            }
-            return Optional.of(signal(candle.getSymbol(), GAP_FILL, gapUp ? "SELL" : "BUY", price,
-                    gapUp ? price + risk : price - risk, target));
+        return fades ? gapFill(candle, range, stats, gapUp, price, buffer) : Optional.empty();
+    }
+
+    /**
+     * Cost-reduction variant of GAP_GO: same trigger, stop 1.5x further (at least
+     * 1%, at most 4%). A wider stop makes the fixed slippage and brokerage a smaller
+     * share of R, and gives the gap room to breathe.
+     */
+    static Optional<TradingSignal> gapGoWide(MinuteCandle candle, OpeningRange range, DailyBars.Stats stats, LocalTime t) {
+        return gap(candle, range, stats, t)
+                .filter(s -> GAP_GO.equals(s.getStrategy()))
+                .flatMap(s -> {
+                    boolean buy = "BUY".equals(s.getSignal());
+                    double price = s.getEntryPrice();
+                    double risk = Math.max(Math.abs(price - s.getStopLoss()) * 1.5, price * WIDE_MIN_STOP_PCT / 100.0);
+                    if (risk > price * WIDE_MAX_STOP_PCT / 100.0) {
+                        return Optional.empty();
+                    }
+                    return Optional.of(signal(s.getSymbol(), GAP_GO_WIDE, s.getSignal(), price,
+                            buy ? price - risk : price + risk, buy ? price + 2 * risk : price - 2 * risk));
+                });
+    }
+
+    /**
+     * Confirmation variant: at 09:45, an in-play gap stock trading beyond its opening
+     * range in the gap direction (gap up above the OR high). Stop at the OR midpoint.
+     */
+    static Optional<TradingSignal> gapGoLate(MinuteCandle candle, OpeningRange range, DailyBars.Stats stats, LocalTime t) {
+        if (!t.equals(LATE_GAP_TIME) || stats == null || stats.prevClose() <= 0 || stats.avgVolume20() <= 0
+                || range.getVolume() == null || range.getOpen() == null) {
+            return Optional.empty();
         }
-        return Optional.empty();
+        double gapPct = (range.getOpen() - stats.prevClose()) / stats.prevClose() * 100.0;
+        if (Math.abs(gapPct) < MIN_GAP_PCT || range.getVolume() / stats.avgVolume20() < MIN_OPENING_RVOL) {
+            return Optional.empty();
+        }
+        boolean gapUp = gapPct > 0;
+        double price = candle.getClose();
+        if (gapUp ? price <= range.getHigh() : price >= range.getLow()) {
+            return Optional.empty();
+        }
+        double mid = (range.getHigh() + range.getLow()) / 2.0;
+        double risk = Math.max(Math.abs(price - mid) + price * BUFFER_PCT / 100.0, price * MIN_STOP_PCT / 100.0);
+        if (risk > price * MAX_GAP_STOP_PCT / 100.0) {
+            return Optional.empty();
+        }
+        return Optional.of(signal(candle.getSymbol(), GAP_GO_LATE, gapUp ? "BUY" : "SELL", price,
+                gapUp ? price - risk : price + risk, gapUp ? price + 2 * risk : price - 2 * risk));
+    }
+
+    private static Optional<TradingSignal> gapFill(MinuteCandle candle, OpeningRange range, DailyBars.Stats stats,
+                                                   boolean gapUp, double price, double buffer) {
+        double stop = gapUp ? range.getHigh() + buffer : range.getLow() - buffer;
+        double risk = Math.max(Math.abs(stop - price), price * MIN_STOP_PCT / 100.0);
+        double target = stats.prevClose();
+        if (risk > price * MAX_GAP_STOP_PCT / 100.0 || Math.abs(price - target) < risk) {
+            return Optional.empty();
+        }
+        return Optional.of(signal(candle.getSymbol(), GAP_FILL, gapUp ? "SELL" : "BUY", price,
+                gapUp ? price + risk : price - risk, target));
     }
 
     private static TradingSignal signal(String symbol, String strategy, String side, double entry,

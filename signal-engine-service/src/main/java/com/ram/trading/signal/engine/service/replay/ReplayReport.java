@@ -84,6 +84,16 @@ final class ReplayReport {
         section(out, "  Relative strength vs NIFTY at entry (in trade direction)", live,
                 r -> bucket(r.relStrengthPct(), new double[]{0.0, 1.0, 2.0}, new String[]{"against NIFTY", "0-1%", "1-2%", ">=2%"}), risk);
 
+        List<Result> gaps = live.stream().filter(r -> r.strategy().startsWith("GAP_GO")).toList();
+        if (!gaps.isEmpty()) {
+            out.append("GAP_GO VARIANTS (base: OR-side stop at 09:30 | WIDE: 1.5x stop, 1-4% | LATE: 09:45 beyond the OR)\n");
+            section(out, "  By gap size", gaps, r -> r.strategy() + " "
+                    + bucket(Math.abs(r.gapPct()), new double[]{1.5, 3.0, 5.0}, new String[]{"1-1.5%", "1.5-3%", "3-5%", ">=5%"}), risk);
+            section(out, "  By opening relative volume", gaps, r -> r.strategy() + " "
+                    + bucket(r.orRvol(), new double[]{0.20, 0.40}, new String[]{"10-20%", "20-40%", ">=40%"}), risk);
+            section(out, "  By direction and index", gaps, r -> r.strategy() + " " + r.direction() + " " + r.relation(), risk);
+        }
+
         out.append("ALL SETUPS (every filter off) BY STRATEGY\n");
         section(out, "", all, Result::strategy, risk);
 
