@@ -92,7 +92,8 @@ public class AnalyticsController {
     public ResponseEntity<String> startReplay(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-            @RequestParam(required = false, defaultValue = "200") int universe) {
+            @RequestParam(required = false, defaultValue = "200") int universe,
+            @RequestParam(required = false, defaultValue = "0") int offset) {
 
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
         LocalTime t = now.toLocalTime();
@@ -104,11 +105,11 @@ public class AnalyticsController {
         LocalDate end = to != null ? to : now.toLocalDate().minusDays(1);
         LocalDate start = from != null ? from : end.minusDays(60);
         int size = Math.max(10, Math.min(universe, 500));
-        if (!strategyReplayService.start(start, end, size)) {
+        if (!strategyReplayService.start(start, end, size, Math.max(0, offset))) {
             return ResponseEntity.status(409).body("A replay is already running; GET /analytics/replay for progress.");
         }
         return ResponseEntity.accepted().body("Replay started: " + start + " to " + end + ", top " + size
-                + " stocks. GET /analytics/replay for progress and the report.");
+                + " stocks from turnover rank " + (Math.max(0, offset) + 1) + ". GET /analytics/replay for progress and the report.");
     }
 
     /** Today's 09:31 opening playbook (stocks in play); rebuild=true recomputes it now. */
