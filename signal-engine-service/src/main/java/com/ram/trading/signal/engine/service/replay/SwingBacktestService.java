@@ -82,6 +82,35 @@ public class SwingBacktestService {
     @Value("${trading.replay.requests-per-second:6}")
     private int requestsPerSecond = 6;
 
+    /**
+     * Only the stocks among the N most traded on that day (20-day average turnover)
+     * are eligible, as NSE builds its momentum indices from the Nifty 200. 0 = off.
+     */
+    @Value("${trading.swing.liquid-rank:200}")
+    private int liquidRank = 200;
+
+    // day -> symbols in the top liquidRank by turnover that day (point in time)
+    private final Map<LocalDate, java.util.Set<String>> liquidByDay = new ConcurrentHashMap<>();
+
+    private boolean eligible(Map<String, Series> data, String symbol, LocalDate day) {
+        if (liquidRank <= 0) {
+            return true;
+        }
+        return liquidByDay.computeIfAbsent(day, d -> {
+            List<Map.Entry<String, Double>> turnover = new ArrayList<>();
+            for (Series s : data.values()) {
+                int i = s.indexOf(d);
+                if (i >= 20) {
+                    turnover.add(Map.entry(s.symbol(), sma(s.volume(), i, 20) * s.close()[i]));
+                }
+            }
+            turnover.sort(Map.Entry.<String, Double>comparingByValue().reversed());
+            java.util.Set<String> top = new java.util.HashSet<>();
+            turnover.stream().limit(liquidRank).forEach(e -> top.add(e.getKey()));
+            return top;
+        }).contains(symbol);
+    }
+
     public SwingBacktestService(JdbcTemplate jdbc, WebClient.Builder builder,
                                 @Value("${stock.service.url}") String stockServiceUrl) {
         this.jdbc = jdbc;
@@ -127,6 +156,7 @@ public class SwingBacktestService {
     }
 
     String run(int years, int universeSize) {
+        liquidByDay.clear();
         LocalDate to = LocalDate.now(IST).minusDays(1);
         LocalDate from = to.minusYears(years);
         List<String> universe = jdbc.queryForList(
@@ -160,8 +190,8 @@ public class SwingBacktestService {
         status.set("RUNNING | simulating " + data.size() + " symbols over " + nifty.size() + " sessions");
 
         StringBuilder out = new StringBuilder();
-        out.append(String.format("SWING BACKTEST  %s to %s  |  %d sessions, %d stocks (liquidity judged each day), long only%n",
-                nifty.date()[0], nifty.date()[nifty.size() - 1], nifty.size(), data.size()));
+        out.append(String.format("SWING BACKTEST  %s to %s  |  %d sessions, %d stocks, eligible: top %d by turnover each day (point in time), long only%n",
+                nifty.date()[0], nifty.date()[nifty.size() - 1], nifty.size(), data.size(), liquidRank));
         out.append(String.format("Rs %.0f capital, no leverage, max %d positions, Rs %.0f risk/position, next-open fills, "
                 + "%.2f%% slippage/side, delivery charges. Survivorship: stocks delisted since are missing.%n%n",
                 capital, maxPositions, riskPerTrade, slippagePct));
@@ -333,7 +363,7 @@ public class SwingBacktestService {
                 }
                 double close = s.close()[i];
                 double turnover = sma(s.volume(), i, 20) * close;
-                if (close < 50 || turnover < minTurnoverCrore * 1e7) {
+                if (close < 50 || turnover < minTurnoverCrore * 1e7 || !eligible(data, s.symbol(), today)) {
                     continue;
                 }
                 double sma100 = sma(s.close(), i, 100);
@@ -416,6 +446,7 @@ public class SwingBacktestService {
                 }
                 double close = s.close()[i];
                 if (close < 50 || sma(s.volume(), i, 20) * close < minTurnoverCrore * 1e7
+                        || !eligible(data, s.symbol(), signalDay)
                         || !(close > sma(s.close(), i, 100))) {
                     continue;
                 }
