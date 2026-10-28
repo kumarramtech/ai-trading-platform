@@ -5,14 +5,20 @@ import com.ram.trading.signal.engine.service.AnalyticsService;
 import com.ram.trading.signal.engine.service.performance.GoLiveReadinessService;
 import com.ram.trading.signal.engine.service.performance.SetupEdgeGate;
 import com.ram.trading.signal.engine.service.performance.StrategyPerformanceService;
+import com.ram.trading.signal.engine.service.replay.StrategyReplayService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 
 @RestController
@@ -27,6 +33,10 @@ public class AnalyticsController {
     private final SetupEdgeGate setupEdgeGate;
 
     private final GoLiveReadinessService goLiveReadinessService;
+
+    private final StrategyReplayService strategyReplayService;
+
+    private final com.ram.trading.signal.engine.service.playbook.OpeningPlaybookService openingPlaybookService;
 
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
@@ -71,5 +81,47 @@ public class AnalyticsController {
     public List<SetupEdgeGate.EdgeDecision> getEdgeGate() {
 
         return setupEdgeGate.currentDecisions();
+    }
+
+    /**
+     * Starts a background replay of the live entry rules over past 1-minute
+     * candles (default: the last 60 days, top 200 stocks by turnover). Refused
+     * during market hours so it never competes with live trading.
+     */
+    @PostMapping("/replay")
+    public ResponseEntity<String> startReplay(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false, defaultValue = "200") int universe) {
+
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+        LocalTime t = now.toLocalTime();
+        if (now.getDayOfWeek().getValue() <= 5
+                && !t.isBefore(LocalTime.of(9, 0)) && t.isBefore(LocalTime.of(15, 35))) {
+            return ResponseEntity.status(409).body("Replay is not run during market hours (09:00-15:35 IST).");
+        }
+
+        LocalDate end = to != null ? to : now.toLocalDate().minusDays(1);
+        LocalDate start = from != null ? from : end.minusDays(60);
+        int size = Math.max(10, Math.min(universe, 500));
+        if (!strategyReplayService.start(start, end, size)) {
+            return ResponseEntity.status(409).body("A replay is already running; GET /analytics/replay for progress.");
+        }
+        return ResponseEntity.accepted().body("Replay started: " + start + " to " + end + ", top " + size
+                + " stocks. GET /analytics/replay for progress and the report.");
+    }
+
+    /** Today's 09:31 opening playbook (stocks in play); rebuild=true recomputes it now. */
+    @GetMapping(value = "/opening-playbook", produces = "text/plain")
+    public String openingPlaybook(@RequestParam(required = false, defaultValue = "false") boolean rebuild) {
+        return openingPlaybookService.toText(rebuild ? openingPlaybookService.build() : openingPlaybookService.today());
+    }
+
+    /** Progress of the running replay, or the report of the last one (plain text). */
+    @GetMapping(value = "/replay", produces = "text/plain")
+    public String replayStatus() {
+        StrategyReplayService.Status s = strategyReplayService.status();
+        return s.report() != null ? s.report()
+                : s.state() + " | " + s.progress() + (s.startedAt() != null ? " | started " + s.startedAt() : "");
     }
 }

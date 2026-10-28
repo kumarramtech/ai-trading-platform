@@ -24,6 +24,13 @@ public class ORBValidator {
     private static final ZoneId IST =
             ZoneId.of("Asia/Kolkata");
 
+    /** Wall clock in IST; a replay sets a fixed clock on its own instance to evaluate a past day. */
+    private java.time.Clock clock = java.time.Clock.system(IST);
+
+    public void setClock(java.time.Clock clock) {
+        this.clock = clock;
+    }
+
     /**
      * ORB analysis starts after the opening range is complete.
      */
@@ -37,6 +44,10 @@ public class ORBValidator {
      */
     @Value("${trading.strategy.orb.end:${trading.market.entry.cut:14:30}}")
     private LocalTime orbEnd = LocalTime.of(14, 30);
+
+    public void setOrbEnd(LocalTime orbEnd) {
+        this.orbEnd = orbEnd;
+    }
 
     /**
      * Confirmation volume must be at least 1.2x the average
@@ -97,7 +108,7 @@ public class ORBValidator {
                 openingRange.getSymbol();
 
         LocalDate today =
-                LocalDate.now(IST);
+                LocalDate.now(clock);
 
         LocalDateTime analysisStart =
                 LocalDateTime.of(
@@ -513,7 +524,7 @@ public class ORBValidator {
             String symbol) {
 
         LocalDate today =
-                LocalDate.now(IST);
+                LocalDate.now(clock);
 
         LocalDateTime start =
                 LocalDateTime.of(

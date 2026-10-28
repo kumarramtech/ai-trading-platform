@@ -217,7 +217,22 @@ start_service() {
 
     echo "[START] Launching $SERVICE_NAME..."
 
-    nohup java -jar "$JAR_PATH" \
+    # Heap limits: without -Xmx each JVM may grow to 1/4 of RAM (~1.9 GB on
+    # 8 GB), i.e. ten services could ask for ~19 GB and the OOM killer would
+    # pick the biggest one, signal-engine, mid-session. Caps keep the total
+    # near 4.5 GB heap + ~1.5 GB non-heap. Override with JAVA_OPTS_<NAME>.
+    # The tick path (market-stream, signal-engine) keeps the default G1 for
+    # short pauses; the small services use the leaner serial collector.
+    case "$SERVICE_NAME" in
+        signal-engine-service) HEAP="-Xmx1536m" ;;
+        market-stream-service) HEAP="-Xmx512m" ;;
+        stock-service)         HEAP="-Xmx640m -XX:+UseSerialGC" ;;
+        *)                     HEAP="-Xmx320m -XX:+UseSerialGC" ;;
+    esac
+    OPTS_VAR="JAVA_OPTS_$(echo "$SERVICE_NAME" | tr 'a-z-' 'A-Z_')"
+    JVM_OPTS="${!OPTS_VAR:-$HEAP -Xss512k}"
+
+    nohup java $JVM_OPTS -jar "$JAR_PATH" \
         > "$LOG_FILE" 2>&1 &
 
     PID=$!

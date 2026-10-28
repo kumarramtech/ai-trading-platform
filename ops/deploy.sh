@@ -55,8 +55,10 @@ if [ "$open" != "0" ]; then
 fi
 
 # --- upload and verify --------------------------------------------------------
-"${SSH[@]}" "mkdir -p $STAGE"
+"${SSH[@]}" "rm -rf $STAGE && mkdir -p $STAGE/scripts"
 scp -q -i "$KEY" "${JARS[@]}" "$HOST:$STAGE/"
+# The start/stop scripts are versioned here (JVM heap limits live in start.sh).
+scp -q -i "$KEY" "$ROOT/ops/scripts/start.sh" "$ROOT/ops/scripts/stop.sh" "$HOST:$STAGE/scripts/"
 for jar in "${JARS[@]}"; do
   local_sum=$(sha256sum "$jar" | cut -d' ' -f1)
   remote_sum=$("${SSH[@]}" "sha256sum $STAGE/$(basename "$jar") | cut -d' ' -f1")
@@ -68,14 +70,21 @@ done
 echo "== uploaded and verified ${#JARS[@]} jar(s)"
 
 # --- back up, swap, restart -----------------------------------------------------
+# Only the jars being replaced are backed up (all 10 were ~600 MB per deploy),
+# and only the newest KEEP_BACKUPS backups are kept: the disk is a free-tier 30 GB.
+KEEP_BACKUPS=${KEEP_BACKUPS:-2}
 "${SSH[@]}" "set -e
   B=/opt/trading-platform/backup/pre-deploy-$STAMP
-  mkdir -p \$B
-  cp -p /opt/trading-platform/services/*.jar \$B/
+  mkdir -p \$B/scripts
   cd /opt/trading-platform
+  for j in $STAGE/*.jar; do cp -p services/\$(basename \$j) \$B/ 2>/dev/null || true; done
+  cp -p scripts/start.sh scripts/stop.sh \$B/scripts/
   bash scripts/stop.sh > /dev/null
   cp $STAGE/*.jar services/
+  cp $STAGE/scripts/*.sh scripts/
   bash scripts/start.sh | grep -E '\[OK\]|FAIL|ERROR' || true
+  ls -1dt backup/pre-deploy-* | tail -n +$((KEEP_BACKUPS + 1)) | xargs -r rm -rf
+  rm -rf $STAGE
   echo backup: \$B"
 
 # --- health ---------------------------------------------------------------------

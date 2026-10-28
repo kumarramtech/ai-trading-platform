@@ -24,6 +24,13 @@ public class OpeningRangeService {
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
 
+    /** Wall clock in IST; a replay sets a fixed clock on its own instance to evaluate a past day. */
+    private java.time.Clock clock = java.time.Clock.system(MARKET_ZONE);
+
+    public void setClock(java.time.Clock clock) {
+        this.clock = clock;
+    }
+
     private static final LocalTime OPENING_RANGE_START =
             LocalTime.of(9, 15);
 
@@ -78,7 +85,7 @@ public class OpeningRangeService {
         }
 
         LocalDate today =
-                LocalDate.now(MARKET_ZONE);
+                LocalDate.now(clock);
 
         LocalDateTime start =
                 LocalDateTime.of(
@@ -292,7 +299,7 @@ public class OpeningRangeService {
          */
         if (cached.getTradingDate() == null
                 || !cached.getTradingDate()
-                .equals(LocalDate.now(MARKET_ZONE))) {
+                .equals(LocalDate.now(clock))) {
 
             openingRanges.remove(symbol, cached);
 
@@ -333,7 +340,7 @@ public class OpeningRangeService {
 
         LocalDateTime expected =
                 LocalDateTime.of(
-                        LocalDate.now(MARKET_ZONE),
+                        LocalDate.now(clock),
                         OPENING_RANGE_START
                 );
 

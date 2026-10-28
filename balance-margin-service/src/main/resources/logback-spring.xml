@@ -30,9 +30,9 @@
 
             <maxFileSize>50MB</maxFileSize>
 
-            <maxHistory>30</maxHistory>
+            <maxHistory>7</maxHistory>
 
-            <totalSizeCap>2GB</totalSizeCap>
+            <totalSizeCap>1GB</totalSizeCap>
 
         </rollingPolicy>
 
