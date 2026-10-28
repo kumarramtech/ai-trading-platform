@@ -21,6 +21,13 @@ public class MinuteCandleStore {
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
 
+    /** Wall clock in IST; a replay sets a fixed clock on its own instance to evaluate a past day. */
+    private java.time.Clock clock = java.time.Clock.system(MARKET_ZONE);
+
+    public void setClock(java.time.Clock clock) {
+        this.clock = clock;
+    }
+
     private final MinuteCandleRepository minuteCandleRepository;
 
     /*
@@ -40,7 +47,7 @@ public class MinuteCandleStore {
      */
     @PostConstruct
     public void restoreToday() {
-        LocalDate today = LocalDate.now(MARKET_ZONE);
+        LocalDate today = LocalDate.now(clock);
         LocalDateTime start = today.atStartOfDay();
         LocalDateTime end = today.plusDays(1).atStartOfDay();
 
@@ -204,7 +211,7 @@ public class MinuteCandleStore {
             return List.of();
         }
 
-        LocalDate today = LocalDate.now(MARKET_ZONE);
+        LocalDate today = LocalDate.now(clock);
 
         List<MinuteCandle> result =
                 new ArrayList<>();
@@ -286,7 +293,7 @@ public class MinuteCandleStore {
      */
     public void clearToday() {
 
-        LocalDate today = LocalDate.now(MARKET_ZONE);
+        LocalDate today = LocalDate.now(clock);
 
         candles.forEach((symbol, symbolCandles) -> {
             symbolCandles.entrySet().removeIf(entry -> {

@@ -29,8 +29,8 @@
             </fileNamePattern>
 
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>10GB</totalSizeCap>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
 
         </rollingPolicy>
 

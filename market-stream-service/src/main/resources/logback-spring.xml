@@ -30,8 +30,8 @@
 
             <!-- Keep the same diagnostic detail while preventing unbounded disk growth. -->
             <maxFileSize>100MB</maxFileSize>
-            <maxHistory>14</maxHistory>
-            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
 
         </rollingPolicy>
 

@@ -113,6 +113,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     /** Afternoon VWAP pullback in an established regime; shadow trades only, never a position. */
     private final com.ram.trading.signal.engine.service.shadow.TrendPullbackShadowStrategy trendPullbackShadowStrategy;
 
+    /** 09:31 list of stocks in play; optionally restricts ORB/JUDAS to them. */
+    private final com.ram.trading.signal.engine.service.playbook.OpeningPlaybookService openingPlaybookService;
+
     /** Setups scoring below this are not traded at all (0 = off). */
     @Value("${trading.quality.min-score:40}")
     private int minQualityScore = 40;
@@ -754,6 +757,27 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                     entrySetup.strategy(),
                                     entrySetup.direction(),
                                     entrySetup.confirmationTime());
+
+                            if (openingPlaybookService.blocksSetup(tick.getSymbol())) {
+
+                                log.info("OPENING PLAYBOOK | Setup skipped, stock not in play | Symbol={} | Strategy={} | Direction={}",
+                                        tick.getSymbol(), entrySetup.strategy(), entrySetup.direction());
+
+                                shadowTradeService.recordRejectedSetup(
+                                        SignalGenerationRequest.builder()
+                                                .symbol(tick.getSymbol())
+                                                .currentPrice(tick.getLastTradedPrice())
+                                                .setupStrategy(entrySetup.strategy())
+                                                .setupDirection(SignalType.valueOf(
+                                                        entrySetup.direction().toUpperCase()))
+                                                .setupInvalidationLevel(entrySetup.invalidationLevel())
+                                                .build(),
+                                        entrySetup.direction().toUpperCase(),
+                                        "NOT_IN_PLAY",
+                                        tick.getMarketRegime());
+
+                                return Mono.empty();
+                            }
 
                             if (chasesFreshRegimeFlip(
                                     tick.getSymbol(),

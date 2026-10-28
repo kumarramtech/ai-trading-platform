@@ -23,6 +23,13 @@ public class JudasSwingDetector {
     private static final ZoneId IST =
             ZoneId.of("Asia/Kolkata");
 
+    /** Wall clock in IST; a replay sets a fixed clock on its own instance to evaluate a past day. */
+    private java.time.Clock clock = java.time.Clock.system(IST);
+
+    public void setClock(java.time.Clock clock) {
+        this.clock = clock;
+    }
+
     private static final LocalTime ANALYSIS_START =
             LocalTime.of(9, 30);
 
@@ -110,7 +117,7 @@ public class JudasSwingDetector {
                 openingRange.getSymbol();
 
         LocalDate today =
-                LocalDate.now(IST);
+                LocalDate.now(clock);
 
         LocalDateTime start =
                 LocalDateTime.of(
@@ -589,7 +596,7 @@ public class JudasSwingDetector {
             String symbol) {
 
         LocalDate today =
-                LocalDate.now(IST);
+                LocalDate.now(clock);
 
         LocalDateTime start =
                 LocalDateTime.of(

@@ -108,42 +108,67 @@ public class TrendPullbackShadowStrategy {
 
     private void evaluate(MinuteCandle candle, Tick tick, Trend regime, long regimeMinutes) {
 
-        if (!enabled || candle == null || tick == null
-                || (regime != Trend.BULLISH && regime != Trend.BEARISH)
-                || regimeMinutes < minRegimeMinutes) {
+        if (!enabled || candle == null || tick == null) {
             return;
         }
 
-        LocalTime now = LocalTime.now(clock);
+        detect(candle, tick.getDayOpenPrice(), regime, regimeMinutes,
+                minuteCandleStore.getToday(candle.getSymbol()), LocalTime.now(clock))
+                .ifPresent(signal -> {
+                    log.info("TREND PULLBACK SHADOW | Symbol={} | Direction={} | Regime={} for {} min | Entry={} | Stop={} | Target={}",
+                            signal.getSymbol(), signal.getSignal(), regime, regimeMinutes,
+                            signal.getEntryPrice(), signal.getStopLoss(), signal.getTargetPrice());
+                    shadowTradeService.recordRejectedSignal(signal, REJECTED_BY);
+                });
+    }
+
+    /**
+     * The pullback rule alone, without recording; shared with the strategy replay.
+     *
+     * @param today the symbol's candles so far today, ending with {@code candle}
+     * @param now   the time the candle completed
+     */
+    public java.util.Optional<TradingSignal> detect(
+            MinuteCandle candle,
+            Double dayOpen,
+            Trend regime,
+            long regimeMinutes,
+            List<MinuteCandle> today,
+            LocalTime now) {
+
+        if (candle == null || today == null || now == null
+                || (regime != Trend.BULLISH && regime != Trend.BEARISH)
+                || regimeMinutes < minRegimeMinutes) {
+            return java.util.Optional.empty();
+        }
+
         if (now.isBefore(LocalTime.parse(start)) || !now.isBefore(LocalTime.parse(end))) {
-            return;
+            return java.util.Optional.empty();
         }
 
         Double close = candle.getClose();
         Double open = candle.getOpen();
         Double high = candle.getHigh();
         Double low = candle.getLow();
-        Double dayOpen = tick.getDayOpenPrice();
 
         if (close == null || open == null || high == null || low == null
                 || close < minPrice || dayOpen == null || dayOpen <= 0) {
-            return;
+            return java.util.Optional.empty();
         }
 
         boolean buy = regime == Trend.BULLISH;
         double dayMovePct = (close - dayOpen) / dayOpen * 100.0;
         if (buy ? dayMovePct < minDayMovePct : dayMovePct > -minDayMovePct) {
-            return;
+            return java.util.Optional.empty();
         }
 
-        List<MinuteCandle> today = minuteCandleStore.getToday(candle.getSymbol());
         if (today.size() < trendLookback) {
-            return;
+            return java.util.Optional.empty();
         }
 
         Double vwap = vwap(today);
         if (vwap == null) {
-            return;
+            return java.util.Optional.empty();
         }
 
         double touch = vwap * vwapTouchPct / 100.0;
@@ -151,7 +176,7 @@ public class TrendPullbackShadowStrategy {
                 ? low <= vwap + touch && close > vwap && close > open
                 : high >= vwap - touch && close < vwap && close < open;
         if (!pullback || !trendHeld(today, vwap, buy)) {
-            return;
+            return java.util.Optional.empty();
         }
 
         double buffer = close * stopBufferPct / 100.0;
@@ -160,7 +185,7 @@ public class TrendPullbackShadowStrategy {
         if (risk > close * maxStopPct / 100.0) {
             log.debug("TREND PULLBACK SHADOW | Stop too wide | Symbol={} | RiskPct={}",
                     candle.getSymbol(), risk / close * 100.0);
-            return;
+            return java.util.Optional.empty();
         }
 
         String side = buy ? SignalType.BUY.name() : SignalType.SELL.name();
@@ -168,10 +193,10 @@ public class TrendPullbackShadowStrategy {
         double target = PriceTicks.alignTarget(buy ? close + rewardRisk * risk : close - rewardRisk * risk,
                 side, priceTickSize);
 
-        log.info("TREND PULLBACK SHADOW | Symbol={} | Direction={} | Regime={} for {} min | Entry={} | VWAP={} | Stop={} | Target={} | DayMovePct={}",
+        log.debug("TREND PULLBACK | Symbol={} | Direction={} | Regime={} for {} min | Entry={} | VWAP={} | Stop={} | Target={} | DayMovePct={}",
                 candle.getSymbol(), side, regime, regimeMinutes, close, round2(vwap), stop, target, round2(dayMovePct));
 
-        shadowTradeService.recordRejectedSignal(
+        return java.util.Optional.of(
                 TradingSignal.builder()
                         .symbol(candle.getSymbol())
                         .signal(side)
@@ -180,8 +205,7 @@ public class TrendPullbackShadowStrategy {
                         .entryPrice(close)
                         .stopLoss(stop)
                         .targetPrice(target)
-                        .build(),
-                REJECTED_BY);
+                        .build());
     }
 
     /** Volume-weighted typical price of today's candles; null without volume. */
