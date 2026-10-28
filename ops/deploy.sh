@@ -26,8 +26,10 @@ STAGE="/tmp/deploy-$STAMP"
 SSH=(ssh -o ConnectTimeout=20 -i "$KEY" "$HOST")
 
 # --- market-hours guard (IST) -------------------------------------------------
-ist_day=$(TZ=Asia/Kolkata date +%u)
-ist_hm=$(TZ=Asia/Kolkata date +%H%M)
+# POSIX offset form: Git Bash on Windows has no tz database, so "Asia/Kolkata"
+# silently falls back to UTC (2026-10-28: refused a 17:00 IST deploy as 11:29).
+ist_day=$(TZ=IST-5:30 date +%u)
+ist_hm=$(TZ=IST-5:30 date +%H%M)
 if [ "$ist_day" -le 5 ] && [ "$ist_hm" -ge 0915 ] && [ "$ist_hm" -le 1530 ]; then
   echo "Refusing to deploy during market hours (IST $ist_hm). Deploy after 15:30." >&2
   exit 1
