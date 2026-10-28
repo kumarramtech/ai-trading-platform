@@ -206,6 +206,19 @@ public class SwingBacktestService {
         out.append(render("PULLBACK (RSI2 < 10 in an uptrend, exit above 5-day average)",
                 simulateSignals(data, calendar, Strategy.PULLBACK)));
         out.append(renderRotation(rotation(data, calendar), calendar.length));
+
+        out.append("MOMENTUM PORTFOLIOS (equal weight, point-in-time top-liquidity universe; 6m = 126 sessions, skip 1m = 21)\n");
+        for (PortfolioRule rule : List.of(
+                new PortfolioRule("top 30 monthly, 6m-1m vol-adj, no costs", 30, true, 126, 21, true, 0, false),
+                new PortfolioRule("top 30 monthly, 6m-1m vol-adj, Rs 0 brokerage", 30, true, 126, 21, true, 0, true),
+                new PortfolioRule("top 30 monthly, 6m-1m vol-adj, Rs 20 brokerage", 30, true, 126, 21, true, 20, true),
+                new PortfolioRule("top 20 monthly, 6m-1m vol-adj, Rs 0 brokerage", 20, true, 126, 21, true, 0, true),
+                new PortfolioRule("top 10 monthly, 6m-1m vol-adj, Rs 0 brokerage", 10, true, 126, 21, true, 0, true),
+                new PortfolioRule("top 30 monthly, 12m-1m vol-adj, Rs 0 brokerage", 30, true, 252, 21, true, 0, true),
+                new PortfolioRule("top 30 monthly, 6m-1m raw return, Rs 0 brokerage", 30, true, 126, 21, false, 0, true))) {
+            out.append(renderPortfolio(rule, momentumPortfolio(data, calendar, rule), calendar, nifty.close()));
+        }
+        out.append("\n");
         out.append("Go-live bar for swing: avg >= +0.30R net, PF >= 1.5, max DD <= 15% of capital, beats NIFTY.\n");
         return out.toString();
     }
@@ -534,6 +547,126 @@ public class SwingBacktestService {
         return out.append("\n\n").toString();
     }
 
+    /** A momentum portfolio: how many stocks, how often, how ranked, at what costs. */
+    record PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
+                         double brokerage, boolean costs) {
+    }
+
+    /**
+     * Momentum portfolio held in equal weight and rebalanced on the first session of
+     * each month (or week): ranked on the previous close by the return over
+     * {@code lookback} sessions excluding the last {@code skip}, optionally divided by
+     * the daily volatility over the same window (as NSE's momentum indices do). Only
+     * that day's top-liquidity stocks qualify. Equity is tracked in rupees so the
+     * fixed costs per order (brokerage, DP charge) weigh as they would on ₹1 lakh.
+     * Returns each period's net return keyed by its first session.
+     */
+    TreeMap<LocalDate, Double> momentumPortfolio(Map<String, Series> data, LocalDate[] calendar, PortfolioRule rule) {
+        int warmup = rule.lookback() + 2;
+        List<Integer> rebalanceDays = new ArrayList<>();
+        for (int d = warmup; d < calendar.length; d++) {
+            boolean newPeriod = rule.monthly()
+                    ? calendar[d].getMonthValue() != calendar[d - 1].getMonthValue()
+                    : calendar[d].getDayOfWeek().getValue() < calendar[d - 1].getDayOfWeek().getValue()
+                    || java.time.temporal.ChronoUnit.DAYS.between(calendar[d - 1], calendar[d]) > 3;
+            if (newPeriod) {
+                rebalanceDays.add(d);
+            }
+        }
+        TreeMap<LocalDate, Double> periods = new TreeMap<>();
+        double equity = capital;
+        List<String> held = new ArrayList<>();
+        for (int k = 0; k + 1 < rebalanceDays.size(); k++) {
+            int r = rebalanceDays.get(k);
+            int r2 = rebalanceDays.get(k + 1);
+            LocalDate signalDay = calendar[r - 1];
+
+            List<Map.Entry<String, Double>> ranked = new ArrayList<>();
+            for (Series s : data.values()) {
+                int i = s.indexOf(signalDay);
+                if (i < rule.lookback() + 1 || s.indexOf(calendar[r]) < 0 || s.close()[i] < 50
+                        || !eligible(data, s.symbol(), signalDay)) {
+                    continue;
+                }
+                int end = i - rule.skip();
+                int start = i - rule.lookback();
+                double ret = s.close()[end] / s.close()[start] - 1;
+                double score = ret;
+                if (rule.volAdjusted()) {
+                    double sum = 0, sq = 0;
+                    int n = 0;
+                    for (int j = start + 1; j <= end; j++) {
+                        double dr = s.close()[j] / s.close()[j - 1] - 1;
+                        sum += dr;
+                        sq += dr * dr;
+                        n++;
+                    }
+                    double sd = n > 1 ? Math.sqrt(Math.max(0, sq / n - (sum / n) * (sum / n))) : 0;
+                    score = sd > 0 ? ret / sd : ret;
+                }
+                ranked.add(Map.entry(s.symbol(), score));
+            }
+            ranked.sort(Map.Entry.<String, Double>comparingByValue().reversed());
+            List<String> target = ranked.stream().limit(rule.top()).map(Map.Entry::getKey).toList();
+
+            double start = equity;
+            double slot = equity / rule.top();
+            double costs = 0;
+            if (rule.costs()) {
+                for (String sym : held) {
+                    if (!target.contains(sym)) {
+                        costs += DeliveryCharges.sellSide(slot, rule.brokerage()) + slot * slippagePct / 100;
+                    }
+                }
+                for (String sym : target) {
+                    if (!held.contains(sym)) {
+                        costs += DeliveryCharges.buySide(slot, rule.brokerage()) + slot * slippagePct / 100;
+                    }
+                }
+            }
+            double invested = 0;
+            double value = 0;
+            for (String sym : target) {
+                Series s = data.get(sym);
+                int a = s.indexOf(calendar[r]);
+                int b = s.indexOf(calendar[r2]);
+                invested += slot;
+                value += a < 0 || b < 0 ? slot : slot * s.open()[b] / s.open()[a];
+            }
+            equity = equity - invested + value - costs;
+            periods.put(calendar[r], equity / start - 1);
+            held = new ArrayList<>(target);
+        }
+        return periods;
+    }
+
+    private String renderPortfolio(PortfolioRule rule, TreeMap<LocalDate, Double> periods, LocalDate[] calendar,
+                                   double[] niftyClose) {
+        if (periods.isEmpty()) {
+            return "  " + rule.name() + ": no data\n";
+        }
+        double equity = 1, peak = 1, maxDd = 0;
+        Map<YearMonth, Double> monthly = new TreeMap<>();
+        for (Map.Entry<LocalDate, Double> p : periods.entrySet()) {
+            double before = equity;
+            equity *= 1 + p.getValue();
+            peak = Math.max(peak, equity);
+            maxDd = Math.max(maxDd, (peak - equity) / peak);
+            monthly.merge(YearMonth.from(p.getKey()), (equity - before) * capital, Double::sum);
+        }
+        // NIFTY over the same window, for a like-for-like comparison.
+        int first = java.util.Arrays.binarySearch(calendar, periods.firstKey());
+        double niftySame = niftyClose[niftyClose.length - 1] / niftyClose[Math.max(0, first)] - 1;
+        int sessions = calendar.length - Math.max(0, first);
+        double total = equity - 1;
+        return String.format("  %-46s total %+7.1f%% | %+6.1f%%/yr | max DD %5.1f%% | +months %2d/%2d | avg month Rs %6.0f"
+                        + " | NIFTY same window %+6.1f%%/yr%n",
+                rule.name(), total * 100, annualised(total, sessions), maxDd * 100,
+                monthly.values().stream().filter(v -> v > 0).count(), monthly.size(),
+                monthly.values().stream().mapToDouble(Double::doubleValue).average().orElse(0),
+                annualised(niftySame, sessions));
+    }
+
     private String renderRotation(TreeMap<LocalDate, Double> weekly, int sessions) {
         StringBuilder out = new StringBuilder("ROTATION (top 5 by 3-month strength, weekly rebalance)\n");
         if (weekly.isEmpty()) {
@@ -586,12 +719,20 @@ public class SwingBacktestService {
         }
 
         static double buySide(double value) {
-            double fees = BROKERAGE + value * (EXCHANGE_PCT + SEBI_PCT) / 100;
-            return fees + value * (STT_PCT + STAMP_BUY_PCT) / 100 + fees * GST_PCT / 100;
+            return buySide(value, BROKERAGE);
         }
 
         static double sellSide(double value) {
-            double fees = BROKERAGE + DP_PER_SELL + value * (EXCHANGE_PCT + SEBI_PCT) / 100;
+            return sellSide(value, BROKERAGE);
+        }
+
+        static double buySide(double value, double brokerage) {
+            double fees = brokerage + value * (EXCHANGE_PCT + SEBI_PCT) / 100;
+            return fees + value * (STT_PCT + STAMP_BUY_PCT) / 100 + fees * GST_PCT / 100;
+        }
+
+        static double sellSide(double value, double brokerage) {
+            double fees = brokerage + DP_PER_SELL + value * (EXCHANGE_PCT + SEBI_PCT) / 100;
             return fees + value * STT_PCT / 100 + fees * GST_PCT / 100;
         }
 

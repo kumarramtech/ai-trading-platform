@@ -29,6 +29,43 @@ class SwingBacktestServiceTest {
         assertEquals(1.0, SwingBacktestService.lowest(up, 0, 4), 1e-9);
     }
 
+    @Test
+    void momentumPortfolioHoldsTheStrongerStockAndPaysCostsOnlyWhenItTrades() {
+        int n = 300;
+        LocalDate[] d = new LocalDate[n];
+        LocalDate day = LocalDate.of(2025, 1, 1);
+        for (int i = 0; i < n; i++) {
+            d[i] = day.plusDays(i);
+        }
+        SwingBacktestService.Series up = trend("UP", d, 0.002);
+        SwingBacktestService.Series down = trend("DOWN", d, -0.001);
+        SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
+
+        var free = svc.momentumPortfolio(Map.of("UP", up, "DOWN", down), d,
+                new SwingBacktestService.PortfolioRule("t", 1, true, 126, 21, false, 0, false));
+        var costly = svc.momentumPortfolio(Map.of("UP", up, "DOWN", down), d,
+                new SwingBacktestService.PortfolioRule("t", 1, true, 126, 21, false, 20, true));
+
+        assertTrue(free.values().stream().allMatch(r -> r > 0), "always holds UP: " + free);
+        // Costs only in the first month (buying UP once); later months hold without trading.
+        assertTrue(costly.firstEntry().getValue() < free.firstEntry().getValue());
+        assertEquals(free.lastEntry().getValue(), costly.lastEntry().getValue(), 1e-12);
+    }
+
+    private static SwingBacktestService.Series trend(String symbol, LocalDate[] d, double dailyChange) {
+        int n = d.length;
+        double[] o = new double[n], h = new double[n], l = new double[n], c = new double[n], v = new double[n];
+        for (int i = 0; i < n; i++) {
+            double p = 100 * Math.pow(1 + dailyChange, i);
+            o[i] = p;
+            h[i] = p;
+            l[i] = p;
+            c[i] = p;
+            v[i] = 1_000_000;
+        }
+        return new SwingBacktestService.Series(symbol, d, o, h, l, c, v);
+    }
+
     /** A stock in a steady uptrend that breaks out on volume, then reverses below its 20-day low. */
     @Test
     void breakoutIsBoughtAtTheNextOpenAndExitedOnTheTrailingLow() {
