@@ -105,6 +105,20 @@ public class TradingOrchestratorService {
                             && signalRequest.getMarketContext().getMarketTrend() != null
                             ? signalRequest.getMarketContext().getMarketTrend().name()
                             : null);
+        } else if (technicalDecision != null
+                && technicalDecision.getSignal() == SignalType.HOLD
+                && (signalRequest.getSetupDirection() == SignalType.BUY
+                        || signalRequest.getSetupDirection() == SignalType.SELL)) {
+            // Daily rules disagreed with the intraday setup (2026-10-28: 14 of 21
+            // technical decisions); followed so the daily filter is measured too.
+            shadowTradeService.recordRejectedSetup(
+                    signalRequest,
+                    signalRequest.getSetupDirection().name(),
+                    "TECHNICAL_HOLD",
+                    signalRequest.getMarketContext() != null
+                            && signalRequest.getMarketContext().getMarketTrend() != null
+                            ? signalRequest.getMarketContext().getMarketTrend().name()
+                            : null);
         }
 
         if (technicalDecision != null && technicalDecision.getSignal() != null) {

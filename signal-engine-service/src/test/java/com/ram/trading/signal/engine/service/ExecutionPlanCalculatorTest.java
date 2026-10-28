@@ -68,6 +68,33 @@ class ExecutionPlanCalculatorTest {
     }
 
     @Test
+    void refusedWideStopIsReportedForShadowTrackingButNotPutOnTheSignal() {
+        // OR low 97.0, buffer 0.05 -> structural stop 96.95, risk 3.05, target 106.10
+        when(openingRangeService.get("ABC")).thenReturn(range(101.0, 97.0));
+        TradingSignal s = signal("BUY", 100.0);
+        java.util.List<ExecutionPlanCalculator.RefusedPlan> refused = new java.util.ArrayList<>();
+
+        assertFalse(calculator.apply(s, null, refused::add));
+
+        assertNull(s.getStopLoss());
+        assertEquals(1, refused.size());
+        assertEquals("STOP_TOO_WIDE", refused.get(0).reason());
+        assertEquals(96.95, refused.get(0).stop(), 0.051);
+        assertEquals(106.10, refused.get(0).target(), 0.051);
+    }
+
+    @Test
+    void refusedTightStopIsReportedToo() {
+        when(openingRangeService.get("ABC")).thenReturn(range(100.30, 98.0));
+        java.util.List<ExecutionPlanCalculator.RefusedPlan> refused = new java.util.ArrayList<>();
+
+        assertFalse(calculator.apply(signal("SELL", 100.0), null, refused::add));
+
+        assertEquals("STOP_TOO_TIGHT", refused.get(0).reason());
+        assertTrue(refused.get(0).stop() > 100.0 && refused.get(0).target() < 100.0);
+    }
+
+    @Test
     void wideRangeIsClampedToMaxRiskWhenRejectionIsOff() {
         org.springframework.test.util.ReflectionTestUtils.setField(calculator, "rejectClampedOrStop", false);
         when(openingRangeService.get("ABC")).thenReturn(range(110.0, 90.0));

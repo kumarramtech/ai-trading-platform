@@ -110,6 +110,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     /** Only stocks that can be exited near the planned price (min price, min daily turnover). */
     private final com.ram.trading.signal.engine.risk.LiquidityFilter liquidityFilter;
 
+    /** Afternoon VWAP pullback in an established regime; shadow trades only, never a position. */
+    private final com.ram.trading.signal.engine.service.shadow.TrendPullbackShadowStrategy trendPullbackShadowStrategy;
+
     /** Setups scoring below this are not traded at all (0 = off). */
     @Value("${trading.quality.min-score:40}")
     private int minQualityScore = 40;
@@ -669,6 +672,18 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         final MinuteCandle finalCompletedCandle =
                 completedCandle;
 
+        if (completedCandle != null) {
+            RegimeSnapshot regime = latestMarketRegime.get();
+            if (regime != null
+                    && !regime.seenAt().isBefore(LocalDateTime.now().minus(REGIME_MAX_AGE))) {
+                trendPullbackShadowStrategy.onCompletedCandle(
+                        completedCandle,
+                        tick,
+                        regime.trend(),
+                        Duration.between(regime.changedAt(), LocalDateTime.now()).toMinutes());
+            }
+        }
+
         return tradeExitService
                 .evaluateExit(tick)
                 .then(
@@ -947,7 +962,13 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .qualityScore(qualityScore)
                 .build();
 
-        if (!executionPlanCalculator.apply(plan, request)) {
+        if (!executionPlanCalculator.apply(plan, request, refused -> {
+            // Followed with the refused structural stop, so the report shows
+            // whether the stop-distance rules save or cost money.
+            plan.setStopLoss(refused.stop());
+            plan.setTargetPrice(refused.target());
+            shadowTradeService.recordRejectedSignal(plan, refused.reason());
+        })) {
             log.info("PRE-AI CHECK | Execution plan rejected, AI not called | Symbol={} | Strategy={} | Direction={}",
                     request.getSymbol(), request.getSetupStrategy(), direction);
             return hold;
@@ -1212,6 +1233,15 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 "AI Trade Not Allowed. Returning HOLD | Symbol={} | Recommendation={}",
                                 request.getSymbol(),
                                 recommendation);
+
+                        // 2026-10-28: all 7 AI calls ended here and none was shadowed.
+                        SignalType technicalSignal =
+                                pipelineResult.getTechnicalDecision() != null
+                                        ? pipelineResult.getTechnicalDecision().getSignal()
+                                        : null;
+                        if (technicalSignal == SignalType.BUY || technicalSignal == SignalType.SELL) {
+                            recordAiVeto(request, technicalSignal);
+                        }
 
                         return Mono.just(
                                 TradingSignal.builder()
