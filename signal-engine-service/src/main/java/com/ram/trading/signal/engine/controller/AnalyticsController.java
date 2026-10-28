@@ -135,7 +135,8 @@ public class AnalyticsController {
             return ResponseEntity.status(409).body("Backtests are not run during market hours (09:00-15:35 IST).");
         }
         int y = Math.max(1, Math.min(years, 5));
-        int size = Math.max(20, Math.min(universe, 800));
+        // Up to every listed stock: liquidity is then judged on each day (point in time), not by today's turnover.
+        int size = Math.max(20, Math.min(universe, 4000));
         return swingBacktestService.start(y, size)
                 ? ResponseEntity.accepted().body("Swing backtest started: " + y + " years, top " + size
                 + " stocks. GET /analytics/swing-backtest for the report.")

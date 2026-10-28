@@ -131,7 +131,7 @@ public class SwingBacktestService {
         LocalDate from = to.minusYears(years);
         List<String> universe = jdbc.queryForList(
                 "select symbol from historical_price where interval_type = 'DAY' and trade_date >= ? "
-                        + "and close_price >= 50 group by symbol having count(*) >= 15 "
+                        + "group by symbol having count(*) >= 15 "
                         + "order by avg(close_price * volume) desc limit ?",
                 String.class, to.minusDays(30), universeSize);
         status.set("RUNNING | fetching " + universe.size() + " symbols, " + from + " .. " + to);
@@ -160,10 +160,10 @@ public class SwingBacktestService {
         status.set("RUNNING | simulating " + data.size() + " symbols over " + nifty.size() + " sessions");
 
         StringBuilder out = new StringBuilder();
-        out.append(String.format("SWING BACKTEST  %s to %s  |  %d sessions, %d stocks (top by turnover today), long only%n",
+        out.append(String.format("SWING BACKTEST  %s to %s  |  %d sessions, %d stocks (liquidity judged each day), long only%n",
                 nifty.date()[0], nifty.date()[nifty.size() - 1], nifty.size(), data.size()));
         out.append(String.format("Rs %.0f capital, no leverage, max %d positions, Rs %.0f risk/position, next-open fills, "
-                + "%.2f%% slippage/side, delivery charges. Survivorship bias: today's top stocks.%n%n",
+                + "%.2f%% slippage/side, delivery charges. Survivorship: stocks delisted since are missing.%n%n",
                 capital, maxPositions, riskPerTrade, slippagePct));
 
         double niftyReturn = nifty.close()[nifty.size() - 1] / nifty.close()[0] - 1;
