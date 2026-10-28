@@ -909,6 +909,69 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
         return Mono.empty();
     }
 
+    /**
+     * Execution plan and structural entry quality, judged on the setup
+     * direction at the current price before any AI call.
+     *
+     * @return a HOLD signal when the setup must be skipped, null to continue
+     */
+    private TradingSignal preAiRejection(
+            SignalGenerationRequest request,
+            TechnicalIndicatorResponse indicator,
+            Integer qualityScore) {
+
+        SignalType direction = request.getSetupDirection();
+        Double price = request.getCurrentPrice();
+
+        if ((direction != SignalType.BUY && direction != SignalType.SELL)
+                || price == null || price <= 0) {
+            return null;
+        }
+
+        TradingSignal plan = TradingSignal.builder()
+                .symbol(request.getSymbol())
+                .signal(direction.name())
+                .entryPrice(price)
+                .strategy(request.getSetupStrategy())
+                .qualityScore(qualityScore)
+                .marketRegime(request.getMarketContext() != null
+                        && request.getMarketContext().getMarketTrend() != null
+                        ? request.getMarketContext().getMarketTrend().name()
+                        : null)
+                .build();
+
+        TradingSignal hold = TradingSignal.builder()
+                .symbol(request.getSymbol())
+                .signal(SignalType.HOLD.name())
+                .strategy(request.getSetupStrategy())
+                .qualityScore(qualityScore)
+                .build();
+
+        if (!executionPlanCalculator.apply(plan, request)) {
+            log.info("PRE-AI CHECK | Execution plan rejected, AI not called | Symbol={} | Strategy={} | Direction={}",
+                    request.getSymbol(), request.getSetupStrategy(), direction);
+            return hold;
+        }
+
+        if (rejectExtendedEntries && indicator != null) {
+
+            EntryQualityResult quality =
+                    entryQualityService.evaluate(request.getSymbol(), direction, price, price, indicator);
+
+            if (quality != null && "EXTENDED".equals(quality.getStatus())) {
+                log.info("PRE-AI CHECK | Entry EXTENDED, AI not called | Symbol={} | Direction={} | PriceVsEMA20={}% | Reason={}",
+                        request.getSymbol(), direction, quality.getPriceVsEma20Pct(), quality.getReason());
+
+                if (plan.getStopLoss() != null && plan.getTargetPrice() != null) {
+                    shadowTradeService.recordRejectedSignal(plan, "EXTENDED");
+                }
+                return hold;
+            }
+        }
+
+        return null;
+    }
+
     private Mono<TradingSignal> generateTradingSignal(
             SignalGenerationRequest request,
             TechnicalIndicatorResponse indicator) {
@@ -1003,6 +1066,17 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 .qualityScore(qualityScore)
                                 .build());
             }
+        }
+
+        /*
+         * PRE-AI CHECKS: rules that need no AI answer run before the AI call,
+         * so a setup they reject never costs a call or its 5-40s wait. The
+         * same checks run again after the AI on the actual entry price.
+         */
+        TradingSignal preAiRejection = preAiRejection(request, indicator, qualityScore);
+
+        if (preAiRejection != null) {
+            return Mono.just(preAiRejection);
         }
 
         return tradingOrchestratorService

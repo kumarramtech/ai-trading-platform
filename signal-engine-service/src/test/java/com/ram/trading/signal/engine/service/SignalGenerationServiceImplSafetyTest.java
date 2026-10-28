@@ -331,6 +331,60 @@ class SignalGenerationServiceImplSafetyTest {
     }
 
     @Test
+    void unusableExecutionPlanIsRejectedBeforeTheAiPipeline() throws Exception {
+        Harness harness = newHarness();
+        com.ram.trading.signal.engine.service.ExecutionPlanCalculator planner =
+                harness.mock(com.ram.trading.signal.engine.service.ExecutionPlanCalculator.class);
+        com.ram.trading.signal.engine.service.ai.TradingOrchestratorService orchestrator =
+                harness.mock(com.ram.trading.signal.engine.service.ai.TradingOrchestratorService.class);
+        when(planner.apply(any(), any())).thenReturn(false);
+
+        TradingSignal result = invokeGenerateTradingSignal(harness, SignalType.SELL, new TechnicalIndicatorResponse());
+
+        assertEquals("HOLD", result.getSignal());
+        verifyNoInteractions(orchestrator);
+    }
+
+    @Test
+    void structurallyExtendedEntryIsRejectedBeforeTheAiPipeline() throws Exception {
+        Harness harness = newHarness();
+        com.ram.trading.signal.engine.service.ExecutionPlanCalculator planner =
+                harness.mock(com.ram.trading.signal.engine.service.ExecutionPlanCalculator.class);
+        EntryQualityService entryQualityService = harness.mock(EntryQualityService.class);
+        com.ram.trading.signal.engine.service.ai.TradingOrchestratorService orchestrator =
+                harness.mock(com.ram.trading.signal.engine.service.ai.TradingOrchestratorService.class);
+        when(planner.apply(any(), any())).thenReturn(true);
+        when(entryQualityService.evaluate(anyString(), any(), any(), any(), any()))
+                .thenReturn(EntryQualityResult.builder()
+                        .symbol("TCS").direction("SELL").status("EXTENDED").reason("test").build());
+
+        TradingSignal result = invokeGenerateTradingSignal(harness, SignalType.SELL, new TechnicalIndicatorResponse());
+
+        assertEquals("HOLD", result.getSignal());
+        verifyNoInteractions(orchestrator);
+    }
+
+    private TradingSignal invokeGenerateTradingSignal(
+            Harness harness, SignalType direction, TechnicalIndicatorResponse indicator) throws Exception {
+
+        com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest request =
+                com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest.builder()
+                        .symbol("TCS").currentPrice(100.0)
+                        .setupStrategy("ORB").setupDirection(direction)
+                        .build();
+
+        Method generate = SignalGenerationServiceImpl.class.getDeclaredMethod(
+                "generateTradingSignal",
+                com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest.class,
+                TechnicalIndicatorResponse.class);
+        generate.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        Mono<TradingSignal> result = (Mono<TradingSignal>) generate.invoke(harness.service, request, indicator);
+        return result.block();
+    }
+
+    @Test
     void invalidExecutionModeIsRejectedByConfigurationValidation() throws Exception {
         Harness harness = newHarness();
         ReflectionTestUtils.setField(harness.service, "executionTradeMode", "automatic");
