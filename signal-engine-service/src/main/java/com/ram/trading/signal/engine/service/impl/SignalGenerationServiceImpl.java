@@ -110,6 +110,9 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     /** Only stocks that can be exited near the planned price (min price, min daily turnover). */
     private final com.ram.trading.signal.engine.risk.LiquidityFilter liquidityFilter;
 
+    /** Afternoon VWAP pullback in an established regime; shadow trades only, never a position. */
+    private final com.ram.trading.signal.engine.service.shadow.TrendPullbackShadowStrategy trendPullbackShadowStrategy;
+
     /** Setups scoring below this are not traded at all (0 = off). */
     @Value("${trading.quality.min-score:40}")
     private int minQualityScore = 40;
@@ -668,6 +671,18 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
 
         final MinuteCandle finalCompletedCandle =
                 completedCandle;
+
+        if (completedCandle != null) {
+            RegimeSnapshot regime = latestMarketRegime.get();
+            if (regime != null
+                    && !regime.seenAt().isBefore(LocalDateTime.now().minus(REGIME_MAX_AGE))) {
+                trendPullbackShadowStrategy.onCompletedCandle(
+                        completedCandle,
+                        tick,
+                        regime.trend(),
+                        Duration.between(regime.changedAt(), LocalDateTime.now()).toMinutes());
+            }
+        }
 
         return tradeExitService
                 .evaluateExit(tick)
