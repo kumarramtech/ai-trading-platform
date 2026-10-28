@@ -46,6 +46,17 @@ class ReplayExperimentsTest {
     }
 
     @Test
+    void flippedTwinIsTheMirrorTradeAndWinsWhereTheOriginalLoses() {
+        Result twin = ReplayExperiments.flip(buy(), 0);
+
+        assertEquals("SELL", twin.direction());
+        assertEquals(101.0, twin.stop(), 1e-6);      // same Rs 1 stop distance, other side
+        assertEquals(98.0, twin.target(), 1e-6);     // same 2R target
+        // Path: high 101.3 at minute 2 stops the short (1R loss) before the 98.5 low.
+        assertEquals(-250.0, ReplayExperiments.simulate(twin, rule("2R target (current)"), 250, charges, 0, 1e9).gross(), 1e-6);
+    }
+
+    @Test
     void largerRiskPaysASmallerShareOfRInCharges() {
         ReplayExperiments.Outcome small = ReplayExperiments.simulate(buy(), rule("1R target"), 250, charges, 0, 1e9);
         ReplayExperiments.Outcome large = ReplayExperiments.simulate(buy(), rule("1R target"), 1000, charges, 0, 1e9);

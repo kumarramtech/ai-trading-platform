@@ -225,7 +225,8 @@ public class StrategyReplayService {
 
         progress("simulated " + days + " sessions, " + results.size() + " setups; building report");
         return ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade)
-                + "\n" + ReplayExperiments.render(results, days, charges, slippagePct, maxNotional);
+                + "\n" + ReplayExperiments.render(results, days, charges, slippagePct, maxNotional)
+                + "\n" + ReplayExperiments.renderBaseline(results, charges, slippagePct, maxNotional);
     }
 
     /** The most traded stocks (20-session average turnover) priced at or above the liquidity minimum. */

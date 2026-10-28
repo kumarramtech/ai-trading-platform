@@ -117,6 +117,85 @@ final class ReplayExperiments {
         return out.toString();
     }
 
+    /**
+     * Random-entry baseline: every real setup gets a twin at the same minute, with the
+     * same stop distance and exit rule, but a coin-flip direction (seeded, repeatable)
+     * and an always-opposite twin. If our entries carry information they must beat the
+     * coin flip, and the opposite twin must do clearly worse. t is the difference of the
+     * means over its standard error (|t| < 2: no evidence of a difference).
+     */
+    static String renderBaseline(List<Result> results, IntradayChargesCalculator charges,
+                                 double slippagePct, double maxNotional) {
+        StringBuilder out = new StringBuilder();
+        out.append("RANDOM-ENTRY BASELINE (same minute, same stop distance, same exit; gross R before charges)\n");
+        out.append(String.format("  %-26s %-26s %6s %9s %9s %9s %7s %7s%n",
+                "set", "exit rule", "n", "ours", "random", "opposite", "t(rnd)", "t(opp)"));
+
+        Map<String, List<Result>> sets = new LinkedHashMap<>();
+        sets.put("LIVE_RULES all", results.stream().filter(Result::passesLiveRules).toList());
+        results.stream().map(Result::strategy).distinct().sorted().forEach(strategy ->
+                sets.put("LIVE_RULES " + strategy, results.stream()
+                        .filter(r -> r.passesLiveRules() && strategy.equals(r.strategy())).toList()));
+
+        for (Map.Entry<String, List<Result>> set : sets.entrySet()) {
+            if (set.getValue().size() < 30) {
+                continue;
+            }
+            for (Rule rule : List.of(RULES.get(0), RULES.get(4))) {
+                List<Double> ours = new ArrayList<>();
+                List<Double> random = new ArrayList<>();
+                List<Double> opposite = new ArrayList<>();
+                for (Result r : set.getValue()) {
+                    Result flipped = flip(r, slippagePct);
+                    boolean coin = (java.util.Objects.hash(r.symbol(), r.day(), r.time(), r.strategy()) & 1) == 1;
+                    Outcome o = simulate(r, rule, 250, charges, slippagePct, maxNotional);
+                    Outcome f = simulate(flipped, rule, 250, charges, slippagePct, maxNotional);
+                    if (o == null || f == null) {
+                        continue;
+                    }
+                    ours.add(o.gross() / o.risk());
+                    opposite.add(f.gross() / f.risk());
+                    random.add(coin ? f.gross() / f.risk() : o.gross() / o.risk());
+                }
+                out.append(String.format("  %-26s %-26s %6d %+8.3fR %+8.3fR %+8.3fR %7.2f %7.2f%n",
+                        set.getKey(), rule.name(), ours.size(), mean(ours), mean(random), mean(opposite),
+                        tStat(ours, random), tStat(ours, opposite)));
+            }
+        }
+        out.append("Reading: ours ~ random and |t| < 2 means the entry direction carries no information.\n");
+        return out.toString();
+    }
+
+    /** The same setup traded the other way: same reference price, stop distance and R-multiple target. */
+    static Result flip(Result r, double slippagePct) {
+        boolean buy = "BUY".equals(r.direction());
+        double slip = slippagePct / 100.0;
+        double reference = buy ? r.entry() / (1 + slip) : r.entry() / (1 - slip);
+        double perShare = Math.abs(r.entry() - r.stop());
+        double targetR = perShare > 0 ? Math.abs(r.target() - r.entry()) / perShare : 2.0;
+        double entry = buy ? reference * (1 - slip) : reference * (1 + slip);
+        double stop = buy ? entry + perShare : entry - perShare;
+        double target = buy ? entry - targetR * perShare : entry + targetR * perShare;
+        return new Result(r.day(), r.time(), r.symbol(), r.strategy(), buy ? "SELL" : "BUY",
+                r.regime(), r.relation(), r.gate(), r.exit(), r.exitTime(),
+                entry, stop, target, r.exitPrice(), r.quantity(), 0, 0, 0,
+                r.gapPct(), r.orWidthPct(), r.orRvol(), r.relStrengthPct(),
+                r.pathHigh(), r.pathLow(), r.pathClose());
+    }
+
+    private static double mean(List<Double> xs) {
+        return xs.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+    }
+
+    /** Welch t-statistic for the difference of two means. */
+    private static double tStat(List<Double> a, List<Double> b) {
+        double ma = mean(a), mb = mean(b);
+        double va = a.stream().mapToDouble(x -> (x - ma) * (x - ma)).sum() / Math.max(1, a.size() - 1);
+        double vb = b.stream().mapToDouble(x -> (x - mb) * (x - mb)).sum() / Math.max(1, b.size() - 1);
+        double se = Math.sqrt(va / Math.max(1, a.size()) + vb / Math.max(1, b.size()));
+        return se > 0 ? (ma - mb) / se : 0;
+    }
+
     static Outcome simulate(Result r, Rule rule, double risk, IntradayChargesCalculator charges,
                             double slippagePct, double maxNotional) {
         boolean buy = "BUY".equals(r.direction());
