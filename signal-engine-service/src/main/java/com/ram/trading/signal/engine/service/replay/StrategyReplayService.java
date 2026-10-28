@@ -148,13 +148,13 @@ public class StrategyReplayService {
     }
 
     /** Starts a replay in the background; false when one is already running. */
-    public synchronized boolean start(LocalDate from, LocalDate to, int universeSize) {
+    public synchronized boolean start(LocalDate from, LocalDate to, int universeSize, int universeOffset) {
         if ("RUNNING".equals(status.get().state())) {
             return false;
         }
         LocalDateTime started = LocalDateTime.now(IST);
         status.set(new Status("RUNNING", "starting", started, null, null));
-        Mono.fromCallable(() -> run(from, to, universeSize))
+        Mono.fromCallable(() -> run(from, to, universeSize, universeOffset))
                 .subscribeOn(worker)
                 .subscribe(
                         report -> {
@@ -183,16 +183,17 @@ public class StrategyReplayService {
             String regime, String relation, String gate, String exit, LocalTime exitTime,
             double entry, double stop, double target, double exitPrice, int quantity,
             double grossPnl, double charges, double netR,
-            double gapPct, double orWidthPct, double orRvol, double relStrengthPct) {
+            double gapPct, double orWidthPct, double orRvol, double relStrengthPct,
+            float[] pathHigh, float[] pathLow, float[] pathClose) {
 
         boolean passesLiveRules() {
             return "LIVE_RULES".equals(gate);
         }
     }
 
-    String run(LocalDate from, LocalDate to, int universeSize) {
-        List<String> universe = universe(to, universeSize);
-        progress("universe: " + universe.size() + " symbols");
+    String run(LocalDate from, LocalDate to, int universeSize, int universeOffset) {
+        List<String> universe = universe(to, universeSize, universeOffset);
+        progress("universe: " + universe.size() + " symbols, turnover rank " + (universeOffset + 1) + "-" + (universeOffset + universe.size()));
 
         DailyBars daily = DailyBars.load(jdbc, universe, from.minusDays(45), to.plusDays(1));
 
@@ -223,11 +224,12 @@ public class StrategyReplayService {
         }
 
         progress("simulated " + days + " sessions, " + results.size() + " setups; building report");
-        return ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade);
+        return ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade)
+                + "\n" + ReplayExperiments.render(results, days, charges, slippagePct, maxNotional);
     }
 
     /** The most traded stocks (20-session average turnover) priced at or above the liquidity minimum. */
-    private List<String> universe(LocalDate asOf, int size) {
+    private List<String> universe(LocalDate asOf, int size, int offset) {
         return jdbc.queryForList(
                 "select symbol from historical_price where interval_type = 'DAY' "
                         + "and trade_date between ? and ? and close_price >= ? "
@@ -491,6 +493,19 @@ public class StrategyReplayService {
                 break;
             }
         }
+        // The path after entry up to the square-off, for the exit experiments.
+        List<MinuteCandle> after = series.stream()
+                .filter(c -> c.getMinute().toLocalTime().isAfter(t) && c.getMinute().toLocalTime().isBefore(squareOff))
+                .toList();
+        float[] pathHigh = new float[after.size()];
+        float[] pathLow = new float[after.size()];
+        float[] pathClose = new float[after.size()];
+        for (int i = 0; i < after.size(); i++) {
+            pathHigh[i] = after.get(i).getHigh().floatValue();
+            pathLow[i] = after.get(i).getLow().floatValue();
+            pathClose[i] = after.get(i).getClose().floatValue();
+        }
+
         double exitPrice = buy ? exitRef - exitRef * slippagePct / 100.0 : exitRef + exitRef * slippagePct / 100.0;
         double gross = (buy ? exitPrice - entry : entry - exitPrice) * quantity;
         double cost = charges.roundTrip(setup.direction(), entry, exitPrice, quantity).getTotal();
@@ -510,7 +525,8 @@ public class StrategyReplayService {
         return new Result(day, t, candle.getSymbol(), setup.strategy(), setup.direction(),
                 trend == null ? "UNKNOWN" : trend.name(), relation, gate, exit, exitTime,
                 entry, stop, target, exitPrice, quantity, gross, cost,
-                (gross - cost) / riskPerTrade, gapPct, orWidthPct, orRvol, relStrength);
+                (gross - cost) / riskPerTrade, gapPct, orWidthPct, orRvol, relStrength,
+                pathHigh, pathLow, pathClose);
     }
 
     /**
