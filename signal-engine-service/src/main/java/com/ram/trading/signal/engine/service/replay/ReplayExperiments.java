@@ -50,9 +50,12 @@ final class ReplayExperiments {
 
         Map<String, List<Result>> sets = new LinkedHashMap<>();
         sets.put("LIVE_RULES, all strategies", results.stream().filter(Result::passesLiveRules).toList());
-        sets.put("LIVE_RULES, ORB", results.stream().filter(r -> r.passesLiveRules() && "ORB".equals(r.strategy())).toList());
-        sets.put("LIVE_RULES, TREND_PULLBACK", results.stream()
-                .filter(r -> r.passesLiveRules() && "TREND_PULLBACK".equals(r.strategy())).toList());
+        results.stream().map(Result::strategy).distinct().sorted().forEach(strategy ->
+                sets.put("LIVE_RULES, " + strategy, results.stream()
+                        .filter(r -> r.passesLiveRules() && strategy.equals(r.strategy())).toList()));
+        sets.put("MEAN_REVERSION in SIDEWAYS", results.stream()
+                .filter(r -> r.passesLiveRules() && ResearchStrategies.MEAN_REVERSION.equals(r.strategy())
+                        && "SIDEWAYS".equals(r.regime())).toList());
         sets.put("LIVE_RULES, in play (OR rvol >= 20%)", results.stream()
                 .filter(r -> r.passesLiveRules() && r.orRvol() >= 0.20).toList());
         sets.put("ALL ORB setups (stop-distance rules off)", results.stream()

@@ -369,6 +369,16 @@ public class StrategyReplayService {
                     }
                 }
 
+                // Research strategies: one gap trade per symbol (09:30), one fade per symbol and side.
+                ResearchStrategies.gap(candle, range, daily.statsBefore(symbol, day), t)
+                        .ifPresent(s -> setups.add(new Setup(s.getStrategy(), s.getSignal(), null, s)));
+                if (!t.isBefore(LocalTime.of(10, 0))) {
+                    List<MinuteCandle> soFar = store.getToday(symbol);
+                    ResearchStrategies.meanReversion(candle, soFar, t)
+                            .filter(s -> processed.add(symbol + "|MR|" + s.getSignal()))
+                            .ifPresent(s -> setups.add(new Setup(s.getStrategy(), s.getSignal(), null, s)));
+                }
+
                 // One pullback per symbol and regime spell, like the live one-shadow-per-day rule.
                 RegimeTimeline.Point point = regime.at(t);
                 String pullbackKey = point == null ? null : symbol + "|" + point.since();
@@ -450,6 +460,8 @@ public class StrategyReplayService {
 
         String gate = planGate != null ? planGate
                 : !liquid ? "ILLIQUID"
+                // Fades and gap trades are judged by regime in the report, not blocked by it.
+                : ResearchStrategies.isRegimeFree(setup.strategy()) ? "LIVE_RULES"
                 : "COUNTER".equals(relation) ? "REGIME_GUARD"
                 : freshFlip ? "FRESH_REGIME_FLIP"
                 : "LIVE_RULES";

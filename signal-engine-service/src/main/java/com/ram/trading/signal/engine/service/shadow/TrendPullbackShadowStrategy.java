@@ -209,7 +209,7 @@ public class TrendPullbackShadowStrategy {
     }
 
     /** Volume-weighted typical price of today's candles; null without volume. */
-    static Double vwap(List<MinuteCandle> candles) {
+    public static Double vwap(List<MinuteCandle> candles) {
         double value = 0.0;
         double volume = 0.0;
         for (MinuteCandle c : candles) {
