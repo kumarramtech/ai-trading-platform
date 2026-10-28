@@ -120,7 +120,7 @@ public class OpeningRangeService {
 
             if (incompleteWarned.add(symbol + "|" + today)) {
 
-                log.warn(
+                log.debug(
                         "OPENING RANGE INCOMPLETE | " +
                                 "Symbol={} | Expected={} | Actual={}",
                         symbol,

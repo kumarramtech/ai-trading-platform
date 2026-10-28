@@ -10,6 +10,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.function.Consumer;
+
 /**
  * Owns the stop-loss and target of every entry.
  *
@@ -85,6 +87,21 @@ public class ExecutionPlanCalculator {
      *         breached); true otherwise.
      */
     public boolean apply(TradingSignal signal, SignalGenerationRequest request) {
+        return apply(signal, request, null);
+    }
+
+    /** The structural plan a stop-distance rule refused, so it can be followed as a shadow trade. */
+    public record RefusedPlan(String reason, double stop, double target) {
+    }
+
+    /**
+     * As {@link #apply(TradingSignal, SignalGenerationRequest)}; when the setup
+     * is skipped because its structural stop is too wide or too tight,
+     * {@code onRefused} receives that unclamped stop and its rewardRisk target.
+     * The signal itself is never given the refused prices.
+     */
+    public boolean apply(TradingSignal signal, SignalGenerationRequest request,
+                         Consumer<RefusedPlan> onRefused) {
 
         if (signal == null || signal.getSignal() == null) {
             return true;
@@ -137,10 +154,12 @@ public class ExecutionPlanCalculator {
                 log.warn("EXECUTION PLAN REJECTED | Sweep stop outside allowed risk | Symbol={} | Signal={} | Entry={} | SweepExtreme={} | RiskPct={} | MaxRiskPct={}",
                         signal.getSymbol(), signal.getSignal(), entry, sweepExtreme,
                         round2(rawRisk / entry * 100.0), maxRiskPct);
+                refused(onRefused, "STOP_TOO_WIDE", buy, entry, rawRisk);
                 return false;
             }
 
             if (tooTight(signal, entry, rawRisk, "SWEEP_EXTREME")) {
+                refused(onRefused, "STOP_TOO_TIGHT", buy, entry, rawRisk);
                 return false;
             }
 
@@ -163,6 +182,7 @@ public class ExecutionPlanCalculator {
 
                 if (rawRisk > 0.0) {
                     if (tooTight(signal, entry, rawRisk, "OPENING_RANGE")) {
+                        refused(onRefused, "STOP_TOO_TIGHT", buy, entry, rawRisk);
                         return false;
                     }
                     /*
@@ -175,9 +195,10 @@ public class ExecutionPlanCalculator {
                         log.warn("EXECUTION PLAN REJECTED | Opening-range stop outside allowed risk | Symbol={} | Signal={} | Entry={} | Level={} | RiskPct={} | MaxRiskPct={}",
                                 signal.getSymbol(), signal.getSignal(), entry, level,
                                 round2(rawRisk / entry * 100.0), maxRiskPct);
+                        refused(onRefused, "STOP_TOO_WIDE", buy, entry, rawRisk);
                         return false;
                     }
-                    risk = Math.min(Math.max(rawRisk, minRisk), maxRisk);
+                    risk =Math.min(Math.max(rawRisk, minRisk), maxRisk);
                     source = (risk == rawRisk) ? "OPENING_RANGE" : "OPENING_RANGE_CLAMPED";
                 }
             }
@@ -227,6 +248,21 @@ public class ExecutionPlanCalculator {
                 round2(rawRisk / entry * 100.0), minStopPct);
 
         return true;
+    }
+
+    private void refused(Consumer<RefusedPlan> onRefused,
+                         String reason, boolean buy, double entry, double rawRisk) {
+        if (onRefused == null || rawRisk <= 0.0) {
+            return;
+        }
+        String side = buy ? SignalType.BUY.name() : SignalType.SELL.name();
+        double stop = PriceTicks.alignStop(buy ? entry - rawRisk : entry + rawRisk, side, priceTickSize);
+        double target = PriceTicks.alignTarget(buy
+                ? entry + rewardRisk * rawRisk
+                : entry - rewardRisk * rawRisk, side, priceTickSize);
+        if (stop > 0.0 && target > 0.0) {
+            onRefused.accept(new RefusedPlan(reason, stop, target));
+        }
     }
 
     private static double round2(double value) {

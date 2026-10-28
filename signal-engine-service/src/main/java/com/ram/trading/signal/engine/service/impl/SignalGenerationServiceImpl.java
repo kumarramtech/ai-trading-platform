@@ -947,7 +947,13 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                 .qualityScore(qualityScore)
                 .build();
 
-        if (!executionPlanCalculator.apply(plan, request)) {
+        if (!executionPlanCalculator.apply(plan, request, refused -> {
+            // Followed with the refused structural stop, so the report shows
+            // whether the stop-distance rules save or cost money.
+            plan.setStopLoss(refused.stop());
+            plan.setTargetPrice(refused.target());
+            shadowTradeService.recordRejectedSignal(plan, refused.reason());
+        })) {
             log.info("PRE-AI CHECK | Execution plan rejected, AI not called | Symbol={} | Strategy={} | Direction={}",
                     request.getSymbol(), request.getSetupStrategy(), direction);
             return hold;
@@ -1212,6 +1218,15 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                 "AI Trade Not Allowed. Returning HOLD | Symbol={} | Recommendation={}",
                                 request.getSymbol(),
                                 recommendation);
+
+                        // 2026-10-28: all 7 AI calls ended here and none was shadowed.
+                        SignalType technicalSignal =
+                                pipelineResult.getTechnicalDecision() != null
+                                        ? pipelineResult.getTechnicalDecision().getSignal()
+                                        : null;
+                        if (technicalSignal == SignalType.BUY || technicalSignal == SignalType.SELL) {
+                            recordAiVeto(request, technicalSignal);
+                        }
 
                         return Mono.just(
                                 TradingSignal.builder()

@@ -128,13 +128,19 @@ public class AIServiceClient {
                                     - start;
 
                     log.info(
-                            "AI Decision Received for {} in {} ms : Decision={}, Confidence={}",
+                            "AI Decision Received for {} in {} ms : Recommendation={}, TradeAllowed={}, Confidence={}, Reasoning={}",
                             symbol,
                             elapsed,
-                            response.getDecision(),
+                            response.getDecision() != null
+                                    ? response.getDecision().getRecommendation()
+                                    : null,
+                            response.getDecision() != null
+                                    ? response.getDecision().getTradeAllowed()
+                                    : null,
                             response.getDecision() != null
                                     ? response.getDecision().getConfidence()
-                                    : null);
+                                    : null,
+                            abbreviate(response.getAiReasoning(), 400));
                 })
 
                 .doOnError(error -> {
@@ -149,5 +155,13 @@ public class AIServiceClient {
                             elapsed,
                             error);
                 });
+    }
+
+    private static String abbreviate(String text, int max) {
+        if (text == null) {
+            return null;
+        }
+        String oneLine = text.replaceAll("\\s+", " ").trim();
+        return oneLine.length() <= max ? oneLine : oneLine.substring(0, max) + "...";
     }
 }

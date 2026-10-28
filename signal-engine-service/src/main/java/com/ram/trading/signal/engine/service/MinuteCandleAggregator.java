@@ -66,7 +66,7 @@ public class MinuteCandleAggregator {
 
         LocalDateTime latestStoredMinute = minuteCandleStore.getLatestMinute(symbol);
         if (latestStoredMinute != null && minute.isBefore(latestStoredMinute)) {
-            log.warn(
+            log.debug(
                     "LATE TICK IGNORED | Symbol={} | TickMinute={} | LatestStoredMinute={}",
                     symbol, minute, latestStoredMinute);
             return null;

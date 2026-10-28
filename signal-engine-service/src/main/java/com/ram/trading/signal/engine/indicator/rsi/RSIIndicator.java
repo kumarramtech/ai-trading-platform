@@ -28,8 +28,8 @@ public class RSIIndicator implements Indicator {
     @Override
     public IndicatorResult calculate(List<Candle> candles,int period) {
 
-        log.info("========== RSI DEBUG ==========");
-        log.info("Total Candles : {}", candles.size());
+        log.debug("========== RSI DEBUG ==========");
+        log.debug("Total Candles : {}", candles.size());
 
         IndicatorValidationUtil.validate(candles, period);
 

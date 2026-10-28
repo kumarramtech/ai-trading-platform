@@ -85,8 +85,8 @@ public class RSICalculator {
                                 SCALE,
                                 RoundingMode.HALF_UP));
 
-        log.info("RS : {}", rs);
-        log.info("RSI : {}", rsi);
+        log.debug("RS : {}", rs);
+        log.debug("RSI : {}", rsi);
 
         return IndicatorMathUtil.round(rsi);
     }
