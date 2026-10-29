@@ -42,6 +42,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.replay.MomentumSignalService momentumSignalService;
 
+    private final com.ram.trading.signal.engine.service.replay.MomentumPaperService momentumPaperService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -168,6 +170,21 @@ public class AnalyticsController {
                 .map(s -> ResponseEntity.ok(momentumSignalService.toText(s)))
                 .orElseGet(() -> ResponseEntity.status(409)
                         .body("This month's list is already published; force=true replaces it."));
+    }
+
+    /** Paper momentum portfolio: return since the start vs NIFTY, cash, holdings. */
+    @GetMapping(value = "/momentum-paper", produces = "text/plain")
+    public String momentumPaperReport() {
+        return momentumPaperService.report();
+    }
+
+    /** Trades this month's published list on paper now (once per month). */
+    @PostMapping(value = "/momentum-paper/rebalance", produces = "text/plain")
+    public ResponseEntity<String> rebalanceMomentumPaper() {
+        return momentumPaperService.rebalance()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(409)
+                        .body("No list published this month yet, or this month is already traded."));
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */

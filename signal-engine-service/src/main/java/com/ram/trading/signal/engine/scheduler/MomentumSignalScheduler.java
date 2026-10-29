@@ -24,6 +24,8 @@ public class MomentumSignalScheduler {
 
     private final MomentumSignalService momentumSignalService;
 
+    private final com.ram.trading.signal.engine.service.replay.MomentumPaperService momentumPaperService;
+
     private final NotificationClient notificationClient;
 
     @Value("${trading.momentum.enabled:true}")
@@ -46,6 +48,32 @@ public class MomentumSignalScheduler {
                             .build())
                     .onErrorResume(e -> reactor.core.publisher.Mono.empty())
                     .subscribe();
+        }
+    }
+
+    /** Paper fills for the month's list shortly after the open (11:05 after a 10:50 list). */
+    @Scheduled(cron = "${trading.momentum.paper.rebalance-cron:0 20 9,11 1-7 * MON-FRI}", zone = "Asia/Kolkata")
+    public void rebalancePaperPortfolio() {
+        if (!enabled) {
+            return;
+        }
+        try {
+            momentumPaperService.rebalance();
+        } catch (Exception ex) {
+            log.error("Paper momentum rebalance failed", ex);
+        }
+    }
+
+    /** Daily paper equity at the close, for the return and drawdown against NIFTY. */
+    @Scheduled(cron = "${trading.momentum.paper.snapshot-cron:0 40 15 * * MON-FRI}", zone = "Asia/Kolkata")
+    public void snapshotPaperPortfolio() {
+        if (!enabled) {
+            return;
+        }
+        try {
+            momentumPaperService.snapshot();
+        } catch (Exception ex) {
+            log.error("Paper momentum snapshot failed", ex);
         }
     }
 }

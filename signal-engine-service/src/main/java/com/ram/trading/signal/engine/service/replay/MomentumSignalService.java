@@ -87,9 +87,9 @@ public class MomentumSignalService {
     @PostConstruct
     void createTable() {
         jdbc.execute("create table if not exists momentum_signal ("
-                + "id bigint auto_increment primary key, month varchar(7) not null, signal_day date not null, "
+                + "id bigint auto_increment primary key, list_month varchar(7) not null, signal_day date not null, "
                 + "symbol varchar(32) not null, rank_no int, score double, close_price double, quantity int, "
-                + "amount double, created_at timestamp default current_timestamp, index idx_momentum_month (month))");
+                + "amount double, created_at timestamp default current_timestamp, index idx_momentum_month (list_month))");
     }
 
     public record Pick(int rank, String symbol, double score, double close, int quantity, double amount) {
@@ -102,7 +102,7 @@ public class MomentumSignalService {
 
     /** True once this month's list has been stored. */
     public boolean published(YearMonth month) {
-        Integer n = jdbc.queryForObject("select count(*) from momentum_signal where month = ?", Integer.class,
+        Integer n = jdbc.queryForObject("select count(*) from momentum_signal where list_month = ?", Integer.class,
                 month.toString());
         return n != null && n > 0;
     }
@@ -121,13 +121,13 @@ public class MomentumSignalService {
             return java.util.Optional.empty();
         }
         MonthlySignal signal = compute(today, previous(month));
-        jdbc.update("delete from momentum_signal where month = ?", month.toString());
+        jdbc.update("delete from momentum_signal where list_month = ?", month.toString());
         if (signal.target().isEmpty()) {
-            jdbc.update("insert into momentum_signal (month, signal_day, symbol) values (?, ?, ?)",
+            jdbc.update("insert into momentum_signal (list_month, signal_day, symbol) values (?, ?, ?)",
                     month.toString(), signal.signalDay(), CASH);
         }
         for (Pick p : signal.target()) {
-            jdbc.update("insert into momentum_signal (month, signal_day, symbol, rank_no, score, close_price, quantity, amount) "
+            jdbc.update("insert into momentum_signal (list_month, signal_day, symbol, rank_no, score, close_price, quantity, amount) "
                             + "values (?, ?, ?, ?, ?, ?, ?, ?)",
                     month.toString(), signal.signalDay(), p.symbol(), p.rank(), p.score(), p.close(), p.quantity(), p.amount());
         }
@@ -146,8 +146,8 @@ public class MomentumSignalService {
 
     /** Symbols of the last stored month before {@code month} (empty after a cash month). */
     List<String> previous(YearMonth month) {
-        return jdbc.queryForList("select symbol from momentum_signal where symbol <> ? and month = "
-                        + "(select max(month) from momentum_signal where month < ?) order by rank_no",
+        return jdbc.queryForList("select symbol from momentum_signal where symbol <> ? and list_month = "
+                        + "(select max(list_month) from momentum_signal where list_month < ?) order by rank_no",
                 String.class, CASH, month.toString());
     }
 
