@@ -16,11 +16,14 @@ import java.util.Map;
  */
 public final class DailyBars {
 
-    public record Bar(LocalDate date, double close, long volume) {
+    public record Bar(LocalDate date, double high, double low, double close, long volume) {
     }
 
-    /** As of a trading day: only sessions strictly before it. */
-    public record Stats(double prevClose, double avgVolume20, double avgTurnover20) {
+    /** As of a trading day: only sessions strictly before it. atr14 is NaN with too few sessions. */
+    public record Stats(double prevClose, double avgVolume20, double avgTurnover20, double atr14) {
+        public Stats(double prevClose, double avgVolume20, double avgTurnover20) {
+            this(prevClose, avgVolume20, avgTurnover20, Double.NaN);
+        }
     }
 
     private final Map<String, List<Bar>> bars;
@@ -33,7 +36,7 @@ public final class DailyBars {
     public static DailyBars load(JdbcTemplate jdbc, Collection<String> symbols, LocalDate from, LocalDate toExclusive) {
         Map<String, List<Bar>> bars = new HashMap<>();
         StringBuilder sql = new StringBuilder(
-                "select symbol, trade_date, close_price, volume from historical_price "
+                "select symbol, trade_date, high_price, low_price, close_price, volume from historical_price "
                         + "where interval_type = 'DAY' and trade_date >= ? and trade_date < ?");
         List<Object> args = new ArrayList<>(List.of(from, toExclusive));
         if (symbols != null) {
@@ -49,9 +52,12 @@ public final class DailyBars {
             if (rs.getBigDecimal("close_price") == null) {
                 return;
             }
+            double close = rs.getBigDecimal("close_price").doubleValue();
             bars.computeIfAbsent(rs.getString("symbol"), k -> new ArrayList<>())
                     .add(new Bar(rs.getDate("trade_date").toLocalDate(),
-                            rs.getBigDecimal("close_price").doubleValue(),
+                            rs.getBigDecimal("high_price") == null ? close : rs.getBigDecimal("high_price").doubleValue(),
+                            rs.getBigDecimal("low_price") == null ? close : rs.getBigDecimal("low_price").doubleValue(),
+                            close,
                             rs.getLong("volume")));
         }, args.toArray());
         return new DailyBars(bars);
@@ -78,6 +84,16 @@ public final class DailyBars {
             turnover += list.get(i).volume() * list.get(i).close();
         }
         int n = end - start;
-        return new Stats(list.get(end - 1).close(), volume / n, turnover / n);
+        double atr = Double.NaN;
+        if (end >= 15) {
+            double sum = 0;
+            for (int i = end - 14; i < end; i++) {
+                Bar b = list.get(i);
+                double prev = list.get(i - 1).close();
+                sum += Math.max(b.high() - b.low(), Math.max(Math.abs(b.high() - prev), Math.abs(b.low() - prev)));
+            }
+            atr = sum / 14;
+        }
+        return new Stats(list.get(end - 1).close(), volume / n, turnover / n, atr);
     }
 }

@@ -94,6 +94,17 @@ final class ReplayReport {
             section(out, "  By direction and index", gaps, r -> r.strategy() + " " + r.direction() + " " + r.relation(), risk);
         }
 
+        List<Result> inPlay = all.stream().filter(r -> r.strategy().startsWith("INPLAY_")).toList();
+        if (!inPlay.isEmpty()) {
+            out.append("IN-PLAY 5-MIN ORB (top N by first-5-min volume / 20-day avg daily volume, stop = ATR fraction,\n")
+                    .append("no target, out at square-off; ALL5 = same trade in every liquid stock)\n");
+            section(out, "  By variant", inPlay, Result::strategy, risk);
+            section(out, "  By variant and direction", inPlay, r -> r.strategy() + " " + r.direction(), risk);
+            section(out, "  By variant and exit", inPlay, r -> r.strategy() + " " + r.exit(), risk);
+            section(out, "  By first-5-min volume (share of a normal day)", inPlay, r -> r.strategy() + " "
+                    + bucket(r.orRvol(), new double[]{0.05, 0.10, 0.20}, new String[]{"<5%", "5-10%", "10-20%", ">=20%"}), risk);
+        }
+
         out.append("ALL SETUPS (every filter off) BY STRATEGY\n");
         section(out, "", all, Result::strategy, risk);
 

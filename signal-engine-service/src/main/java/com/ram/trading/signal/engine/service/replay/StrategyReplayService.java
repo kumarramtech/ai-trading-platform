@@ -410,7 +410,10 @@ public class StrategyReplayService {
                 }
             }
         }
-        return enforceOnePositionPerSymbol(results);
+        List<Result> kept = enforceOnePositionPerSymbol(results);
+        kept.addAll(InPlayOrb.replayDay(day, daySeries, daily, minPrice, minTurnoverCrore, riskPerTrade,
+                maxNotional, slippagePct, squareOff, charges));
+        return kept;
     }
 
     private record Setup(String strategy, String direction, Double invalidationLevel, TradingSignal plannedSignal) {
