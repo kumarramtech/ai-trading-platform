@@ -127,7 +127,9 @@ public class AnalyticsController {
     @PostMapping("/swing-backtest")
     public ResponseEntity<String> startSwingBacktest(
             @RequestParam(required = false, defaultValue = "3") int years,
-            @RequestParam(required = false, defaultValue = "300") int universe) {
+            @RequestParam(required = false, defaultValue = "300") int universe,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(
+                    iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
         LocalTime t = now.toLocalTime();
         if (now.getDayOfWeek().getValue() <= 5
@@ -137,8 +139,10 @@ public class AnalyticsController {
         int y = Math.max(1, Math.min(years, 5));
         // Up to every listed stock: liquidity is then judged on each day (point in time), not by today's turnover.
         int size = Math.max(20, Math.min(universe, 4000));
-        return swingBacktestService.start(y, size)
-                ? ResponseEntity.accepted().body("Swing backtest started: " + y + " years, top " + size
+        // An earlier end date tests another period (out of sample); default yesterday.
+        java.time.LocalDate end = to != null && to.isBefore(now.toLocalDate()) ? to : now.toLocalDate().minusDays(1);
+        return swingBacktestService.start(y, size, end)
+                ? ResponseEntity.accepted().body("Swing backtest started: " + y + " years to " + end + ", top " + size
                 + " stocks. GET /analytics/swing-backtest for the report.")
                 : ResponseEntity.status(409).body("A swing backtest is already running.");
     }

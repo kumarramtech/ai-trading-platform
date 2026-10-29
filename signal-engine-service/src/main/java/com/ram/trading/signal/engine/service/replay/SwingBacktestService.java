@@ -123,12 +123,12 @@ public class SwingBacktestService {
         return status.get();
     }
 
-    public synchronized boolean start(int years, int universeSize) {
+    public synchronized boolean start(int years, int universeSize, LocalDate to) {
         if (status.get().startsWith("RUNNING")) {
             return false;
         }
         status.set("RUNNING | starting " + LocalDateTime.now(IST));
-        Mono.fromCallable(() -> run(years, universeSize))
+        Mono.fromCallable(() -> run(years, universeSize, to))
                 .subscribeOn(worker)
                 .subscribe(report -> {
                     status.set(report);
@@ -155,15 +155,15 @@ public class SwingBacktestService {
         }
     }
 
-    String run(int years, int universeSize) {
+    String run(int years, int universeSize, LocalDate to) {
         liquidByDay.clear();
-        LocalDate to = LocalDate.now(IST).minusDays(1);
         LocalDate from = to.minusYears(years);
+        // Symbols listed today (an older period also misses names delisted since); liquidity is then point in time.
         List<String> universe = jdbc.queryForList(
                 "select symbol from historical_price where interval_type = 'DAY' and trade_date >= ? "
                         + "group by symbol having count(*) >= 15 "
                         + "order by avg(close_price * volume) desc limit ?",
-                String.class, to.minusDays(30), universeSize);
+                String.class, LocalDate.now(IST).minusDays(30), universeSize);
         status.set("RUNNING | fetching " + universe.size() + " symbols, " + from + " .. " + to);
 
         Map<String, Series> data = new ConcurrentHashMap<>();
