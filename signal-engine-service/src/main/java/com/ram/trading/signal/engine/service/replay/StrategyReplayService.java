@@ -198,6 +198,7 @@ public class StrategyReplayService {
         DailyBars daily = DailyBars.load(jdbc, universe, from.minusDays(45), to.plusDays(1));
 
         List<Result> results = new ArrayList<>();
+        List<IntradaySignalStudy.Trade> study = new ArrayList<>();
         int days = 0;
         for (LocalDate chunkStart = from; !chunkStart.isAfter(to); chunkStart = chunkStart.plusDays(CHUNK_CALENDAR_DAYS)) {
             LocalDate chunkEnd = chunkStart.plusDays(CHUNK_CALENDAR_DAYS - 1);
@@ -219,12 +220,22 @@ public class StrategyReplayService {
                     continue;
                 }
                 results.addAll(replayDay(day, candles, nifty.get(day), bank.get(day), daily));
+                Map<String, List<MinuteCandle>> daySeries = new HashMap<>();
+                candles.forEach((symbol, byDay) -> {
+                    List<MinuteCandle> list = byDay.get(day);
+                    if (list != null && !list.isEmpty()) {
+                        daySeries.put(symbol, list);
+                    }
+                });
+                study.addAll(IntradaySignalStudy.replayDay(day, daySeries, nifty.get(day), daily,
+                        minPrice, minTurnoverCrore, slippagePct, squareOff, charges));
                 days++;
             }
         }
 
         progress("simulated " + days + " sessions, " + results.size() + " setups; building report");
-        return ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade)
+        return IntradaySignalStudy.render(study, slippagePct, charges)
+                + "\n" + ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade)
                 + "\n" + ReplayExperiments.render(results, days, charges, slippagePct, maxNotional)
                 + "\n" + ReplayExperiments.renderBaseline(results, charges, slippagePct, maxNotional);
     }
