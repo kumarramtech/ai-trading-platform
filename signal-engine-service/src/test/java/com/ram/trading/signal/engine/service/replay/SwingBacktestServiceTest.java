@@ -52,6 +52,34 @@ class SwingBacktestServiceTest {
         assertEquals(free.lastEntry().getValue(), costly.lastEntry().getValue(), 1e-12);
     }
 
+    @Test
+    void marketFilterHoldsCashEarningTheYieldWhileTheIndexIsBelowItsAverage() {
+        int n = 400;
+        LocalDate[] d = new LocalDate[n];
+        double[] c = new double[n], v = new double[n];
+        LocalDate day = LocalDate.of(2025, 1, 1);
+        for (int i = 0; i < n; i++) {
+            d[i] = day.plusDays(i);
+            c[i] = i < 250 ? 100 + i * 0.2 : 150 - (i - 250) * 1.0;   // up, then a bear market
+        }
+        SwingBacktestService.Series index = new SwingBacktestService.Series("NIFTY", d, c, c, c, c, v);
+        SwingBacktestService.Series up = trend("UP", d, 0.002);
+        SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
+        SwingBacktestService.PortfolioRule rule =
+                new SwingBacktestService.PortfolioRule("f", 1, true, 126, 21, false, 0, false, 200, 6.5);
+
+        var filtered = svc.momentumPortfolio(Map.of("UP", up), d, rule, index);
+
+        assertTrue(SwingBacktestService.aboveAverage(index, d[249], 200));
+        assertFalse(SwingBacktestService.aboveAverage(index, d[300], 200));
+        // Invested while NIFTY is above its 200-day average: UP's monthly gain.
+        assertTrue(filtered.firstEntry().getValue() > 0.03, "invested: " + filtered);
+        // In the bear market it holds cash: one month of 6.5% a year, nothing more.
+        double last = filtered.lastEntry().getValue();
+        assertTrue(last > 0.004 && last < 0.007, "cash month earns ~0.55%: " + filtered);
+        assertEquals(5, SwingBacktestService.since(index, d[395]).size());
+    }
+
     private static SwingBacktestService.Series trend(String symbol, LocalDate[] d, double dailyChange) {
         int n = d.length;
         double[] o = new double[n], h = new double[n], l = new double[n], c = new double[n], v = new double[n];

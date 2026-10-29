@@ -169,11 +169,14 @@ public class SwingBacktestService {
         Map<String, Series> data = new ConcurrentHashMap<>();
         List<String> symbols = new ArrayList<>(universe);
         symbols.add("NIFTY");
+        // NIFTY a year earlier, so its 200-day average (the market filter) is known from the first session.
+        LocalDate niftyFrom = from.minusYears(1);
         Flux.fromIterable(symbols)
                 .delayElements(Duration.ofMillis(1000L / Math.max(1, requestsPerSecond)))
                 .flatMap(symbol -> stockService.get()
                         .uri(b -> b.path("/api/v1/stocks/{symbol}/history")
-                                .queryParam("interval", "day").queryParam("from", from).queryParam("to", to)
+                                .queryParam("interval", "day")
+                                .queryParam("from", "NIFTY".equals(symbol) ? niftyFrom : from).queryParam("to", to)
                                 .build(symbol))
                         .retrieve().bodyToMono(HistoricalCandleResponse.class)
                         .timeout(Duration.ofSeconds(30))
@@ -183,10 +186,11 @@ public class SwingBacktestService {
                 .doOnNext(s -> data.put(s.symbol(), s))
                 .blockLast(Duration.ofMinutes(30));
 
-        Series nifty = data.remove("NIFTY");
-        if (nifty == null) {
+        Series niftyFull = data.remove("NIFTY");
+        if (niftyFull == null) {
             throw new IllegalStateException("No NIFTY daily history");
         }
+        Series nifty = since(niftyFull, from);
         status.set("RUNNING | simulating " + data.size() + " symbols over " + nifty.size() + " sessions");
 
         StringBuilder out = new StringBuilder();
@@ -208,6 +212,8 @@ public class SwingBacktestService {
         out.append(renderRotation(rotation(data, calendar), calendar.length));
 
         out.append("MOMENTUM PORTFOLIOS (equal weight, point-in-time top-liquidity universe; 6m = 126 sessions, skip 1m = 21)\n");
+        out.append("  market filter: at each rebalance, NIFTY's previous close below its N-day average = sell all, hold cash;"
+                + " idle cash earns the liquid-fund yield shown (its own charges ignored)\n");
         for (PortfolioRule rule : List.of(
                 new PortfolioRule("top 30 monthly, 6m-1m vol-adj, no costs", 30, true, 126, 21, true, 0, false),
                 new PortfolioRule("top 30 monthly, 6m-1m vol-adj, Rs 0 brokerage", 30, true, 126, 21, true, 0, true),
@@ -215,12 +221,40 @@ public class SwingBacktestService {
                 new PortfolioRule("top 20 monthly, 6m-1m vol-adj, Rs 0 brokerage", 20, true, 126, 21, true, 0, true),
                 new PortfolioRule("top 10 monthly, 6m-1m vol-adj, Rs 0 brokerage", 10, true, 126, 21, true, 0, true),
                 new PortfolioRule("top 30 monthly, 12m-1m vol-adj, Rs 0 brokerage", 30, true, 252, 21, true, 0, true),
-                new PortfolioRule("top 30 monthly, 6m-1m raw return, Rs 0 brokerage", 30, true, 126, 21, false, 0, true))) {
-            out.append(renderPortfolio(rule, momentumPortfolio(data, calendar, rule), calendar, nifty.close()));
+                new PortfolioRule("top 30 monthly, 6m-1m raw return, Rs 0 brokerage", 30, true, 126, 21, false, 0, true),
+                new PortfolioRule("top 30 + NIFTY>200DMA, cash 0%, Rs 0", 30, true, 126, 21, true, 0, true, 200, 0),
+                new PortfolioRule("top 30 + NIFTY>200DMA, cash 6.5%, Rs 0", 30, true, 126, 21, true, 0, true, 200, 6.5),
+                new PortfolioRule("top 20 + NIFTY>200DMA, cash 6.5%, Rs 0", 20, true, 126, 21, true, 0, true, 200, 6.5),
+                new PortfolioRule("top 30 + NIFTY>100DMA, cash 6.5%, Rs 0", 30, true, 126, 21, true, 0, true, 100, 6.5),
+                new PortfolioRule("top 30 + NIFTY>200DMA, cash 6.5%, Rs 20", 30, true, 126, 21, true, 20, true, 200, 6.5),
+                new PortfolioRule("top 20 + NIFTY>200DMA, cash 6.5%, Rs 20", 20, true, 126, 21, true, 20, true, 200, 6.5))) {
+            out.append(renderPortfolio(rule, momentumPortfolio(data, calendar, rule, niftyFull), calendar, nifty.close()));
         }
         out.append("\n");
         out.append("Go-live bar for swing: avg >= +0.30R net, PF >= 1.5, max DD <= 15% of capital, beats NIFTY.\n");
         return out.toString();
+    }
+
+    /** The part of a series from {@code from} on. */
+    static Series since(Series s, LocalDate from) {
+        int k = 0;
+        while (k < s.size() && s.date()[k].isBefore(from)) {
+            k++;
+        }
+        int n = s.size();
+        return new Series(s.symbol(), java.util.Arrays.copyOfRange(s.date(), k, n),
+                java.util.Arrays.copyOfRange(s.open(), k, n), java.util.Arrays.copyOfRange(s.high(), k, n),
+                java.util.Arrays.copyOfRange(s.low(), k, n), java.util.Arrays.copyOfRange(s.close(), k, n),
+                java.util.Arrays.copyOfRange(s.volume(), k, n));
+    }
+
+    /** Index close above its {@code n}-day average on {@code day}; true while that is not known yet. */
+    static boolean aboveAverage(Series index, LocalDate day, int n) {
+        int i = index.indexOf(day);
+        if (i < n - 1) {
+            return true;
+        }
+        return index.close()[i] > sma(index.close(), i, n);
     }
 
     private static Series toSeries(String symbol, List<Candle> candles) {
@@ -547,10 +581,21 @@ public class SwingBacktestService {
         return out.append("\n\n").toString();
     }
 
-    /** A momentum portfolio: how many stocks, how often, how ranked, at what costs. */
+    /**
+     * A momentum portfolio: how many stocks, how often, how ranked, at what costs.
+     * {@code regimeSma} > 0 holds cash while NIFTY is below that average (checked at
+     * each rebalance); idle cash earns {@code cashYieldPct} a year.
+     */
     record PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
-                         double brokerage, boolean costs) {
+                         double brokerage, boolean costs, int regimeSma, double cashYieldPct) {
+        PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
+                      double brokerage, boolean costs) {
+            this(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, 0, 0);
+        }
     }
+
+    /** Periods spent fully in cash by the market filter, per rule name (for the report). */
+    private final Map<String, Integer> cashPeriods = new ConcurrentHashMap<>();
 
     /**
      * Momentum portfolio held in equal weight and rebalanced on the first session of
@@ -562,6 +607,11 @@ public class SwingBacktestService {
      * Returns each period's net return keyed by its first session.
      */
     TreeMap<LocalDate, Double> momentumPortfolio(Map<String, Series> data, LocalDate[] calendar, PortfolioRule rule) {
+        return momentumPortfolio(data, calendar, rule, null);
+    }
+
+    TreeMap<LocalDate, Double> momentumPortfolio(Map<String, Series> data, LocalDate[] calendar, PortfolioRule rule,
+                                                 Series index) {
         int warmup = rule.lookback() + 2;
         List<Integer> rebalanceDays = new ArrayList<>();
         for (int d = warmup; d < calendar.length; d++) {
@@ -575,11 +625,14 @@ public class SwingBacktestService {
         }
         TreeMap<LocalDate, Double> periods = new TreeMap<>();
         double equity = capital;
+        int inCash = 0;
         List<String> held = new ArrayList<>();
         for (int k = 0; k + 1 < rebalanceDays.size(); k++) {
             int r = rebalanceDays.get(k);
             int r2 = rebalanceDays.get(k + 1);
             LocalDate signalDay = calendar[r - 1];
+            boolean riskOn = rule.regimeSma() <= 0 || index == null
+                    || aboveAverage(index, signalDay, rule.regimeSma());
 
             List<Map.Entry<String, Double>> ranked = new ArrayList<>();
             for (Series s : data.values()) {
@@ -607,7 +660,12 @@ public class SwingBacktestService {
                 ranked.add(Map.entry(s.symbol(), score));
             }
             ranked.sort(Map.Entry.<String, Double>comparingByValue().reversed());
-            List<String> target = ranked.stream().limit(rule.top()).map(Map.Entry::getKey).toList();
+            List<String> target = riskOn
+                    ? ranked.stream().limit(rule.top()).map(Map.Entry::getKey).toList()
+                    : List.of();
+            if (!riskOn) {
+                inCash++;
+            }
 
             double start = equity;
             double slot = equity / rule.top();
@@ -633,10 +691,13 @@ public class SwingBacktestService {
                 invested += slot;
                 value += a < 0 || b < 0 ? slot : slot * s.open()[b] / s.open()[a];
             }
-            equity = equity - invested + value - costs;
+            long days = java.time.temporal.ChronoUnit.DAYS.between(calendar[r], calendar[r2]);
+            double interest = (start - invested) * rule.cashYieldPct() / 100 * days / 365;
+            equity = equity - invested + value - costs + interest;
             periods.put(calendar[r], equity / start - 1);
             held = new ArrayList<>(target);
         }
+        cashPeriods.put(rule.name(), inCash);
         return periods;
     }
 
@@ -660,11 +721,12 @@ public class SwingBacktestService {
         int sessions = calendar.length - Math.max(0, first);
         double total = equity - 1;
         return String.format("  %-46s total %+7.1f%% | %+6.1f%%/yr | max DD %5.1f%% | +months %2d/%2d | avg month Rs %6.0f"
-                        + " | NIFTY same window %+6.1f%%/yr%n",
+                        + " | worst month %+5.1f%% | in cash %2d | NIFTY same window %+6.1f%%/yr%n",
                 rule.name(), total * 100, annualised(total, sessions), maxDd * 100,
                 monthly.values().stream().filter(v -> v > 0).count(), monthly.size(),
                 monthly.values().stream().mapToDouble(Double::doubleValue).average().orElse(0),
-                annualised(niftySame, sessions));
+                periods.values().stream().mapToDouble(Double::doubleValue).min().orElse(0) * 100,
+                cashPeriods.getOrDefault(rule.name(), 0), annualised(niftySame, sessions));
     }
 
     private String renderRotation(TreeMap<LocalDate, Double> weekly, int sessions) {
