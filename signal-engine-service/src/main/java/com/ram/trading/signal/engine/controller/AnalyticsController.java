@@ -158,18 +158,19 @@ public class AnalyticsController {
 
     /** This month's momentum list from the latest closes; not stored or sent (takes ~2 minutes). */
     @GetMapping(value = "/momentum-signal", produces = "text/plain")
-    public String momentumSignalPreview() {
-        return momentumSignalService.toText(momentumSignalService.preview());
+    public reactor.core.publisher.Mono<String> momentumSignalPreview() {
+        // Blocking (history fetch, JDBC): off the event loop.
+        return blocking(() -> momentumSignalService.toText(momentumSignalService.preview()));
     }
 
     /** Stores this month's list and sends it to Slack; force=true replaces a list already published. */
     @PostMapping(value = "/momentum-signal/publish", produces = "text/plain")
-    public ResponseEntity<String> publishMomentumSignal(
+    public reactor.core.publisher.Mono<ResponseEntity<String>> publishMomentumSignal(
             @RequestParam(required = false, defaultValue = "false") boolean force) {
-        return momentumSignalService.publish(force)
+        return blocking(() -> momentumSignalService.publish(force)
                 .map(s -> ResponseEntity.ok(momentumSignalService.toText(s)))
                 .orElseGet(() -> ResponseEntity.status(409)
-                        .body("This month's list is already published; force=true replaces it."));
+                        .body("This month's list is already published; force=true replaces it.")));
     }
 
     /** Paper momentum portfolio: return since the start vs NIFTY, cash, holdings. */
@@ -180,11 +181,16 @@ public class AnalyticsController {
 
     /** Trades this month's published list on paper now (once per month). */
     @PostMapping(value = "/momentum-paper/rebalance", produces = "text/plain")
-    public ResponseEntity<String> rebalanceMomentumPaper() {
-        return momentumPaperService.rebalance()
+    public reactor.core.publisher.Mono<ResponseEntity<String>> rebalanceMomentumPaper() {
+        return blocking(() -> momentumPaperService.rebalance()
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(409)
-                        .body("No list published this month yet, or this month is already traded."));
+                        .body("No list published this month yet, or this month is already traded.")));
+    }
+
+    private static <T> reactor.core.publisher.Mono<T> blocking(java.util.concurrent.Callable<T> work) {
+        return reactor.core.publisher.Mono.fromCallable(work)
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */
