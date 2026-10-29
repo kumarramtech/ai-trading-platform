@@ -63,6 +63,16 @@ public final class DailyBars {
         return new DailyBars(bars);
     }
 
+    /** The last {@code n} sessions strictly before the day, oldest first (fewer when history is short). */
+    public List<Bar> barsBefore(String symbol, LocalDate day, int n) {
+        List<Bar> list = bars.getOrDefault(symbol, List.of());
+        int end = 0;
+        while (end < list.size() && list.get(end).date().isBefore(day)) {
+            end++;
+        }
+        return list.subList(Math.max(0, end - n), end);
+    }
+
     /** Null when the symbol has fewer than 5 sessions before the day. */
     public Stats statsBefore(String symbol, LocalDate day) {
         List<Bar> list = bars.get(symbol);
