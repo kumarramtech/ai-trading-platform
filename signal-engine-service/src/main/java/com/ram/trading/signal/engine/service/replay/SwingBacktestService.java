@@ -96,19 +96,7 @@ public class SwingBacktestService {
         if (liquidRank <= 0) {
             return true;
         }
-        return liquidByDay.computeIfAbsent(day, d -> {
-            List<Map.Entry<String, Double>> turnover = new ArrayList<>();
-            for (Series s : data.values()) {
-                int i = s.indexOf(d);
-                if (i >= 20) {
-                    turnover.add(Map.entry(s.symbol(), sma(s.volume(), i, 20) * s.close()[i]));
-                }
-            }
-            turnover.sort(Map.Entry.<String, Double>comparingByValue().reversed());
-            java.util.Set<String> top = new java.util.HashSet<>();
-            turnover.stream().limit(liquidRank).forEach(e -> top.add(e.getKey()));
-            return top;
-        }).contains(symbol);
+        return liquidByDay.computeIfAbsent(day, d -> topByTurnover(data.values(), d, liquidRank)).contains(symbol);
     }
 
     public SwingBacktestService(JdbcTemplate jdbc, WebClient.Builder builder,
@@ -261,7 +249,7 @@ public class SwingBacktestService {
         return index.close()[i] > sma(index.close(), i, n);
     }
 
-    private static Series toSeries(String symbol, List<Candle> candles) {
+    static Series toSeries(String symbol, List<Candle> candles) {
         List<Candle> list = new ArrayList<>();
         if (candles != null) {
             candles.stream().filter(c -> c.getDateTime() != null && c.getClose() != null && c.getOpen() != null)
@@ -656,23 +644,7 @@ public class SwingBacktestService {
                         || !eligible(data, s.symbol(), signalDay)) {
                     continue;
                 }
-                int end = i - rule.skip();
-                int start = i - rule.lookback();
-                double ret = s.close()[end] / s.close()[start] - 1;
-                double score = ret;
-                if (rule.volAdjusted()) {
-                    double sum = 0, sq = 0;
-                    int n = 0;
-                    for (int j = start + 1; j <= end; j++) {
-                        double dr = s.close()[j] / s.close()[j - 1] - 1;
-                        sum += dr;
-                        sq += dr * dr;
-                        n++;
-                    }
-                    double sd = n > 1 ? Math.sqrt(Math.max(0, sq / n - (sum / n) * (sum / n))) : 0;
-                    score = sd > 0 ? ret / sd : ret;
-                }
-                ranked.add(Map.entry(s.symbol(), score));
+                ranked.add(Map.entry(s.symbol(), momentumScore(s, i, rule.lookback(), rule.skip(), rule.volAdjusted())));
             }
             ranked.sort(Map.Entry.<String, Double>comparingByValue().reversed());
             List<String> target = riskOn
@@ -737,6 +709,45 @@ public class SwingBacktestService {
         cashPeriods.put(rule.name(), inCash);
         weeklyExits.put(rule.name(), exits);
         return periods;
+    }
+
+    /**
+     * Return over {@code lookback} sessions to session {@code i}, excluding the last
+     * {@code skip}; divided by the daily volatility over that window when
+     * {@code volAdjusted}. Shared by the backtest and the live monthly signal.
+     */
+    static double momentumScore(Series s, int i, int lookback, int skip, boolean volAdjusted) {
+        int end = i - skip;
+        int start = i - lookback;
+        double ret = s.close()[end] / s.close()[start] - 1;
+        if (!volAdjusted) {
+            return ret;
+        }
+        double sum = 0, sq = 0;
+        int n = 0;
+        for (int j = start + 1; j <= end; j++) {
+            double dr = s.close()[j] / s.close()[j - 1] - 1;
+            sum += dr;
+            sq += dr * dr;
+            n++;
+        }
+        double sd = n > 1 ? Math.sqrt(Math.max(0, sq / n - (sum / n) * (sum / n))) : 0;
+        return sd > 0 ? ret / sd : ret;
+    }
+
+    /** The {@code n} symbols with the highest 20-day average turnover on {@code day}. */
+    static java.util.Set<String> topByTurnover(java.util.Collection<Series> data, LocalDate day, int n) {
+        List<Map.Entry<String, Double>> turnover = new ArrayList<>();
+        for (Series s : data) {
+            int i = s.indexOf(day);
+            if (i >= 20) {
+                turnover.add(Map.entry(s.symbol(), sma(s.volume(), i, 20) * s.close()[i]));
+            }
+        }
+        turnover.sort(Map.Entry.<String, Double>comparingByValue().reversed());
+        java.util.Set<String> top = new java.util.HashSet<>();
+        turnover.stream().limit(n).forEach(e -> top.add(e.getKey()));
+        return top;
     }
 
     private String renderPortfolio(PortfolioRule rule, TreeMap<LocalDate, Double> periods, LocalDate[] calendar,
