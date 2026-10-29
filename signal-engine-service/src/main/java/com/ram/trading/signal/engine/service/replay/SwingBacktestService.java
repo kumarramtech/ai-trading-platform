@@ -227,7 +227,11 @@ public class SwingBacktestService {
                 new PortfolioRule("top 20 + NIFTY>200DMA, cash 6.5%, Rs 0", 20, true, 126, 21, true, 0, true, 200, 6.5),
                 new PortfolioRule("top 30 + NIFTY>100DMA, cash 6.5%, Rs 0", 30, true, 126, 21, true, 0, true, 100, 6.5),
                 new PortfolioRule("top 30 + NIFTY>200DMA, cash 6.5%, Rs 20", 30, true, 126, 21, true, 20, true, 200, 6.5),
-                new PortfolioRule("top 20 + NIFTY>200DMA, cash 6.5%, Rs 20", 20, true, 126, 21, true, 20, true, 200, 6.5))) {
+                new PortfolioRule("top 20 + NIFTY>200DMA, cash 6.5%, Rs 20", 20, true, 126, 21, true, 20, true, 200, 6.5),
+                new PortfolioRule("top 30 + NIFTY>100DMA weekly exit, 6.5%, Rs 0", 30, true, 126, 21, true, 0, true, 100, 6.5, true),
+                new PortfolioRule("top 20 + NIFTY>100DMA weekly exit, 6.5%, Rs 0", 20, true, 126, 21, true, 0, true, 100, 6.5, true),
+                new PortfolioRule("top 30 + NIFTY>200DMA weekly exit, 6.5%, Rs 0", 30, true, 126, 21, true, 0, true, 200, 6.5, true),
+                new PortfolioRule("top 30 + NIFTY>100DMA weekly exit, 6.5%, Rs 20", 30, true, 126, 21, true, 20, true, 100, 6.5, true))) {
             out.append(renderPortfolio(rule, momentumPortfolio(data, calendar, rule, niftyFull), calendar, nifty.close()));
         }
         out.append("\n");
@@ -584,15 +588,25 @@ public class SwingBacktestService {
     /**
      * A momentum portfolio: how many stocks, how often, how ranked, at what costs.
      * {@code regimeSma} > 0 holds cash while NIFTY is below that average (checked at
-     * each rebalance); idle cash earns {@code cashYieldPct} a year.
+     * each rebalance); idle cash earns {@code cashYieldPct} a year. {@code weeklyExit}
+     * also checks the filter on each week's first session and sells everything there
+     * (until the next rebalance) when NIFTY has fallen below the average mid-period.
      */
     record PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
-                         double brokerage, boolean costs, int regimeSma, double cashYieldPct) {
+                         double brokerage, boolean costs, int regimeSma, double cashYieldPct, boolean weeklyExit) {
         PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
                       double brokerage, boolean costs) {
-            this(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, 0, 0);
+            this(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, 0, 0, false);
+        }
+
+        PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
+                      double brokerage, boolean costs, int regimeSma, double cashYieldPct) {
+            this(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, regimeSma, cashYieldPct, false);
         }
     }
+
+    /** Mid-period exits by the weekly filter check, per rule name (for the report). */
+    private final Map<String, Integer> weeklyExits = new ConcurrentHashMap<>();
 
     /** Periods spent fully in cash by the market filter, per rule name (for the report). */
     private final Map<String, Integer> cashPeriods = new ConcurrentHashMap<>();
@@ -626,6 +640,7 @@ public class SwingBacktestService {
         TreeMap<LocalDate, Double> periods = new TreeMap<>();
         double equity = capital;
         int inCash = 0;
+        int exits = 0;
         List<String> held = new ArrayList<>();
         for (int k = 0; k + 1 < rebalanceDays.size(); k++) {
             int r = rebalanceDays.get(k);
@@ -682,22 +697,45 @@ public class SwingBacktestService {
                     }
                 }
             }
+            // Weekly check: the first session of a later week after NIFTY closed below its average.
+            int exit = r2;
+            if (rule.weeklyExit() && riskOn && index != null && !target.isEmpty()) {
+                for (int d = r + 1; d < r2; d++) {
+                    boolean newWeek = calendar[d].getDayOfWeek().getValue() < calendar[d - 1].getDayOfWeek().getValue()
+                            || java.time.temporal.ChronoUnit.DAYS.between(calendar[d - 1], calendar[d]) > 3;
+                    if (newWeek && !aboveAverage(index, calendar[d - 1], rule.regimeSma())) {
+                        exit = d;
+                        break;
+                    }
+                }
+            }
             double invested = 0;
             double value = 0;
             for (String sym : target) {
                 Series s = data.get(sym);
                 int a = s.indexOf(calendar[r]);
-                int b = s.indexOf(calendar[r2]);
+                int b = s.indexOf(calendar[exit]);
                 invested += slot;
-                value += a < 0 || b < 0 ? slot : slot * s.open()[b] / s.open()[a];
+                double v = a < 0 || b < 0 ? slot : slot * s.open()[b] / s.open()[a];
+                value += v;
+                if (exit < r2 && rule.costs()) {
+                    costs += DeliveryCharges.sellSide(v, rule.brokerage()) + v * slippagePct / 100;
+                }
             }
             long days = java.time.temporal.ChronoUnit.DAYS.between(calendar[r], calendar[r2]);
             double interest = (start - invested) * rule.cashYieldPct() / 100 * days / 365;
+            if (exit < r2) {
+                // Sold mid-period: the proceeds sit in the liquid fund until the next rebalance.
+                interest += value * rule.cashYieldPct() / 100
+                        * java.time.temporal.ChronoUnit.DAYS.between(calendar[exit], calendar[r2]) / 365;
+                exits++;
+            }
             equity = equity - invested + value - costs + interest;
             periods.put(calendar[r], equity / start - 1);
-            held = new ArrayList<>(target);
+            held = exit < r2 ? new ArrayList<>() : new ArrayList<>(target);
         }
         cashPeriods.put(rule.name(), inCash);
+        weeklyExits.put(rule.name(), exits);
         return periods;
     }
 
@@ -721,12 +759,15 @@ public class SwingBacktestService {
         int sessions = calendar.length - Math.max(0, first);
         double total = equity - 1;
         return String.format("  %-46s total %+7.1f%% | %+6.1f%%/yr | max DD %5.1f%% | +months %2d/%2d | avg month Rs %6.0f"
-                        + " | worst month %+5.1f%% | in cash %2d | NIFTY same window %+6.1f%%/yr%n",
+                        + " | worst month %+5.1f%% | in cash %2d" + (rule.weeklyExit() ? " (+%d mid-month exits)" : "%s")
+                        + " | NIFTY same window %+6.1f%%/yr%n",
                 rule.name(), total * 100, annualised(total, sessions), maxDd * 100,
                 monthly.values().stream().filter(v -> v > 0).count(), monthly.size(),
                 monthly.values().stream().mapToDouble(Double::doubleValue).average().orElse(0),
                 periods.values().stream().mapToDouble(Double::doubleValue).min().orElse(0) * 100,
-                cashPeriods.getOrDefault(rule.name(), 0), annualised(niftySame, sessions));
+                cashPeriods.getOrDefault(rule.name(), 0),
+                rule.weeklyExit() ? (Object) weeklyExits.getOrDefault(rule.name(), 0) : "",
+                annualised(niftySame, sessions));
     }
 
     private String renderRotation(TreeMap<LocalDate, Double> weekly, int sessions) {

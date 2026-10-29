@@ -80,6 +80,32 @@ class SwingBacktestServiceTest {
         assertEquals(5, SwingBacktestService.since(index, d[395]).size());
     }
 
+    @Test
+    void weeklyExitSellsWhenTheIndexBreaksItsAverageMidMonth() {
+        int n = 400;
+        LocalDate[] d = new LocalDate[n];
+        double[] c = new double[n], v = new double[n];
+        LocalDate day = LocalDate.of(2025, 1, 1);
+        for (int i = 0; i < n; i++) {
+            d[i] = day.plusDays(i);
+            c[i] = i < 250 ? 100 + i * 0.2 : 150 - (i - 250) * 1.0;
+            v[i] = 1_000_000;
+        }
+        // The only stock moves with the index, so holding through the fall hurts.
+        SwingBacktestService.Series index = new SwingBacktestService.Series("NIFTY", d, c, c, c, c, v);
+        SwingBacktestService.Series stock = new SwingBacktestService.Series("S", d, c, c, c, c, v);
+        SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
+
+        var monthly = svc.momentumPortfolio(Map.of("S", stock), d,
+                new SwingBacktestService.PortfolioRule("m", 1, true, 126, 21, false, 0, false, 100, 0, false), index);
+        var weekly = svc.momentumPortfolio(Map.of("S", stock), d,
+                new SwingBacktestService.PortfolioRule("w", 1, true, 126, 21, false, 0, false, 100, 0, true), index);
+
+        double worstMonthly = monthly.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
+        double worstWeekly = weekly.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
+        assertTrue(worstWeekly > worstMonthly, "weekly " + weekly + " vs monthly " + monthly);
+    }
+
     private static SwingBacktestService.Series trend(String symbol, LocalDate[] d, double dailyChange) {
         int n = d.length;
         double[] o = new double[n], h = new double[n], l = new double[n], c = new double[n], v = new double[n];
