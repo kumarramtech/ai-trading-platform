@@ -246,8 +246,8 @@ public class StrategyReplayService {
                 "select symbol from historical_price where interval_type = 'DAY' "
                         + "and trade_date between ? and ? and close_price >= ? "
                         + "group by symbol having count(*) >= 10 "
-                        + "order by avg(close_price * volume) desc limit ?",
-                String.class, asOf.minusDays(30), asOf, minPrice, size);
+                        + "order by avg(close_price * volume) desc limit ? offset ?",
+                String.class, asOf.minusDays(30), asOf, minPrice, size, offset);
     }
 
     private Map<String, Map<LocalDate, List<MinuteCandle>>> fetch(List<String> universe, LocalDate from, LocalDate to) {
