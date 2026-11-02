@@ -123,6 +123,19 @@ class IntradaySignalStudyTest {
         assertTrue(trades.stream().anyMatch(t -> t.rule().startsWith("S2 NOISE strongest10") && !t.buy()));
         assertTrue(trades.stream().noneMatch(t -> t.rule().startsWith("S2 NEWS")));
         assertEquals(10, trades.stream().filter(t -> t.rule().equals("S2 weakest10 09:45 -> 12:00 LONG")).count());
+
+        // Round 2 fade: POP (+3% at 09:45, +4.5% at 10:00) is shorted by the >= 2% rules; it keeps
+        // rising, so the 2% stop takes it out at -200 bps instead of the ~-1500 of holding.
+        List<IntradaySignalStudy.Trade> fade = trades.stream().filter(t -> t.rule().startsWith("R2 fade")).toList();
+        assertTrue(fade.stream().noneMatch(IntradaySignalStudy.Trade::buy));
+        assertEquals(1, fade.stream().filter(t -> t.rule().equals("R2 fade top100 up >= 2% 09:45 -> 15:00 SHORT")).count());
+        assertEquals(1, fade.stream().filter(t -> t.rule().equals("R2 fade top100 up >= 4% 10:00 -> 12:00 SHORT")).count());
+        double held = fade.stream().filter(t -> t.rule().equals("R2 fade base | any liquid stock"))
+                .mapToDouble(IntradaySignalStudy.Trade::rawBps).sum();
+        double stopped = fade.stream().filter(t -> t.rule().equals("R2 fade base | stop 2%"))
+                .mapToDouble(IntradaySignalStudy.Trade::rawBps).sum();
+        assertTrue(held < -1000, "held: " + held);
+        assertEquals(-200, stopped, 3);
     }
 
     @Test

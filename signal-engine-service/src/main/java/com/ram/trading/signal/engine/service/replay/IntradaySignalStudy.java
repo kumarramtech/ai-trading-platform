@@ -127,7 +127,76 @@ final class IntradaySignalStudy {
         // Round 2 (2026-11-02), fixed before the run: the weakest-at-09:45 bounce, the one
         // rule positive in both halves of study 2 (as the opposite of bottom10 SHORT).
         weakestBounce(s, stocks, prevNiftyClose);
+        // and the morning-winner fade: S2 OVERREACTION up >= 2% SHORT was +44 bps gross (t 3.9,
+        // both halves) on turnover ranks 501-1000 but -16 on the top 500.
+        overreactionShort(s, stocks);
         return s.trades;
+    }
+
+    static final double[] R2_FADE_MOVES = {2, 3, 4};
+    static final LocalTime[] R2_FADE_ENTRIES = {LocalTime.of(9, 45), LocalTime.of(10, 0)};
+    static final LocalTime[] R2_FADE_EXITS = {LocalTime.of(12, 0), LocalTime.of(15, 0)};
+
+    /**
+     * Round 2: short a stock that is up a lot vs NIFTY in the morning and hold.
+     *   GRID     move >= 2/3/4% x entry 09:45/10:00 x exit 12:00/15:00, the 100 most traded (12 rules)
+     *   base     >= 2%, 09:45 -> 15:00: any liquid stock instead of the 100 most traded; a stop
+     *            2% / 4% above entry (a squeeze is the risk of this trade); up < 8% from the open
+     *            only (away from the circuit, where shorts get stuck); split by NIFTY up/down
+     */
+    private static void overreactionShort(Study s, List<Stock> stocks) {
+        List<Stock> large = largeCaps(stocks);
+        for (LocalTime at : R2_FADE_ENTRIES) {
+            Double niftyMove = s.niftyMove(at);
+            if (niftyMove == null) {
+                continue;
+            }
+            for (Stock st : large) {
+                Double p = s.close(st, at);
+                if (p == null) {
+                    continue;
+                }
+                double rel = (p - st.open()) / st.open() * 100 - niftyMove;
+                for (double move : R2_FADE_MOVES) {
+                    if (rel < move) {
+                        continue;
+                    }
+                    for (LocalTime exit : R2_FADE_EXITS) {
+                        s.trade(String.format("R2 fade top100 up >= %.0f%% %s -> %s SHORT", move, at, exit),
+                                st, false, at, exit);
+                    }
+                }
+            }
+        }
+
+        LocalTime at = LocalTime.of(9, 45);
+        LocalTime exit = LocalTime.of(15, 0);
+        Double niftyMove = s.niftyMove(at);
+        if (niftyMove == null) {
+            return;
+        }
+        java.util.Set<Stock> top = new java.util.HashSet<>(large);
+        for (Stock st : stocks) {
+            Double p = s.close(st, at);
+            if (p == null) {
+                continue;
+            }
+            double fromOpen = (p - st.open()) / st.open() * 100;
+            if (fromOpen - niftyMove < 2) {
+                continue;
+            }
+            s.trade("R2 fade base | any liquid stock", st, false, at, exit);
+            if (!top.contains(st)) {
+                continue;
+            }
+            s.trade("R2 fade base | stop 2%", st, false, at, exit, 2.0);
+            s.trade("R2 fade base | stop 4%", st, false, at, exit, 4.0);
+            if (fromOpen < 8) {
+                s.trade("R2 fade base | up < 8% from open", st, false, at, exit);
+            }
+            s.trade(niftyMove > 0 ? "R2 fade base | NIFTY up at 09:45" : "R2 fade base | NIFTY flat/down at 09:45",
+                    st, false, at, exit);
+        }
     }
 
     /** Ranks liquid stocks by their move since the open vs NIFTY at {@code at}, weakest first; null if too few. */
@@ -558,9 +627,9 @@ final class IntradaySignalStudy {
                 .append(days.size()).append(" sessions\n")
                 .append("gross = after 0.03% slippage each way, before charges; t = daily-average t-stat on gross\n")
                 .append("opposite = the same rule traded the other way (gross)\n\n");
-        out.append(String.format("%-58s %6s %5s %7s %7s %7s %7s %6s %6s %7s %7s %8s %8s %8s %8s  %s%n",
+        out.append(String.format("%-58s %6s %5s %7s %7s %7s %7s %6s %6s %7s %7s %8s %8s %8s %8s %7s  %s%n",
                 "rule", "n", "/day", "raw", "gross", "net", "net2.5L", "win%", "t", "H1 gr", "H2 gr", "opp gr", "Rs/day",
-                "worstDay", "maxDD", "verdict"));
+                "worstDay", "maxDD", "gr@10bp", "verdict"));
 
         double roundTripSlipBps = 2 * slippagePct * 100;
         double bigCostBps = costBps(charges, BIG_NOTIONAL);
@@ -587,13 +656,13 @@ final class IntradaySignalStudy {
                     : "-";
             double netBig = gross - bigCostBps;
             double[] risk = dailyRisk(list);
-            out.append(String.format("%-58s %6d %5.1f %7.1f %7.1f %7.1f %7.1f %6.1f %6.2f %7.1f %7.1f %8.1f %8.0f %8.0f %8.0f  %s%n",
+            out.append(String.format("%-58s %6d %5.1f %7.1f %7.1f %7.1f %7.1f %6.1f %6.2f %7.1f %7.1f %8.1f %8.0f %8.0f %8.0f %7.1f  %s%n",
                     e.getKey(), list.size(), list.size() / (double) Math.max(1, tradeDays), raw, gross, net, netBig,
-                    win, t, g1, g2, opposite, rupeesPerDay, risk[0], risk[1], verdict));
+                    win, t, g1, g2, opposite, rupeesPerDay, risk[0], risk[1], raw - 20, verdict));
         }
         out.append("\n/day = trades per day the rule fired; Rs/day = net per session over all sessions;\n")
                 .append("worstDay / maxDD = the worst single day and the deepest peak-to-trough fall of cumulative net, Rs,\n")
-                .append("every trade at Rs 50k.\n")
+                .append("every trade at Rs 50k; gr@10bp = gross if slippage were 0.10% each way (wider spreads).\n")
                 .append("Net needs gross above ~").append(String.format("%.0f", costBps(charges, NOTIONAL)))
                 .append(" bps (Rs 20 x 2 brokerage, STT, exchange, GST, stamp on Rs 50k); net2.5L = gross minus the ~")
                 .append(String.format("%.0f", bigCostBps))
