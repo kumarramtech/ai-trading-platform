@@ -119,6 +119,10 @@ public class PaperTrade {
     @Column(name = "planned_risk")
     private Double plannedRisk;
 
+    /** trading.rules.version at entry, so results can be split by rule set. */
+    @Column(name = "rule_version", length = 32)
+    private String ruleVersion;
+
     /** P&L before charges. profitLoss is net of charges, as a live account would show. */
     @Column(name = "gross_profit_loss")
     private Double grossProfitLoss;

@@ -42,6 +42,9 @@ public class ShadowTradeService {
     @Value("${trading.shadow.enabled:true}")
     private boolean enabled = true;
 
+    @Value("${trading.rules.version:unversioned}")
+    private String rulesVersion = "unversioned";
+
     /** Open shadows by symbol; ticks for other symbols return after one map lookup. */
     private final Map<String, List<ShadowTrade>> openBySymbol = new ConcurrentHashMap<>();
 
@@ -160,6 +163,7 @@ public class ShadowTradeService {
                 .status(OPEN)
                 .mfeR(0.0)
                 .maeR(0.0)
+                .ruleVersion(rulesVersion)
                 .build();
 
         persist(shadow);

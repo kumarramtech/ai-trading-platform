@@ -30,7 +30,8 @@ import java.util.function.Consumer;
  *             produce an unusable stop. A structural stop closer than
  *             minStopPct, or an OR stop wider than maxRiskPct, skips the
  *             trade instead of being clamped.
- *  - Target : entry +/- rewardRisk x risk.
+ *  - Target : entry +/- rewardRisk x risk, at most maxTargetPct from entry;
+ *             skipped if that cap leaves less than minRewardRisk.
  *  - If no usable Opening Range exists, a fixed fallbackRiskPct is used.
  *
  * Entry price is never changed here.
@@ -63,6 +64,19 @@ public class ExecutionPlanCalculator {
     /** Skip, rather than clamp, an opening-range stop wider than maxRiskPct. */
     @Value("${trading.execution-plan.reject-clamped-or-stop:true}")
     private boolean rejectClampedOrStop = true;
+
+    /**
+     * Furthest target from entry, % of entry: an intraday move larger than this
+     * after the entry rarely happens. With wide stops a rewardRisk target used to
+     * land 4-8% away (2026-11-02: MRPL 8.5%, SUDEEPPHRM 5.8%) and the trade could
+     * only end at the 15:00 close. 0 disables the cap.
+     */
+    @Value("${trading.execution-plan.max-target-pct:0}")
+    private double maxTargetPct = 0.0;
+
+    /** A setup whose capped target pays less than this many R is skipped (TARGET_OUT_OF_REACH). */
+    @Value("${trading.execution-plan.min-reward-risk:1.0}")
+    private double minRewardRisk = 1.0;
 
     @Value("${trading.execution-plan.fallback-risk-pct:0.60}")
     private double fallbackRiskPct = 0.60;
@@ -204,11 +218,28 @@ public class ExecutionPlanCalculator {
             }
         }
 
+        double reward = rewardRisk * risk;
+        if (maxTargetPct > 0.0 && reward > entry * maxTargetPct / 100.0) {
+            reward = entry * maxTargetPct / 100.0;
+            if (reward < minRewardRisk * risk - 1e-9) {
+                log.warn("EXECUTION PLAN REJECTED | Target out of reach | Symbol={} | Signal={} | Entry={} | RiskPct={} | MaxTargetPct={} | RewardRisk={}",
+                        signal.getSymbol(), signal.getSignal(), entry,
+                        round2(risk / entry * 100.0), maxTargetPct, round2(reward / risk));
+                if (onRefused != null) {
+                    String side = buy ? SignalType.BUY.name() : SignalType.SELL.name();
+                    double refusedStop = PriceTicks.alignStop(buy ? entry - risk : entry + risk, side, priceTickSize);
+                    double refusedTarget = PriceTicks.alignTarget(buy ? entry + reward : entry - reward, side, priceTickSize);
+                    onRefused.accept(new RefusedPlan("TARGET_OUT_OF_REACH", refusedStop, refusedTarget));
+                }
+                return false;
+            }
+        }
+
         final double stop = PriceTicks.alignStop(
                 buy ? entry - risk : entry + risk, signal.getSignal(), priceTickSize);
         final double target = PriceTicks.alignTarget(buy
-                ? entry + rewardRisk * risk
-                : entry - rewardRisk * risk, signal.getSignal(), priceTickSize);
+                ? entry + reward
+                : entry - reward, signal.getSignal(), priceTickSize);
 
         final boolean ordered = buy
                 ? (stop < entry && entry < target)
@@ -231,7 +262,7 @@ public class ExecutionPlanCalculator {
                 stop,
                 target,
                 round2(risk / entry * 100.0),
-                rewardRisk);
+                round2(reward / risk));
 
         return true;
     }

@@ -217,4 +217,49 @@ class ExecutionPlanCalculatorTest {
         calculator.apply(bad, null);
         assertNull(bad.getStopLoss());
     }
+
+    private ExecutionPlanCalculator cappedCalculator() {
+        ExecutionPlanCalculator capped = new ExecutionPlanCalculator(openingRangeService);
+        org.springframework.test.util.ReflectionTestUtils.setField(capped, "maxRiskPct", 5.0);
+        org.springframework.test.util.ReflectionTestUtils.setField(capped, "maxTargetPct", 2.5);
+        org.springframework.test.util.ReflectionTestUtils.setField(capped, "minRewardRisk", 1.0);
+        return capped;
+    }
+
+    @Test
+    void targetIsCappedAtMaxTargetPct() {
+        // OR low 98.25 -> stop 98.20, risk 1.8; 2R would be 103.60, the cap puts it at 102.50
+        when(openingRangeService.get("ABC")).thenReturn(range(101.0, 98.25));
+        TradingSignal s = signal("BUY", 100.0);
+
+        assertTrue(cappedCalculator().apply(s, null));
+
+        assertEquals(98.20, s.getStopLoss(), 0.01);
+        assertEquals(102.50, s.getTargetPrice(), 0.01);
+    }
+
+    @Test
+    void tightStopKeepsItsTwoToOneTargetUnderTheCap() {
+        when(openingRangeService.get("ABC")).thenReturn(range(101.0, 99.25));
+        TradingSignal s = signal("BUY", 100.0);
+
+        assertTrue(cappedCalculator().apply(s, null));
+
+        assertEquals(2.0 * (100.0 - s.getStopLoss()), s.getTargetPrice() - 100.0, 0.02);
+    }
+
+    @Test
+    void stopWiderThanTheTargetCapIsSkippedAsTargetOutOfReach() {
+        // MRPL-like: 4.3% stop; a 2.5% target would pay 0.58R
+        when(openingRangeService.get("ABC")).thenReturn(range(101.0, 95.75));
+        TradingSignal s = signal("BUY", 100.0);
+        java.util.List<ExecutionPlanCalculator.RefusedPlan> refused = new java.util.ArrayList<>();
+
+        assertFalse(cappedCalculator().apply(s, null, refused::add));
+
+        assertNull(s.getStopLoss());
+        assertEquals(1, refused.size());
+        assertEquals("TARGET_OUT_OF_REACH", refused.get(0).reason());
+        assertEquals(102.50, refused.get(0).target(), 0.01);
+    }
 }

@@ -68,4 +68,8 @@ public class ShadowTrade {
 
     @Column(name = "mae_r")
     private Double maeR;
+
+    /** trading.rules.version when the setup was rejected. */
+    @Column(name = "rule_version", length = 32)
+    private String ruleVersion;
 }

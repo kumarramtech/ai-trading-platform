@@ -81,6 +81,18 @@ public class PaperTradingService {
     private final com.ram.trading.signal.engine.service.fill.OrderBookFillModel fillModel;
 
     /**
+     * Direction cap, entry burst and open risk, checked again here because
+     * createTrade is synchronized: AI calls run in parallel, so several setups
+     * pass the pre-AI check before any of them has opened a trade.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.ram.trading.signal.engine.risk.EntryExposureGuard entryExposureGuard;
+
+    /** Rule-set label stored on every trade, so analytics can split results by rule set. */
+    @Value("${trading.rules.version:unversioned}")
+    private String rulesVersion = "unversioned";
+
+    /**
      * Adverse slippage per fill, in % of price. Live entries and exits are
      * MARKET orders (and the protective stop is SL-M), which fill across the
      * spread, so a paper fill at the exact LTP would flatter every trade.
@@ -284,6 +296,15 @@ public class PaperTradingService {
          */
         if (!validateTradeCreation(signal)) {
             return;
+        }
+
+        if (entryExposureGuard != null) {
+            String exposure = entryExposureGuard.exposureRejection(signal.getSymbol(), signal.getSignal());
+            if (exposure != null) {
+                log.info("PAPER TRADE NOT CREATED | Entry guard {} | Symbol={} | Signal={}",
+                        exposure, signal.getSymbol(), signal.getSignal());
+                return;
+            }
         }
 
         /*
@@ -514,6 +535,9 @@ public class PaperTradingService {
 
                             .plannedRisk(
                                     round(Math.abs(entryFill - signal.getStopLoss()) * quantity))
+
+                            .ruleVersion(
+                                    rulesVersion)
 
                             .quantity(
                                     quantity)
