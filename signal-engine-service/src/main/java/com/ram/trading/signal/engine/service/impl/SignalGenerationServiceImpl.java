@@ -23,6 +23,7 @@ import com.ram.trading.signal.engine.dto.rules.SignalGenerationRequest;
 import com.ram.trading.signal.engine.dto.rules.MarketContext;
 import com.ram.trading.signal.engine.contant.Trend;
 import com.ram.trading.signal.engine.indicator.service.TechnicalIndicatorService;
+import com.ram.trading.signal.engine.risk.EntryExposureGuard;
 import com.ram.trading.signal.engine.risk.RiskEvaluation;
 import com.ram.trading.signal.engine.risk.RiskGuardResult;
 import com.ram.trading.signal.engine.risk.RiskGuardService;
@@ -77,6 +78,8 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
     private final PaperTradingService paperTradingService;
 
     private final RiskGuardService riskGuardService;
+
+    private final EntryExposureGuard entryExposureGuard;
 
     private final TradeExitService tradeExitService;
 
@@ -998,6 +1001,21 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
             return hold;
         }
 
+        // Chasing, gap-day open and crowding rules (2026-11-02 review); followed as
+        // shadows so the report shows what each one saves or costs.
+        String guard = entryExposureGuard.marketRejection(request, LocalTime.now(ZoneId.of("Asia/Kolkata")));
+        if (guard == null) {
+            guard = entryExposureGuard.exposureRejection(request.getSymbol(), direction.name());
+        }
+        if (guard != null) {
+            log.info("PRE-AI CHECK | Entry guard {}, AI not called | Symbol={} | Strategy={} | Direction={}",
+                    guard, request.getSymbol(), request.getSetupStrategy(), direction);
+            if (plan.getStopLoss() != null && plan.getTargetPrice() != null) {
+                shadowTradeService.recordRejectedSignal(plan, guard);
+            }
+            return hold;
+        }
+
         if (rejectExtendedEntries && indicator != null) {
 
             EntryQualityResult quality =
@@ -1331,6 +1349,10 @@ public class SignalGenerationServiceImpl implements SignalGenerationService {
                                             TradingSignal.builder()
                                                     .symbol(
                                                             request.getSymbol())
+                                                    .signal(
+                                                            request.getSetupDirection() != null
+                                                                    ? request.getSetupDirection().name()
+                                                                    : null)
                                                     .build())
                                     .build();
 

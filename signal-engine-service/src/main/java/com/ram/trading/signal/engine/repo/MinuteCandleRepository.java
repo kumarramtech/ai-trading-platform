@@ -13,4 +13,10 @@ public interface MinuteCandleRepository extends JpaRepository<MinuteCandleEntity
             LocalDateTime from, LocalDateTime to);
 
     Optional<MinuteCandleEntity> findBySymbolAndMinute(String symbol, LocalDateTime minute);
+
+    Optional<MinuteCandleEntity> findFirstBySymbolAndMinuteGreaterThanEqualOrderByMinuteAsc(
+            String symbol, LocalDateTime from);
+
+    Optional<MinuteCandleEntity> findFirstBySymbolAndMinuteLessThanOrderByMinuteDesc(
+            String symbol, LocalDateTime before);
 }

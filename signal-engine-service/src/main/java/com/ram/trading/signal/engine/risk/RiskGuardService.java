@@ -17,6 +17,9 @@ public class RiskGuardService {
 
     private final List<RiskRule> rules;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private EntryExposureGuard entryExposureGuard;
+
     public RiskGuardResult evaluate(RiskEvaluation evaluation) {
 
         log.debug("========== RISK GUARD ==========");
@@ -36,6 +39,20 @@ public class RiskGuardService {
                                     .rule("RiskManagement")
                                     .reason(v)
                                     .build()));
+        }
+
+        // Crowding and open-risk rules again on the AI's answer: the AI calls run in
+        // parallel, so setups that passed the pre-AI check may have opened trades since.
+        if (entryExposureGuard != null) {
+            String exposure = entryExposureGuard.exposureRejection(
+                    evaluation.getSignal().getSymbol(), evaluation.getSignal().getSignal());
+            if (exposure != null) {
+                violations.add(RiskViolation.builder()
+                        .passed(false)
+                        .rule("EntryExposure")
+                        .reason(exposure)
+                        .build());
+            }
         }
 
         // New Rule Engine
