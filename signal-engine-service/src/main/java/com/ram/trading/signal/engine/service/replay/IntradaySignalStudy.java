@@ -123,7 +123,97 @@ final class IntradaySignalStudy {
         noiseOrNews(s, stocks, squareOff);
         relativeStrengthBottomExit(s, stocks);
         niftyMomentum(s, stocks, prevNiftyClose);
+
+        // Round 2 (2026-11-02), fixed before the run: the weakest-at-09:45 bounce, the one
+        // rule positive in both halves of study 2 (as the opposite of bottom10 SHORT).
+        weakestBounce(s, stocks, prevNiftyClose);
         return s.trades;
+    }
+
+    /** Ranks liquid stocks by their move since the open vs NIFTY at {@code at}, weakest first; null if too few. */
+    private static List<Stock> weakestFirst(Study s, List<Stock> stocks, LocalTime at) {
+        Double niftyMove = s.niftyMove(at);
+        if (niftyMove == null) {
+            return null;
+        }
+        List<Map.Entry<Stock, Double>> ranked = new ArrayList<>();
+        for (Stock st : stocks) {
+            Double p = s.close(st, at);
+            if (p != null) {
+                ranked.add(Map.entry(st, (p - st.open()) / st.open() * 100 - niftyMove));
+            }
+        }
+        if (ranked.size() < 4 * TOP) {
+            return null;
+        }
+        ranked.sort(Map.Entry.comparingByValue());
+        return ranked.stream().map(Map.Entry::getKey).toList();
+    }
+
+    static final int[] R2_COUNTS = {5, 10, 20};
+    static final LocalTime[] R2_ENTRIES = {LocalTime.of(9, 30), LocalTime.of(9, 45), LocalTime.of(10, 0)};
+    static final LocalTime[] R2_EXITS = {LocalTime.of(12, 0), LocalTime.of(14, 0), LocalTime.of(15, 0)};
+
+    /**
+     * Round 2: buy the weakest stocks vs NIFTY and hold.
+     *   GRID     count 5/10/20 x entry 09:30/09:45/10:00 x exit 12:00/14:00/15:00 (27 rules; with
+     *            this many tries one t >= 2 by luck is expected, so a winner must also hold in the
+     *            other universe and its neighbours in the grid)
+     *   base     weakest 10, 09:45 -> 15:00, split by NIFTY up/down at 09:45, by the stock's
+     *            gap (<= -2% vs not), with a stop 1.5% / 3% below entry, and ranked from the
+     *            previous close instead of the open (the gap counts as weakness)
+     */
+    private static void weakestBounce(Study s, List<Stock> stocks, Double prevNiftyClose) {
+        for (LocalTime at : R2_ENTRIES) {
+            List<Stock> ranked = weakestFirst(s, stocks, at);
+            if (ranked == null) {
+                continue;
+            }
+            for (int n : R2_COUNTS) {
+                for (LocalTime exit : R2_EXITS) {
+                    String name = String.format("R2 weakest%-2d %s -> %s LONG", n, at, exit);
+                    ranked.subList(0, n).forEach(st -> s.trade(name, st, true, at, exit));
+                }
+            }
+        }
+
+        LocalTime at = LocalTime.of(9, 45);
+        LocalTime exit = LocalTime.of(15, 0);
+        List<Stock> ranked = weakestFirst(s, stocks, at);
+        if (ranked == null) {
+            return;
+        }
+        Double niftyMove = s.niftyMove(at);
+        for (Stock st : ranked.subList(0, TOP)) {
+            s.trade(niftyMove > 0 ? "R2 base | NIFTY up at 09:45" : "R2 base | NIFTY flat/down at 09:45",
+                    st, true, at, exit);
+            double prev = st.stats().prevClose();
+            double gap = prev > 0 ? (st.open() - prev) / prev * 100 : 0;
+            s.trade(gap <= -2 ? "R2 base | stock gap <= -2%" : "R2 base | stock gap > -2%", st, true, at, exit);
+            s.trade("R2 base | stop 1.5%", st, true, at, exit, 1.5);
+            s.trade("R2 base | stop 3%", st, true, at, exit, 3.0);
+        }
+
+        if (prevNiftyClose != null && prevNiftyClose > 0) {
+            Double nifty945 = closeAt(s.nifty, at);
+            if (nifty945 == null) {
+                return;
+            }
+            double niftyFromClose = (nifty945 - prevNiftyClose) / prevNiftyClose * 100;
+            List<Map.Entry<Stock, Double>> fromClose = new ArrayList<>();
+            for (Stock st : stocks) {
+                Double p = s.close(st, at);
+                double prev = st.stats().prevClose();
+                if (p != null && prev > 0) {
+                    fromClose.add(Map.entry(st, (p - prev) / prev * 100 - niftyFromClose));
+                }
+            }
+            if (fromClose.size() >= 4 * TOP) {
+                fromClose.sort(Map.Entry.comparingByValue());
+                fromClose.subList(0, TOP).forEach(e ->
+                        s.trade("R2 base | ranked from prev close", e.getKey(), true, at, exit));
+            }
+        }
     }
 
     /** Liquidity rank cut for the large-cap rules: the most traded stocks of the day's universe. */
@@ -392,10 +482,32 @@ final class IntradaySignalStudy {
         }
 
         void trade(String rule, Stock st, boolean buy, LocalTime at, LocalTime exitAt) {
+            trade(rule, st, buy, at, exitAt, 0);
+        }
+
+        /** As above with a stop {@code stopPct} from the entry price (0 = none), filled at the stop level. */
+        void trade(String rule, Stock st, boolean buy, LocalTime at, LocalTime exitAt, double stopPct) {
             Double in = closeAt(st.series(), at);
             Double out = closeAt(st.series(), exitAt.minusMinutes(1));
             if (in == null || out == null) {
                 return;
+            }
+            if (stopPct > 0) {
+                double stop = buy ? in * (1 - stopPct / 100) : in * (1 + stopPct / 100);
+                for (MinuteCandle c : st.series()) {
+                    LocalTime t = c.getMinute().toLocalTime();
+                    if (!t.isAfter(at)) {
+                        continue;
+                    }
+                    if (!t.isBefore(exitAt)) {
+                        break;
+                    }
+                    if (buy ? c.getLow() <= stop : c.getHigh() >= stop) {
+                        // A gap through the stop fills at the open, not the stop.
+                        out = buy ? Math.min(stop, c.getOpen()) : Math.max(stop, c.getOpen());
+                        break;
+                    }
+                }
             }
             double raw = (out - in) / in * 1e4 * (buy ? 1 : -1);
             double entry = buy ? in * (1 + slippagePct / 100) : in * (1 - slippagePct / 100);
@@ -446,8 +558,9 @@ final class IntradaySignalStudy {
                 .append(days.size()).append(" sessions\n")
                 .append("gross = after 0.03% slippage each way, before charges; t = daily-average t-stat on gross\n")
                 .append("opposite = the same rule traded the other way (gross)\n\n");
-        out.append(String.format("%-58s %6s %5s %7s %7s %7s %7s %6s %6s %7s %7s %8s %8s  %s%n",
-                "rule", "n", "/day", "raw", "gross", "net", "net2.5L", "win%", "t", "H1 gr", "H2 gr", "opp gr", "Rs/day", "verdict"));
+        out.append(String.format("%-58s %6s %5s %7s %7s %7s %7s %6s %6s %7s %7s %8s %8s %8s %8s  %s%n",
+                "rule", "n", "/day", "raw", "gross", "net", "net2.5L", "win%", "t", "H1 gr", "H2 gr", "opp gr", "Rs/day",
+                "worstDay", "maxDD", "verdict"));
 
         double roundTripSlipBps = 2 * slippagePct * 100;
         double bigCostBps = costBps(charges, BIG_NOTIONAL);
@@ -473,11 +586,14 @@ final class IntradaySignalStudy {
                     : opp1 > 0 && opp2 > 0 && t <= -2 ? "CANDIDATE (opposite)"
                     : "-";
             double netBig = gross - bigCostBps;
-            out.append(String.format("%-58s %6d %5.1f %7.1f %7.1f %7.1f %7.1f %6.1f %6.2f %7.1f %7.1f %8.1f %8.0f  %s%n",
+            double[] risk = dailyRisk(list);
+            out.append(String.format("%-58s %6d %5.1f %7.1f %7.1f %7.1f %7.1f %6.1f %6.2f %7.1f %7.1f %8.1f %8.0f %8.0f %8.0f  %s%n",
                     e.getKey(), list.size(), list.size() / (double) Math.max(1, tradeDays), raw, gross, net, netBig,
-                    win, t, g1, g2, opposite, rupeesPerDay, verdict));
+                    win, t, g1, g2, opposite, rupeesPerDay, risk[0], risk[1], verdict));
         }
-        out.append("\n/day = trades per day the rule fired; Rs/day = net per session over all sessions.\n")
+        out.append("\n/day = trades per day the rule fired; Rs/day = net per session over all sessions;\n")
+                .append("worstDay / maxDD = the worst single day and the deepest peak-to-trough fall of cumulative net, Rs,\n")
+                .append("every trade at Rs 50k.\n")
                 .append("Net needs gross above ~").append(String.format("%.0f", costBps(charges, NOTIONAL)))
                 .append(" bps (Rs 20 x 2 brokerage, STT, exchange, GST, stamp on Rs 50k); net2.5L = gross minus the ~")
                 .append(String.format("%.0f", bigCostBps))
@@ -491,6 +607,23 @@ final class IntradaySignalStudy {
     private static double costBps(IntradayChargesCalculator charges, double notional) {
         IntradayChargesCalculator.Charges c = charges.roundTrip("BUY", 100, 100, (int) (notional / 100));
         return c.getTotal() / notional * 1e4;
+    }
+
+    /** {worst day, max drawdown} of the rule's net rupees per day at Rs 50k a trade (both <= 0). */
+    static double[] dailyRisk(List<Trade> list) {
+        Map<LocalDate, Double> byDay = new TreeMap<>();
+        list.forEach(t -> byDay.merge(t.day(), t.netBps() / 1e4 * NOTIONAL, Double::sum));
+        double worst = 0;
+        double cum = 0;
+        double peak = 0;
+        double dd = 0;
+        for (double d : byDay.values()) {
+            worst = Math.min(worst, d);
+            cum += d;
+            peak = Math.max(peak, cum);
+            dd = Math.min(dd, cum - peak);
+        }
+        return new double[]{worst, dd};
     }
 
     private static double avg(List<Trade> list, java.util.function.ToDoubleFunction<Trade> f) {

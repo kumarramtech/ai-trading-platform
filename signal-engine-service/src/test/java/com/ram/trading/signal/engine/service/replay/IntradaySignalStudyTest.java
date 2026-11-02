@@ -156,6 +156,51 @@ class IntradaySignalStudyTest {
         assertTrue(netBig > 7 && netBig < 11, row);
     }
 
+    @Test
+    void round2BuysTheWeakestAcrossTheGridAndStopsOutAFallingStock() throws Exception {
+        Map<String, List<MinuteCandle>> series = new HashMap<>();
+        for (int i = 0; i < 40; i++) {
+            series.put("S" + i, day("S" + i, 100, 0.001 * i));
+        }
+        series.put("FALL", day("FALL", 100, -0.02));   // weakest all day: -0.6% by 09:45, -6% by 14:15
+
+        List<IntradaySignalStudy.Trade> trades = run(series);
+
+        // 27 grid rules, each buying its count of the weakest.
+        assertEquals(27, trades.stream().filter(t -> t.rule().startsWith("R2 weakest")).map(IntradaySignalStudy.Trade::rule)
+                .distinct().count());
+        assertEquals(20, trades.stream().filter(t -> t.rule().equals("R2 weakest20 09:30 -> 12:00 LONG")).count());
+        assertTrue(trades.stream().filter(t -> t.rule().startsWith("R2")).allMatch(IntradaySignalStudy.Trade::buy));
+
+        // FALL with no stop loses ~5.3% by 14:59; the 1.5% stop caps it near -1.5%.
+        double noStop = trades.stream().filter(t -> t.rule().equals("R2 weakest5  09:45 -> 15:00 LONG"))
+                .mapToDouble(IntradaySignalStudy.Trade::rawBps).min().orElseThrow();
+        double stopped = trades.stream().filter(t -> t.rule().equals("R2 base | stop 1.5%"))
+                .mapToDouble(IntradaySignalStudy.Trade::rawBps).min().orElseThrow();
+        assertTrue(noStop < -500, "no stop: " + noStop);
+        assertEquals(-150, stopped, 3);
+
+        // Flat NIFTY: every base trade lands in the flat/down bucket.
+        assertEquals(10, trades.stream().filter(t -> t.rule().equals("R2 base | NIFTY flat/down at 09:45")).count());
+        // No previous NIFTY close, no prev-close ranking.
+        assertTrue(trades.stream().noneMatch(t -> t.rule().equals("R2 base | ranked from prev close")));
+    }
+
+    @Test
+    void dailyRiskReportsTheWorstDayAndTheDeepestDrawdown() {
+        // +100, -100 (x2 trades = -Rs 1000), +20 bps: Rs +500, -1000, +100
+        List<IntradaySignalStudy.Trade> trades = List.of(
+                new IntradaySignalStudy.Trade(DAY, "R", true, 0, 0, 100),
+                new IntradaySignalStudy.Trade(DAY.plusDays(1), "R", true, 0, 0, -100),
+                new IntradaySignalStudy.Trade(DAY.plusDays(1), "R", true, 0, 0, -100),
+                new IntradaySignalStudy.Trade(DAY.plusDays(2), "R", true, 0, 0, 20));
+
+        double[] risk = IntradaySignalStudy.dailyRisk(trades);
+
+        assertEquals(-1000, risk[0], 0.01);
+        assertEquals(-1000, risk[1], 0.01);
+    }
+
     /** 20 sessions closing at 100 on 1M shares (Rs 10 crore turnover), range 99-101. */
     private static DailyBars dailyBars(java.util.Set<String> symbols) throws Exception {
         Map<String, List<DailyBars.Bar>> bars = new HashMap<>();
