@@ -60,6 +60,7 @@ final class IntradaySignalStudy {
     }
 
     static List<Trade> replayDay(LocalDate day, Map<String, List<MinuteCandle>> daySeries, List<MinuteCandle> nifty,
+                                 Double prevNiftyClose,
                                  DailyBars daily, double minPrice, double minTurnoverCrore, double slippagePct,
                                  LocalTime squareOff, IntradayChargesCalculator charges) {
         List<Stock> stocks = new ArrayList<>();
@@ -115,7 +116,141 @@ final class IntradaySignalStudy {
         vwapTrend(s, stocks, squareOff);
         breakout(s, stocks, squareOff);
         lateMarket(s, stocks);
+
+        // Study 2 (2026-11-02), fixed before the run: larger moves, the noise/news split,
+        // index momentum. Judged on both universes, both halves, and net at Rs 2.5 lakh.
+        overreaction(s, stocks, squareOff);
+        noiseOrNews(s, stocks, squareOff);
+        relativeStrengthBottomExit(s, stocks);
+        niftyMomentum(s, stocks, prevNiftyClose);
         return s.trades;
+    }
+
+    /** Liquidity rank cut for the large-cap rules: the most traded stocks of the day's universe. */
+    static final int LARGE_CAPS = 100;
+
+    private static List<Stock> largeCaps(List<Stock> stocks) {
+        return stocks.stream()
+                .sorted(Comparator.comparingDouble((Stock st) -> st.stats().avgTurnover20()).reversed())
+                .limit(LARGE_CAPS)
+                .toList();
+    }
+
+    /**
+     * OVERREACTION: a top-100 stock 2% or more away from NIFTY by 09:45 is traded back
+     * toward it until the exit. Larger dislocations should revert more than the
+     * bottom-10 average, in the stocks that are cheapest to trade.
+     */
+    private static void overreaction(Study s, List<Stock> stocks, LocalTime exit) {
+        LocalTime at = LocalTime.of(9, 45);
+        Double niftyMove = s.niftyMove(at);
+        if (niftyMove == null) {
+            return;
+        }
+        for (Stock st : largeCaps(stocks)) {
+            Double p = s.close(st, at);
+            if (p == null) {
+                continue;
+            }
+            double rel = (p - st.open()) / st.open() * 100 - niftyMove;
+            if (rel <= -2) {
+                s.trade("S2 OVERREACTION 09:45 top100 down >= 2% LONG", st, true, at, exit);
+            } else if (rel >= 2) {
+                s.trade("S2 OVERREACTION 09:45 top100 up >= 2% SHORT", st, false, at, exit);
+            }
+        }
+    }
+
+    /**
+     * NOISE or NEWS: the 10 weakest / strongest vs NIFTY at 09:45, split by how much
+     * they traded. A move on light volume (< 15% of a normal day by 09:45) is taken
+     * as order-flow noise and faded; on heavy volume (>= 40%) as news and followed.
+     */
+    private static void noiseOrNews(Study s, List<Stock> stocks, LocalTime exit) {
+        LocalTime at = LocalTime.of(9, 45);
+        Double niftyMove = s.niftyMove(at);
+        if (niftyMove == null) {
+            return;
+        }
+        List<Map.Entry<Stock, Double>> ranked = new ArrayList<>();
+        for (Stock st : stocks) {
+            Double p = s.close(st, at);
+            if (p != null && st.stats().avgVolume20() > 0) {
+                ranked.add(Map.entry(st, (p - st.open()) / st.open() * 100 - niftyMove));
+            }
+        }
+        if (ranked.size() < 4 * TOP) {
+            return;
+        }
+        ranked.sort(Map.Entry.comparingByValue());
+        List<Map.Entry<Stock, Double>> weakest = ranked.subList(0, TOP);
+        List<Map.Entry<Stock, Double>> strongest = ranked.subList(ranked.size() - TOP, ranked.size());
+        for (Map.Entry<Stock, Double> e : weakest) {
+            double rvol = volumeUntil(e.getKey().series(), at) / e.getKey().stats().avgVolume20();
+            if (rvol < 0.15) {
+                s.trade("S2 NOISE weakest10 light volume LONG (fade)", e.getKey(), true, at, exit);
+            } else if (rvol >= 0.40) {
+                s.trade("S2 NEWS weakest10 heavy volume SHORT (follow)", e.getKey(), false, at, exit);
+            }
+        }
+        for (Map.Entry<Stock, Double> e : strongest) {
+            double rvol = volumeUntil(e.getKey().series(), at) / e.getKey().stats().avgVolume20();
+            if (rvol < 0.15) {
+                s.trade("S2 NOISE strongest10 light volume SHORT (fade)", e.getKey(), false, at, exit);
+            } else if (rvol >= 0.40) {
+                s.trade("S2 NEWS strongest10 heavy volume LONG (follow)", e.getKey(), true, at, exit);
+            }
+        }
+    }
+
+    /** The one rule positive in both universes before (buy the 10 weakest at 09:45), held only to 12:00. */
+    private static void relativeStrengthBottomExit(Study s, List<Stock> stocks) {
+        LocalTime at = LocalTime.of(9, 45);
+        LocalTime exit = LocalTime.of(12, 0);
+        Double niftyMove = s.niftyMove(at);
+        if (niftyMove == null) {
+            return;
+        }
+        List<Map.Entry<Stock, Double>> ranked = new ArrayList<>();
+        for (Stock st : stocks) {
+            Double p = s.close(st, at);
+            if (p != null) {
+                ranked.add(Map.entry(st, (p - st.open()) / st.open() * 100 - niftyMove));
+            }
+        }
+        if (ranked.size() < 4 * TOP) {
+            return;
+        }
+        ranked.sort(Map.Entry.comparingByValue());
+        ranked.subList(0, TOP).forEach(e ->
+                s.trade("S2 weakest10 09:45 -> 12:00 LONG", e.getKey(), true, at, exit));
+    }
+
+    /**
+     * NIFTY_MOMENTUM (intraday index momentum, Gao-Han-Li-Zhou 2018): NIFTY's return from
+     * the previous close to 09:45 predicts its last half hour. The 10 most traded stocks
+     * stand in for the index, 14:45 -> 15:15, in the direction of that return when it is
+     * at least 0.25%.
+     */
+    private static void niftyMomentum(Study s, List<Stock> stocks, Double prevNiftyClose) {
+        if (prevNiftyClose == null || prevNiftyClose <= 0) {
+            return;
+        }
+        Double at945 = closeAt(s.nifty, LocalTime.of(9, 45));
+        if (at945 == null) {
+            return;
+        }
+        double early = (at945 - prevNiftyClose) / prevNiftyClose * 100;
+        if (Math.abs(early) < 0.25) {
+            return;
+        }
+        LocalTime in = LocalTime.of(14, 45);
+        LocalTime out = LocalTime.of(15, 16);
+        stocks.stream()
+                .sorted(Comparator.comparingDouble((Stock st) -> st.stats().avgTurnover20()).reversed())
+                .limit(TOP)
+                .forEach(st -> s.trade("S2 NIFTY_MOMENTUM close->09:45 >= 0.25%, 14:45 -> 15:15", st,
+                        early > 0, in, out));
     }
 
     private static void relativeStrength(Study s, List<Stock> stocks, LocalTime at, LocalTime exit) {
@@ -311,10 +446,11 @@ final class IntradaySignalStudy {
                 .append(days.size()).append(" sessions\n")
                 .append("gross = after 0.03% slippage each way, before charges; t = daily-average t-stat on gross\n")
                 .append("opposite = the same rule traded the other way (gross)\n\n");
-        out.append(String.format("%-58s %6s %5s %7s %7s %7s %6s %6s %7s %7s %8s %8s  %s%n",
-                "rule", "n", "/day", "raw", "gross", "net", "win%", "t", "H1 gr", "H2 gr", "opp gr", "Rs/day", "verdict"));
+        out.append(String.format("%-58s %6s %5s %7s %7s %7s %7s %6s %6s %7s %7s %8s %8s  %s%n",
+                "rule", "n", "/day", "raw", "gross", "net", "net2.5L", "win%", "t", "H1 gr", "H2 gr", "opp gr", "Rs/day", "verdict"));
 
         double roundTripSlipBps = 2 * slippagePct * 100;
+        double bigCostBps = costBps(charges, BIG_NOTIONAL);
         for (Map.Entry<String, List<Trade>> e : byRule.entrySet()) {
             List<Trade> list = e.getValue();
             double raw = avg(list, Trade::rawBps);
@@ -336,19 +472,25 @@ final class IntradaySignalStudy {
             String verdict = g1 > 0 && g2 > 0 && t >= 2 ? "CANDIDATE"
                     : opp1 > 0 && opp2 > 0 && t <= -2 ? "CANDIDATE (opposite)"
                     : "-";
-            out.append(String.format("%-58s %6d %5.1f %7.1f %7.1f %7.1f %6.1f %6.2f %7.1f %7.1f %8.1f %8.0f  %s%n",
-                    e.getKey(), list.size(), list.size() / (double) Math.max(1, tradeDays), raw, gross, net, win, t,
-                    g1, g2, opposite, rupeesPerDay, verdict));
+            double netBig = gross - bigCostBps;
+            out.append(String.format("%-58s %6d %5.1f %7.1f %7.1f %7.1f %7.1f %6.1f %6.2f %7.1f %7.1f %8.1f %8.0f  %s%n",
+                    e.getKey(), list.size(), list.size() / (double) Math.max(1, tradeDays), raw, gross, net, netBig,
+                    win, t, g1, g2, opposite, rupeesPerDay, verdict));
         }
         out.append("\n/day = trades per day the rule fired; Rs/day = net per session over all sessions.\n")
-                .append("Net needs gross above ~").append(String.format("%.0f", costBps(charges)))
-                .append(" bps (Rs 20 x 2 brokerage, STT, exchange, GST, stamp on Rs 50k).\n");
+                .append("Net needs gross above ~").append(String.format("%.0f", costBps(charges, NOTIONAL)))
+                .append(" bps (Rs 20 x 2 brokerage, STT, exchange, GST, stamp on Rs 50k); net2.5L = gross minus the ~")
+                .append(String.format("%.0f", bigCostBps))
+                .append(" bps charges of one Rs 2.5 lakh trade (fewer, larger trades; slippage kept at the same %).\n");
         return out.toString();
     }
 
-    private static double costBps(IntradayChargesCalculator charges) {
-        IntradayChargesCalculator.Charges c = charges.roundTrip("BUY", 100, 100, 500);
-        return c.getTotal() / NOTIONAL * 1e4;
+    /** One concentrated trade: the whole Rs 50k margin x 5x in a single position. */
+    static final double BIG_NOTIONAL = 250_000;
+
+    private static double costBps(IntradayChargesCalculator charges, double notional) {
+        IntradayChargesCalculator.Charges c = charges.roundTrip("BUY", 100, 100, (int) (notional / 100));
+        return c.getTotal() / notional * 1e4;
     }
 
     private static double avg(List<Trade> list, java.util.function.ToDoubleFunction<Trade> f) {

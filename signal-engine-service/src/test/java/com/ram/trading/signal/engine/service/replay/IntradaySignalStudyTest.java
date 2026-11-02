@@ -33,7 +33,12 @@ class IntradaySignalStudyTest {
     }
 
     private static List<IntradaySignalStudy.Trade> run(Map<String, List<MinuteCandle>> series) throws Exception {
-        return IntradaySignalStudy.replayDay(DAY, series, day("NIFTY", 20000, 0), dailyBars(series.keySet()),
+        return run(series, null);
+    }
+
+    private static List<IntradaySignalStudy.Trade> run(Map<String, List<MinuteCandle>> series, Double prevNiftyClose)
+            throws Exception {
+        return IntradaySignalStudy.replayDay(DAY, series, day("NIFTY", 20000, 0), prevNiftyClose, dailyBars(series.keySet()),
                 50, 5, 0.03, LocalTime.of(15, 0), new IntradayChargesCalculator());
     }
 
@@ -97,6 +102,58 @@ class IntradaySignalStudyTest {
 
         assertTrue(report.lines().anyMatch(l -> l.startsWith("STEADY") && l.endsWith("CANDIDATE")), report);
         assertTrue(report.lines().anyMatch(l -> l.startsWith("FIRST HALF ONLY") && l.endsWith("-")), report);
+    }
+
+    @Test
+    void study2FadesALargeCapOverreactionAndALightVolumeMove() throws Exception {
+        Map<String, List<MinuteCandle>> series = new HashMap<>();
+        for (int i = 0; i < 40; i++) {
+            series.put("S" + i, day("S" + i, 100, 0));
+        }
+        series.put("DROP", day("DROP", 100, -0.1));   // -3% by 09:45 on light volume (30k of 1M)
+        series.put("POP", day("POP", 100, 0.1));
+
+        List<IntradaySignalStudy.Trade> trades = run(series);
+
+        assertEquals(1, trades.stream().filter(t -> t.rule().startsWith("S2 OVERREACTION")
+                && t.rule().endsWith("LONG") && t.buy()).count());
+        assertEquals(1, trades.stream().filter(t -> t.rule().startsWith("S2 OVERREACTION")
+                && t.rule().endsWith("SHORT") && !t.buy()).count());
+        assertTrue(trades.stream().anyMatch(t -> t.rule().startsWith("S2 NOISE weakest10") && t.buy()));
+        assertTrue(trades.stream().anyMatch(t -> t.rule().startsWith("S2 NOISE strongest10") && !t.buy()));
+        assertTrue(trades.stream().noneMatch(t -> t.rule().startsWith("S2 NEWS")));
+        assertEquals(10, trades.stream().filter(t -> t.rule().equals("S2 weakest10 09:45 -> 12:00 LONG")).count());
+    }
+
+    @Test
+    void study2FollowsNiftysEarlyMoveInTheLastHalfHour() throws Exception {
+        Map<String, List<MinuteCandle>> series = new HashMap<>();
+        for (int i = 0; i < 40; i++) {
+            series.put("S" + i, day("S" + i, 100, 0));
+        }
+
+        // NIFTY at 20000 against a 19900 close: +0.5% by 09:45 -> the 10 most traded, long.
+        List<IntradaySignalStudy.Trade> up = run(series, 19900.0).stream()
+                .filter(t -> t.rule().startsWith("S2 NIFTY_MOMENTUM")).toList();
+        assertEquals(10, up.size());
+        assertTrue(up.stream().allMatch(IntradaySignalStudy.Trade::buy));
+
+        // +0.1% is too small; no previous close means no trade.
+        assertTrue(run(series, 19980.0).stream().noneMatch(t -> t.rule().startsWith("S2 NIFTY_MOMENTUM")));
+        assertTrue(run(series).stream().noneMatch(t -> t.rule().startsWith("S2 NIFTY_MOMENTUM")));
+    }
+
+    @Test
+    void reportShowsNetAtTheLargerSize() {
+        List<IntradaySignalStudy.Trade> trades = new ArrayList<>();
+        for (int d = 0; d < 20; d++) {
+            trades.add(new IntradaySignalStudy.Trade(DAY.plusDays(d), "R", true, 20, 14, 1));
+        }
+        String report = IntradaySignalStudy.render(trades, 0.03, new IntradayChargesCalculator());
+        // One Rs 2.5 lakh trade pays ~5 bps of charges (brokerage capped at Rs 20 per order), not ~13.
+        String row = report.lines().filter(l -> l.startsWith("R ")).findFirst().orElseThrow();
+        double netBig = Double.parseDouble(row.substring(58).trim().split("\\s+")[5]);
+        assertTrue(netBig > 7 && netBig < 11, row);
     }
 
     /** 20 sessions closing at 100 on 1M shares (Rs 10 crore turnover), range 99-101. */

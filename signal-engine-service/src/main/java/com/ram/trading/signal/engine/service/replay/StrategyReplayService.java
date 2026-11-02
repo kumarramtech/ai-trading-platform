@@ -199,6 +199,8 @@ public class StrategyReplayService {
 
         List<Result> results = new ArrayList<>();
         List<IntradaySignalStudy.Trade> study = new ArrayList<>();
+        // NIFTY's last close of the previous replayed session (the index has no daily bars here).
+        Double prevNiftyClose = null;
         int days = 0;
         for (LocalDate chunkStart = from; !chunkStart.isAfter(to); chunkStart = chunkStart.plusDays(CHUNK_CALENDAR_DAYS)) {
             LocalDate chunkEnd = chunkStart.plusDays(CHUNK_CALENDAR_DAYS - 1);
@@ -212,6 +214,7 @@ public class StrategyReplayService {
             Map<LocalDate, List<MinuteCandle>> bank = candles.remove("BANKNIFTY");
             if (nifty == null || bank == null) {
                 log.warn("STRATEGY REPLAY | No index candles for {} .. {}, chunk skipped", chunkStart, chunkEnd);
+                prevNiftyClose = null;
                 continue;
             }
 
@@ -227,8 +230,10 @@ public class StrategyReplayService {
                         daySeries.put(symbol, list);
                     }
                 });
-                study.addAll(IntradaySignalStudy.replayDay(day, daySeries, nifty.get(day), daily,
+                study.addAll(IntradaySignalStudy.replayDay(day, daySeries, nifty.get(day), prevNiftyClose, daily,
                         minPrice, minTurnoverCrore, slippagePct, squareOff, charges));
+                List<MinuteCandle> niftyDay = nifty.get(day);
+                prevNiftyClose = niftyDay.isEmpty() ? null : niftyDay.get(niftyDay.size() - 1).getClose();
                 days++;
             }
         }
