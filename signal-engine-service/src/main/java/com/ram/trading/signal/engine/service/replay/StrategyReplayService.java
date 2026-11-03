@@ -73,6 +73,8 @@ public class StrategyReplayService {
     private static final LocalTime ENTRY_START = LocalTime.of(9, 30);
     private static final LocalTime JUDAS_END = LocalTime.of(10, 30);
     private static final int CHUNK_CALENDAR_DAYS = 7;
+    // Above 500 symbols a week of 1-minute candles gets large for the 1.5 GB heap: fetch half weeks.
+    private static final int LARGE_UNIVERSE = 500;
 
     private final JdbcTemplate jdbc;
     private final IntradayChargesCalculator charges;
@@ -196,14 +198,16 @@ public class StrategyReplayService {
         progress("universe: " + universe.size() + " symbols, turnover rank " + (universeOffset + 1) + "-" + (universeOffset + universe.size()));
 
         DailyBars daily = DailyBars.load(jdbc, universe, from.minusDays(45), to.plusDays(1));
+        int chunkDays = universe.size() > LARGE_UNIVERSE ? 4 : CHUNK_CALENDAR_DAYS;
 
         List<Result> results = new ArrayList<>();
         List<IntradaySignalStudy.Trade> study = new ArrayList<>();
+        List<RiskBookStudy.DayResult> books = new ArrayList<>();
         // NIFTY's last close of the previous replayed session (the index has no daily bars here).
         Double prevNiftyClose = null;
         int days = 0;
-        for (LocalDate chunkStart = from; !chunkStart.isAfter(to); chunkStart = chunkStart.plusDays(CHUNK_CALENDAR_DAYS)) {
-            LocalDate chunkEnd = chunkStart.plusDays(CHUNK_CALENDAR_DAYS - 1);
+        for (LocalDate chunkStart = from; !chunkStart.isAfter(to); chunkStart = chunkStart.plusDays(chunkDays)) {
+            LocalDate chunkEnd = chunkStart.plusDays(chunkDays - 1);
             if (chunkEnd.isAfter(to)) {
                 chunkEnd = to;
             }
@@ -232,6 +236,8 @@ public class StrategyReplayService {
                 });
                 study.addAll(IntradaySignalStudy.replayDay(day, daySeries, nifty.get(day), prevNiftyClose, daily,
                         minPrice, minTurnoverCrore, slippagePct, squareOff, charges));
+                books.addAll(RiskBookStudy.replayDay(day, daySeries, nifty.get(day), daily,
+                        minPrice, minTurnoverCrore, slippagePct, charges));
                 List<MinuteCandle> niftyDay = nifty.get(day);
                 prevNiftyClose = niftyDay.isEmpty() ? null : niftyDay.get(niftyDay.size() - 1).getClose();
                 days++;
@@ -239,7 +245,8 @@ public class StrategyReplayService {
         }
 
         progress("simulated " + days + " sessions, " + results.size() + " setups; building report");
-        return IntradaySignalStudy.render(study, slippagePct, charges)
+        return RiskBookStudy.render(books)
+                + "\n" + IntradaySignalStudy.render(study, slippagePct, charges)
                 + "\n" + ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade)
                 + "\n" + ReplayExperiments.render(results, days, charges, slippagePct, maxNotional)
                 + "\n" + ReplayExperiments.renderBaseline(results, charges, slippagePct, maxNotional);
