@@ -106,7 +106,8 @@ public class AnalyticsController {
 
         LocalDate end = to != null ? to : now.toLocalDate().minusDays(1);
         LocalDate start = from != null ? from : end.minusDays(60);
-        int size = Math.max(10, Math.min(universe, 500));
+        // Up to 1000: the Round 3 risk books need turnover ranks 1-600 in one run.
+        int size = Math.max(10, Math.min(universe, 1000));
         if (!strategyReplayService.start(start, end, size, Math.max(0, offset))) {
             return ResponseEntity.status(409).body("A replay is already running; GET /analytics/replay for progress.");
         }
