@@ -44,6 +44,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.replay.MomentumPaperService momentumPaperService;
 
+    private final com.ram.trading.signal.engine.service.fadebook.FadePaperBookService fadePaperBookService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -191,6 +193,16 @@ public class AnalyticsController {
 
     private static <T> reactor.core.publisher.Mono<T> blocking(java.util.concurrent.Callable<T> work) {
         return reactor.core.publisher.Mono.fromCallable(work)
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+    }
+
+    /** The FADE paper book: the day's shorts (default today) and its record since the start. */
+    @GetMapping(value = "/fade-book", produces = "text/plain")
+    public reactor.core.publisher.Mono<String> fadeBook(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        // JPA: off the event loop.
+        return reactor.core.publisher.Mono.fromCallable(() -> fadePaperBookService.toText(day))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
