@@ -33,12 +33,12 @@ public class DailyTradingSummaryScheduler {
             DateTimeFormatter.ofPattern("HH:mm:ss");
 
     /**
-     * Runs every trading day at 3:40 PM IST.
+     * Runs every trading day at 3:31 PM IST, right after the close (paper trades square off at 15:00).
      *
-     * 15:40 = 3:40 PM
+     * 15:31 = 3:31 PM
      */
     @Scheduled(
-            cron = "0 40 15 * * MON-FRI",
+            cron = "0 31 15 * * MON-FRI",
             zone = "Asia/Kolkata"
     )
     public void sendDailyTradingSummary() {
