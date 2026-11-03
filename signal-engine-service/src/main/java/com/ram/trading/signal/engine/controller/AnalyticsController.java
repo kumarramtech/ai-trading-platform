@@ -40,6 +40,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.playbook.OpeningPlaybookService openingPlaybookService;
 
+    private final com.ram.trading.signal.engine.service.fadebook.FadePaperBookService fadePaperBookService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -151,6 +153,16 @@ public class AnalyticsController {
     @GetMapping(value = "/swing-backtest", produces = "text/plain")
     public String swingBacktestStatus() {
         return swingBacktestService.status();
+    }
+
+    /** The FADE paper book: the day's shorts (default today) and its record since the start. */
+    @GetMapping(value = "/fade-book", produces = "text/plain")
+    public reactor.core.publisher.Mono<String> fadeBook(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        // JPA: off the event loop.
+        return reactor.core.publisher.Mono.fromCallable(() -> fadePaperBookService.toText(day))
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */

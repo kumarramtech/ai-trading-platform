@@ -6,7 +6,6 @@ import com.ram.trading.signal.engine.service.charges.IntradayChargesCalculator;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,17 +24,13 @@ import java.util.TreeSet;
  * per position, and a DAILY STOP: once realized + open P&L (after slippage and charges)
  * reaches -D the whole book is closed and nothing more is traded that day. That bounds a
  * day's loss by construction; the replay measures how far gaps push past it. Books are
- * fixed before the run. Needs the replay universe to cover ranks 1-600 (universe >= 600).
+ * fixed before the run. Stock selection is {@link OpeningScreen}, shared with the live
+ * FADE paper book. Needs the replay universe to cover ranks 1-600 (universe >= 600).
  */
 final class RiskBookStudy {
 
     static final double CAPITAL = 100_000;
-    static final int FADE_POOL_FROM = 500;
-    static final int FADE_POOL_SIZE = 100;
-    static final int BOUNCE_POOL = 500;
-    static final double FADE_MIN_MOVE = 2.0;
-    private static final LocalTime OPEN = LocalTime.of(9, 15);
-    private static final LocalTime ENTRY = LocalTime.of(9, 45);
+    private static final LocalTime ENTRY = OpeningScreen.ENTRY;
 
     /** One account set-up. {@code fadeCount}/{@code bounceCount} 0 = that side off; dailyStop/takeProfit 0 = none. */
     record Book(String name, int fadeCount, int bounceCount, double notional, double fadeStopPct,
@@ -96,50 +91,19 @@ final class RiskBookStudy {
     static List<DayResult> replayDay(LocalDate day, Map<String, List<MinuteCandle>> daySeries, List<MinuteCandle> nifty,
                                      DailyBars daily, double minPrice, double minTurnoverCrore, double slippagePct,
                                      IntradayChargesCalculator charges) {
-        if (nifty == null || nifty.isEmpty()) {
+        OpeningScreen.Screen screen = OpeningScreen.screen(day, daySeries, nifty, daily, minPrice, minTurnoverCrore);
+        if (screen == null) {
             return List.of();
         }
-        Double nifty945 = IntradaySignalStudy.closeAt(nifty, ENTRY);
-        if (nifty945 == null) {
-            return List.of();
-        }
-        double niftyMove = (nifty945 - nifty.get(0).getOpen()) / nifty.get(0).getOpen() * 100;
-
-        // Liquid stocks by 20-session turnover, most traded first (same filter as the entry study).
-        record Liquid(String symbol, List<MinuteCandle> series, double turnover, double rel) {
-        }
-        List<Liquid> liquid = new ArrayList<>();
-        daySeries.forEach((symbol, series) -> {
-            DailyBars.Stats stats = daily.statsBefore(symbol, day);
-            if (stats == null || stats.avgTurnover20() < minTurnoverCrore * 1e7 || series.isEmpty()
-                    || series.get(0).getOpen() < minPrice
-                    || series.get(0).getMinute().toLocalTime().isAfter(OPEN.plusMinutes(5))) {
-                return;
-            }
-            Double p = IntradaySignalStudy.closeAt(series, ENTRY);
-            if (p != null) {
-                double open = series.get(0).getOpen();
-                liquid.add(new Liquid(symbol, series, stats.avgTurnover20(), (p - open) / open * 100 - niftyMove));
-            }
-        });
-        if (liquid.size() < FADE_POOL_FROM + FADE_POOL_SIZE / 2) {
-            return List.of();
-        }
-        liquid.sort(Comparator.comparingDouble(Liquid::turnover).reversed());
-        List<Liquid> fadePool = liquid.subList(FADE_POOL_FROM, Math.min(liquid.size(), FADE_POOL_FROM + FADE_POOL_SIZE))
-                .stream().filter(l -> l.rel() >= FADE_MIN_MOVE)
-                .sorted(Comparator.comparingDouble(Liquid::rel).reversed()).toList();
-        List<Liquid> bouncePool = liquid.subList(0, BOUNCE_POOL).stream()
-                .sorted(Comparator.comparingDouble(Liquid::rel)).toList();
 
         List<DayResult> out = new ArrayList<>();
         for (Book book : BOOKS) {
             List<Pick> picks = new ArrayList<>();
-            if (!book.fadeOnlyNiftyUp() || niftyMove > 0) {
-                fadePool.stream().limit(book.fadeCount())
+            if (!book.fadeOnlyNiftyUp() || screen.niftyMove() > 0) {
+                screen.fade().stream().limit(book.fadeCount())
                         .forEach(l -> picks.add(new Pick(l.symbol(), l.series(), false, book.fadeStopPct())));
             }
-            bouncePool.stream().limit(book.bounceCount())
+            screen.bounce().stream().limit(book.bounceCount())
                     .forEach(l -> picks.add(new Pick(l.symbol(), l.series(), true, book.bounceStopPct())));
             out.add(simulate(day, book, picks, slippagePct, charges));
         }
