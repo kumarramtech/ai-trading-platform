@@ -121,6 +121,9 @@ public class StrategyReplayService {
     @Value("${trading.replay.requests-per-second:6}")
     private int requestsPerSecond = 6;
 
+    /** The fetch rate of the run in progress (the setting, or the rate the run was started with). */
+    private volatile int runRequestsPerSecond = 6;
+
     public StrategyReplayService(
             JdbcTemplate jdbc,
             IntradayChargesCalculator charges,
@@ -151,12 +154,22 @@ public class StrategyReplayService {
 
     /** Starts a replay in the background; false when one is already running. */
     public synchronized boolean start(LocalDate from, LocalDate to, int universeSize, int universeOffset) {
+        return start(from, to, universeSize, universeOffset, false, 0);
+    }
+
+    /**
+     * fadeOnly: only the FADE studies (Round 3 books, Round 4), skipping the live-rule
+     * simulation; requestsPerSecond > 0 overrides the history fetch rate for this run.
+     */
+    public synchronized boolean start(LocalDate from, LocalDate to, int universeSize, int universeOffset,
+                                      boolean fadeOnly, int requestsPerSecond) {
         if ("RUNNING".equals(status.get().state())) {
             return false;
         }
         LocalDateTime started = LocalDateTime.now(IST);
         status.set(new Status("RUNNING", "starting", started, null, null));
-        Mono.fromCallable(() -> run(from, to, universeSize, universeOffset))
+        runRequestsPerSecond = requestsPerSecond > 0 ? requestsPerSecond : this.requestsPerSecond;
+        Mono.fromCallable(() -> run(from, to, universeSize, universeOffset, fadeOnly))
                 .subscribeOn(worker)
                 .subscribe(
                         report -> {
@@ -194,8 +207,20 @@ public class StrategyReplayService {
     }
 
     String run(LocalDate from, LocalDate to, int universeSize, int universeOffset) {
+        return run(from, to, universeSize, universeOffset, false);
+    }
+
+    String run(LocalDate from, LocalDate to, int universeSize, int universeOffset, boolean fadeOnly) {
         List<String> universe = universe(to, universeSize, universeOffset);
-        progress("universe: " + universe.size() + " symbols, turnover rank " + (universeOffset + 1) + "-" + (universeOffset + universe.size()));
+        progress("universe: " + universe.size() + " symbols, turnover rank " + (universeOffset + 1) + "-" + (universeOffset + universe.size())
+                + (fadeOnly ? ", fade studies only" : ""));
+        // Rank by turnover before the end date: the look-ahead Round 2 used (Round 4 measures it).
+        Map<String, Integer> endRank = new HashMap<>();
+        for (int i = 0; i < universe.size(); i++) {
+            endRank.put(universe.get(i), universeOffset + i);
+        }
+        List<FadeLookAheadStudy.Trade> round4 = new ArrayList<>();
+        List<LocalDate> round4Days = new ArrayList<>();
 
         DailyBars daily = DailyBars.load(jdbc, universe, from.minusDays(45), to.plusDays(1));
         int chunkDays = universe.size() > LARGE_UNIVERSE ? 4 : CHUNK_CALENDAR_DAYS;
@@ -226,7 +251,9 @@ public class StrategyReplayService {
                 if (!bank.containsKey(day)) {
                     continue;
                 }
-                results.addAll(replayDay(day, candles, nifty.get(day), bank.get(day), daily));
+                if (!fadeOnly) {
+                    results.addAll(replayDay(day, candles, nifty.get(day), bank.get(day), daily));
+                }
                 Map<String, List<MinuteCandle>> daySeries = new HashMap<>();
                 candles.forEach((symbol, byDay) -> {
                     List<MinuteCandle> list = byDay.get(day);
@@ -234,10 +261,18 @@ public class StrategyReplayService {
                         daySeries.put(symbol, list);
                     }
                 });
-                study.addAll(IntradaySignalStudy.replayDay(day, daySeries, nifty.get(day), prevNiftyClose, daily,
-                        minPrice, minTurnoverCrore, slippagePct, squareOff, charges));
+                if (!fadeOnly) {
+                    study.addAll(IntradaySignalStudy.replayDay(day, daySeries, nifty.get(day), prevNiftyClose, daily,
+                            minPrice, minTurnoverCrore, slippagePct, squareOff, charges));
+                }
                 books.addAll(RiskBookStudy.replayDay(day, daySeries, nifty.get(day), daily,
                         minPrice, minTurnoverCrore, slippagePct, charges));
+                List<FadeLookAheadStudy.Trade> fade = FadeLookAheadStudy.replayDay(day, daySeries, nifty.get(day),
+                        daily, endRank, minPrice, minTurnoverCrore, slippagePct, charges);
+                if (fade != null) {
+                    round4Days.add(day);
+                    round4.addAll(fade);
+                }
                 List<MinuteCandle> niftyDay = nifty.get(day);
                 prevNiftyClose = niftyDay.isEmpty() ? null : niftyDay.get(niftyDay.size() - 1).getClose();
                 days++;
@@ -245,7 +280,11 @@ public class StrategyReplayService {
         }
 
         progress("simulated " + days + " sessions, " + results.size() + " setups; building report");
-        return RiskBookStudy.render(books)
+        String fadeReports = FadeLookAheadStudy.render(round4, round4Days) + "\n" + RiskBookStudy.render(books);
+        if (fadeOnly) {
+            return fadeReports;
+        }
+        return fadeReports
                 + "\n" + IntradaySignalStudy.render(study, slippagePct, charges)
                 + "\n" + ReplayReport.render(from, to, days, universe.size(), results, riskPerTrade)
                 + "\n" + ReplayExperiments.render(results, days, charges, slippagePct, maxNotional)
@@ -269,7 +308,7 @@ public class StrategyReplayService {
 
         Map<String, Map<LocalDate, List<MinuteCandle>>> bySymbol = new HashMap<>();
         Flux.fromIterable(symbols)
-                .delayElements(Duration.ofMillis(1000L / Math.max(1, requestsPerSecond)))
+                .delayElements(Duration.ofMillis(1000L / Math.max(1, runRequestsPerSecond)))
                 .flatMap(symbol -> stockService.get()
                         .uri(b -> b.path("/api/v1/stocks/{symbol}/history")
                                 .queryParam("interval", "1minute")
@@ -283,7 +322,7 @@ public class StrategyReplayService {
                         .onErrorResume(e -> {
                             log.debug("STRATEGY REPLAY | History unavailable | Symbol={} | {}", symbol, e.getMessage());
                             return Mono.empty();
-                        }), 3)
+                        }), Math.max(3, runRequestsPerSecond / 2))
                 .doOnNext(e -> bySymbol.put(e.getKey(), e.getValue()))
                 .blockLast(Duration.ofMinutes(30));
         return bySymbol;

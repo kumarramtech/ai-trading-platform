@@ -163,4 +163,59 @@ class FadePaperBookServiceTest {
         assertEquals("5x40000 stop 1.5% day none tp 2000 nifty-up",
                 new FadePaperBookService.Settings(5, 40_000, 1.5, 0, 2000, true, 0.03).label());
     }
+
+    private static OpeningScreen.Ranked ranked(String symbol, int rank, double rel, double prevClose) {
+        List<MinuteCandle> s = series(symbol, 0);
+        return new OpeningScreen.Ranked(symbol, s, rank, rel, 100,
+                new com.ram.trading.signal.engine.service.replay.DailyBars.Stats(prevClose, 1e6, 1e8));
+    }
+
+    @Test
+    void selectKeepsThePoolAndItsFiltersBiggestFirst() {
+        List<OpeningScreen.Ranked> all = new ArrayList<>();
+        for (int i = 0; i < 1000; i++) {
+            all.add(ranked("X" + i, i, 0.5, 100));
+        }
+        all.set(510, ranked("IN_3", 510, 3.0, 100));            // in pool
+        all.set(520, ranked("IN_5", 520, 5.0, 100));            // in pool, bigger
+        all.set(530, ranked("TOO_BIG", 530, 9.0, 100));         // above max-move
+        all.set(540, ranked("GAPPED", 540, 3.0, 95));           // gap +5.3% from 95
+        all.set(450, ranked("OUT_RANK", 450, 6.0, 100));        // outside the pool
+        OpeningScreen.Ranking ranking = new OpeningScreen.Ranking(0.2, all);
+        FadePaperBookService.Pool pool = new FadePaperBookService.Pool(500, 1000, 2, 8, 0, 0, -100, 2);
+
+        OpeningScreen.Screen screen = FadePaperBookService.select(ranking, pool, r -> 1.0);
+
+        assertEquals(List.of("IN_5", "IN_3"), screen.fade().stream().map(OpeningScreen.Ranked::symbol).toList());
+        assertEquals("ranks 501-1000 up >= 2% < 8% gap < 2%", pool.label());
+        assertEquals(null, FadePaperBookService.select(new OpeningScreen.Ranking(0.2, all.subList(0, 700)), pool, r -> 1.0));
+    }
+
+    @Test
+    void spikeFilterIsAskedOnlyWhenSet() {
+        List<OpeningScreen.Ranked> all = new ArrayList<>();
+        for (int i = 0; i < 700; i++) {
+            all.add(ranked("X" + i, i, i == 510 || i == 520 ? 3.0 : 0.5, 100));
+        }
+        OpeningScreen.Ranking ranking = new OpeningScreen.Ranking(0.2, all);
+        FadePaperBookService.Pool spiky = new FadePaperBookService.Pool(500, 600, 2, 0, 1.5, 0, -100, 100);
+
+        OpeningScreen.Screen screen = FadePaperBookService.select(ranking, spiky, r -> r.symbol().equals("X510") ? 2.0 : 1.0);
+
+        assertEquals(List.of("X510"), screen.fade().stream().map(OpeningScreen.Ranked::symbol).toList());
+        assertEquals(2, FadePaperBookService.select(ranking, FadePaperBookService.Pool.ROUND3,
+                r -> { throw new AssertionError("spike not needed"); }).fade().size());
+    }
+
+    @Test
+    void everyCandidateAndNoStopWhenSetToZero() {
+        FadePaperBookService.Settings s = new FadePaperBookService.Settings(0, 40_000, 0, 0, 0, false, 0.03);
+        List<FadePaperTrade> trades = FadePaperBookService.open(DAY, screen(0.4, 7), s, charges);
+
+        assertEquals(7, trades.size());
+        assertTrue(trades.stream().allMatch(t -> t.getStopLoss() == null));
+        runDay(trades, 0.02, s);   // +6.4% squeeze by 15:00: no stop, so held to the exit
+        assertTrue(trades.stream().allMatch(t -> "TIME".equals(t.getExitReason())));
+        assertEquals("allx40000 stop none day none", s.label());
+    }
 }

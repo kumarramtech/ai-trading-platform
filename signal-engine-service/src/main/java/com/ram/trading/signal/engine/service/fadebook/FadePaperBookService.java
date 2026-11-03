@@ -103,26 +103,114 @@ public class FadePaperBookService {
     @Value("${trading.liquidity.min-average-turnover-crore:5}")
     private double minTurnoverCrore = 5;
 
+    // The pool (Round 4 rows map onto these): 1-based turnover ranks, inclusive.
+    @Value("${trading.fade-book.pool-from-rank:501}")
+    private int poolFromRank = 501;
+
+    @Value("${trading.fade-book.pool-to-rank:600}")
+    private int poolToRank = 600;
+
+    @Value("${trading.fade-book.min-move:2}")
+    private double minMove = 2;
+
+    /** % vs NIFTY; 0 = no maximum. */
+    @Value("${trading.fade-book.max-move:0}")
+    private double maxMove = 0;
+
+    /** Last 5 sessions' turnover / the 20-session average; 0 = no filter. */
+    @Value("${trading.fade-book.min-turnover-spike:0}")
+    private double minSpike = 0;
+
+    @Value("${trading.fade-book.max-turnover-spike:0}")
+    private double maxSpike = 0;
+
+    /** Gap from yesterday's close, %. */
+    @Value("${trading.fade-book.min-gap:-100}")
+    private double minGap = -100;
+
+    @Value("${trading.fade-book.max-gap:100}")
+    private double maxGap = 100;
+
     /** Day the 09:45 screen last ran (with or without picks), so it runs once a day. */
     private volatile LocalDate screenedDay;
 
-    /** The rules one day runs under. */
+    /** The rules one day runs under. positions 0 = every candidate; stopPct 0 = no stop. */
     record Settings(int positions, double notional, double stopPct, double dailyStop, double takeProfit,
                     boolean niftyUpOnly, double slippagePct) {
 
         String label() {
-            return String.format("%dx%.0f stop %s%% day %s%s%s", positions, notional, trim(stopPct),
+            return String.format("%sx%.0f stop %s day %s%s%s", positions > 0 ? String.valueOf(positions) : "all",
+                    notional, stopPct > 0 ? trim(stopPct) + "%" : "none",
                     dailyStop > 0 ? trim(dailyStop) : "none",
                     takeProfit > 0 ? " tp " + trim(takeProfit) : "", niftyUpOnly ? " nifty-up" : "");
         }
+    }
 
-        private static String trim(double v) {
-            return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
+    /** Which stocks are candidates at 09:45. Ranks 0-based, to exclusive. */
+    record Pool(int from, int to, double minMove, double maxMove, double minSpike, double maxSpike,
+                double minGap, double maxGap) {
+
+        static final Pool ROUND3 = new Pool(500, 600, 2, 0, 0, 0, -100, 100);
+
+        boolean needsSpike() {
+            return minSpike > 0 || maxSpike > 0;
         }
+
+        boolean accepts(OpeningScreen.Ranked r, double spike) {
+            double gap = OpeningScreen.gapPct(r);
+            return r.rank() >= from && r.rank() < to && r.rel() >= minMove && (maxMove <= 0 || r.rel() < maxMove)
+                    && (minSpike <= 0 || spike >= minSpike) && (maxSpike <= 0 || spike < maxSpike)
+                    && gap >= minGap && gap < maxGap;
+        }
+
+        String label() {
+            StringBuilder s = new StringBuilder(String.format("ranks %d-%d up >= %s%%", from + 1, to, trim(minMove)));
+            if (maxMove > 0) {
+                s.append(" < ").append(trim(maxMove)).append('%');
+            }
+            if (minSpike > 0) {
+                s.append(" spike >= ").append(trim(minSpike));
+            }
+            if (maxSpike > 0) {
+                s.append(" spike < ").append(trim(maxSpike));
+            }
+            if (minGap > -100) {
+                s.append(" gap >= ").append(trim(minGap)).append('%');
+            }
+            if (maxGap < 100) {
+                s.append(" gap < ").append(trim(maxGap)).append('%');
+            }
+            return s.toString();
+        }
+    }
+
+    private static String trim(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 
     Settings settings() {
         return new Settings(positions, notional, stopPct, dailyStop, takeProfit, niftyUpOnly, slippagePct);
+    }
+
+    Pool pool() {
+        return new Pool(poolFromRank - 1, poolToRank, minMove, maxMove, minSpike, maxSpike, minGap, maxGap);
+    }
+
+    /**
+     * The pool's candidates, biggest move first, as a screen; null when the liquid
+     * stocks do not reach half the pool. {@code spike} is only asked when the pool filters on it.
+     */
+    static OpeningScreen.Screen select(OpeningScreen.Ranking ranking, Pool pool,
+                                       java.util.function.ToDoubleFunction<OpeningScreen.Ranked> spike) {
+        if (ranking == null || ranking.ranked().size() < pool.from() + (pool.to() - pool.from()) / 2) {
+            return null;
+        }
+        List<OpeningScreen.Ranked> fade = ranking.ranked().stream()
+                .filter(r -> r.rank() >= pool.from() && r.rank() < pool.to() && r.rel() >= pool.minMove())
+                .filter(r -> pool.accepts(r, pool.needsSpike() ? spike.applyAsDouble(r) : 0))
+                .sorted(Comparator.comparingDouble(OpeningScreen.Ranked::rel).reversed())
+                .toList();
+        return new OpeningScreen.Screen(ranking.niftyMove(), ranking.ranked().size(), fade, List.of());
     }
 
     void setClock(Clock clock) {
@@ -201,7 +289,10 @@ public class FadePaperBookService {
         List<MinuteCandle> nifty = series.remove("NIFTY");
         series.remove("BANKNIFTY");
         DailyBars daily = DailyBars.load(jdbc, null, day.minusDays(45), day);
-        OpeningScreen.Screen screen = OpeningScreen.screen(day, series, nifty, daily, minPrice, minTurnoverCrore);
+        Pool pool = pool();
+        OpeningScreen.Screen screen = select(
+                OpeningScreen.rank(day, series, nifty, daily, minPrice, minTurnoverCrore), pool,
+                r -> OpeningScreen.turnoverSpike(daily, r, day));
         if (screen == null) {
             // Retried by the monitor until LAST_ENTRY (candles may still be arriving).
             log.warn("FADE BOOK | No screen for {} | Stocks with candles={} | NIFTY candles={}",
@@ -213,10 +304,10 @@ public class FadePaperBookService {
         Settings s = settings();
         List<FadePaperTrade> trades = open(day, screen, s, charges);
         repository.saveAll(trades);
-        log.info("FADE BOOK | {} | NIFTY {}% at 09:45 | Liquid={} | Candidates={} | Shorts={} | Book={}",
+        log.info("FADE BOOK | {} | NIFTY {}% at 09:45 | Liquid={} | Candidates={} | Shorts={} | Book={} | Pool={}",
                 day, String.format("%+.2f", screen.niftyMove()), screen.liquid(), screen.fade().size(),
-                trades.size(), s.label());
-        notifySlack("FADE book: " + trades.size() + " short(s) at 09:45", entryText(day, screen, trades, s));
+                trades.size(), s.label(), pool.label());
+        notifySlack("FADE book: " + trades.size() + " short(s) at 09:45", entryText(day, screen, trades, s, pool));
         return trades;
     }
 
@@ -229,7 +320,7 @@ public class FadePaperBookService {
         }
         LocalDateTime at = day.atTime(OpeningScreen.ENTRY);
         for (OpeningScreen.Ranked r : screen.fade()) {
-            if (trades.size() >= s.positions()) {
+            if (s.positions() > 0 && trades.size() >= s.positions()) {
                 break;
             }
             double entry = r.price() * (1 - s.slippagePct() / 100);
@@ -246,7 +337,7 @@ public class FadePaperBookService {
                     .quantity(qty)
                     .entryPrice(round(entry))
                     .entryTime(at.plusMinutes(1))
-                    .stopLoss(round(entry * (1 + s.stopPct() / 100)))
+                    .stopLoss(s.stopPct() > 0 ? round(entry * (1 + s.stopPct() / 100)) : null)
                     .lastPrice(r.price())
                     .lastMinute(at)
                     .status(OPEN)
@@ -308,7 +399,7 @@ public class FadePaperBookService {
                     continue;
                 }
                 t.setLastMinute(minute);
-                if (c.getHigh() >= t.getStopLoss()) {
+                if (t.getStopLoss() != null && c.getHigh() >= t.getStopLoss()) {
                     close(t, Math.max(t.getStopLoss(), c.getOpen()), minute.plusMinutes(1), "STOP", s, charges);
                     realized += t.getNetPnl();
                     closed.add(t);
@@ -407,7 +498,7 @@ public class FadePaperBookService {
         List<FadePaperTrade> all = repository.findAllByOrderByTradeDateAscIdAsc();
         List<FadePaperTrade> today = all.stream().filter(t -> t.getTradeDate().equals(day)).toList();
 
-        StringBuilder out = new StringBuilder(String.format("FADE PAPER BOOK %s  |  book %s%s%n", day, s.label(),
+        StringBuilder out = new StringBuilder(String.format("FADE PAPER BOOK %s  |  book %s  |  %s%s%n", day, s.label(), pool().label(),
                 enabled ? "" : "  |  DISABLED"));
         if (today.isEmpty()) {
             out.append("No shorts today.\n");
@@ -415,9 +506,9 @@ public class FadePaperBookService {
             out.append(String.format("%-12s %4s %6s %9s %5s %9s %9s %9s %-9s %8s%n",
                     "Symbol", "rank", "rel%", "entry", "qty", "stop", "last", "exit", "reason", "net Rs"));
             for (FadePaperTrade t : today) {
-                out.append(String.format("%-12s %4d %+6.2f %9.2f %5d %9.2f %9.2f %9s %-9s %8s%n",
+                out.append(String.format("%-12s %4d %+6.2f %9.2f %5d %9s %9.2f %9s %-9s %8s%n",
                         t.getSymbol(), t.getTurnoverRank(), t.getRelMovePct(), t.getEntryPrice(), t.getQuantity(),
-                        t.getStopLoss(), t.getLastPrice(),
+                        t.getStopLoss() == null ? "-" : String.format("%.2f", t.getStopLoss()), t.getLastPrice(),
                         t.getExitPrice() == null ? "-" : String.format("%.2f", t.getExitPrice()),
                         t.getExitReason() == null ? OPEN : t.getExitReason(),
                         t.getNetPnl() == null ? String.format("~%.0f", mark(t, t.getLastPrice(), s, charges))
@@ -447,19 +538,19 @@ public class FadePaperBookService {
     }
 
     private static String entryText(LocalDate day, OpeningScreen.Screen screen, List<FadePaperTrade> trades,
-                                    Settings s) {
+                                    Settings s, Pool pool) {
         StringBuilder out = new StringBuilder(String.format(
-                "FADE BOOK %s | NIFTY %+.2f%% at 09:45 | %d of ranks 501-600 up >= 2%% vs NIFTY | book %s%n",
-                day, screen.niftyMove(), screen.fade().size(), s.label()));
+                "FADE BOOK %s | NIFTY %+.2f%% at 09:45 | %d candidates (%s vs NIFTY) | book %s%n",
+                day, screen.niftyMove(), screen.fade().size(), pool.label(), s.label()));
         if (trades.isEmpty()) {
             out.append(s.niftyUpOnly() && screen.niftyMove() <= 0 ? "NIFTY not up: no shorts today."
                     : "No candidates: no shorts today.");
             return out.toString();
         }
         for (FadePaperTrade t : trades) {
-            out.append(String.format("SHORT %-12s rank %3d  %+.2f%%  qty %d @ %.2f  stop %.2f%n",
+            out.append(String.format("SHORT %-12s rank %3d  %+.2f%%  qty %d @ %.2f  stop %s%n",
                     t.getSymbol(), t.getTurnoverRank(), t.getRelMovePct(), t.getQuantity(), t.getEntryPrice(),
-                    t.getStopLoss()));
+                    t.getStopLoss() == null ? "none" : String.format("%.2f", t.getStopLoss())));
         }
         return out.append(s.dailyStop() > 0 ? String.format("Day stop: all covered at Rs -%.0f.", s.dailyStop())
                 : "No day stop.").toString();
