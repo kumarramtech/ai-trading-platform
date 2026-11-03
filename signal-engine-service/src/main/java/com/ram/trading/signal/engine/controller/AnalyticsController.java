@@ -97,7 +97,9 @@ public class AnalyticsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
             @RequestParam(required = false, defaultValue = "200") int universe,
-            @RequestParam(required = false, defaultValue = "0") int offset) {
+            @RequestParam(required = false, defaultValue = "0") int offset,
+            @RequestParam(required = false, defaultValue = "all") String mode,
+            @RequestParam(required = false, defaultValue = "0") int rps) {
 
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
         LocalTime t = now.toLocalTime();
@@ -110,11 +112,14 @@ public class AnalyticsController {
         LocalDate start = from != null ? from : end.minusDays(60);
         // Up to 1000: the Round 3 risk books need turnover ranks 1-600 in one run.
         int size = Math.max(10, Math.min(universe, 1000));
-        if (!strategyReplayService.start(start, end, size, Math.max(0, offset))) {
+        // mode=fade: only the FADE studies (skips the live-rule simulation); rps: history fetch rate, at most 20.
+        boolean fadeOnly = "fade".equalsIgnoreCase(mode);
+        if (!strategyReplayService.start(start, end, size, Math.max(0, offset), fadeOnly, Math.max(0, Math.min(rps, 20)))) {
             return ResponseEntity.status(409).body("A replay is already running; GET /analytics/replay for progress.");
         }
         return ResponseEntity.accepted().body("Replay started: " + start + " to " + end + ", top " + size
-                + " stocks from turnover rank " + (Math.max(0, offset) + 1) + ". GET /analytics/replay for progress and the report.");
+                + " stocks from turnover rank " + (Math.max(0, offset) + 1) + (fadeOnly ? ", fade studies only" : "")
+                + ". GET /analytics/replay for progress and the report.");
     }
 
     /** Today's 09:31 opening playbook (stocks in play); rebuild=true recomputes it now. */
