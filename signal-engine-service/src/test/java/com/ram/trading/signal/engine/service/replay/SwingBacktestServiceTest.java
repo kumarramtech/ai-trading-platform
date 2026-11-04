@@ -106,6 +106,63 @@ class SwingBacktestServiceTest {
         assertTrue(worstWeekly > worstMonthly, "weekly " + weekly + " vs monthly " + monthly);
     }
 
+    @Test
+    void weeklyEntryBuysWhenTheIndexRecoversItsAverageMidMonth() {
+        int n = 400;
+        LocalDate[] d = new LocalDate[n];
+        double[] c = new double[n], v = new double[n];
+        LocalDate day = LocalDate.of(2025, 1, 1);
+        int october = (int) java.time.temporal.ChronoUnit.DAYS.between(day, LocalDate.of(2025, 10, 1));
+        for (int i = 0; i < n; i++) {
+            d[i] = day.plusDays(i);
+            // A rising index that dips below its average around 1 October (a Wednesday), back by Sunday the 5th.
+            c[i] = i >= october - 3 && i <= october + 2 ? 50 : 100 + i * 0.2;
+            v[i] = 1_000_000;
+        }
+        SwingBacktestService.Series index = new SwingBacktestService.Series("NIFTY", d, c, c, c, c, v);
+        SwingBacktestService.Series up = trend("UP", d, 0.002);
+        SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
+
+        var monthly = svc.momentumPortfolio(Map.of("UP", up), d,
+                new SwingBacktestService.PortfolioRule("m", 1, true, 126, 21, false, 0, false, 100, 0, false, false, 0), index);
+        var weekly = svc.momentumPortfolio(Map.of("UP", up), d,
+                new SwingBacktestService.PortfolioRule("e", 1, true, 126, 21, false, 0, false, 100, 0, false, true, 0), index);
+
+        LocalDate oct = LocalDate.of(2025, 10, 1);
+        assertEquals(0.0, monthly.get(oct), 1e-12, "the locked rule sits out October in cash");
+        // Bought at the 6 October open (Monday), held to 1 November: ~26 days of +0.2%.
+        assertEquals(Math.pow(1.002, 26) - 1, weekly.get(oct), 1e-6);
+        assertEquals(monthly.get(LocalDate.of(2025, 11, 1)), weekly.get(LocalDate.of(2025, 11, 1)), 1e-12);
+    }
+
+    @Test
+    void stopSellsACollapsingStockAndKeepsTheSlotInCash() {
+        int n = 400;
+        LocalDate[] d = new LocalDate[n];
+        double[] c = new double[n], v = new double[n];
+        LocalDate day = LocalDate.of(2025, 1, 1);
+        for (int i = 0; i < n; i++) {
+            d[i] = day.plusDays(i);
+            c[i] = i < 300 ? 100 + i * 0.2 : 160 * Math.pow(0.98, i - 300);   // up, then -2% a day
+            v[i] = 1_000_000;
+        }
+        SwingBacktestService.Series stock = new SwingBacktestService.Series("S", d, c, c, c, c, v);
+        SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
+
+        var none = svc.momentumPortfolio(Map.of("S", stock), d,
+                new SwingBacktestService.PortfolioRule("n", 1, true, 126, 21, false, 0, false, 0, 0, false, false, 0));
+        var stop = svc.momentumPortfolio(Map.of("S", stock), d,
+                new SwingBacktestService.PortfolioRule("s", 1, true, 126, 21, false, 0, false, 0, 0, false, false, 15));
+
+        double worstNone = none.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
+        double worstStop = stop.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
+        assertTrue(worstNone < -0.30, "held the whole fall: " + none);
+        // Sold at the open after the first close 15% under the buy price (2% a day lower): about -18%.
+        assertTrue(worstStop > -0.20 && worstStop < -0.15, "stopped: " + stop);
+        // Before the fall the stop never fires.
+        assertEquals(none.firstEntry().getValue(), stop.firstEntry().getValue(), 1e-12);
+    }
+
     private static SwingBacktestService.Series trend(String symbol, LocalDate[] d, double dailyChange) {
         int n = d.length;
         double[] o = new double[n], h = new double[n], l = new double[n], c = new double[n], v = new double[n];

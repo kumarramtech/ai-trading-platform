@@ -40,7 +40,13 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.playbook.OpeningPlaybookService openingPlaybookService;
 
+    private final com.ram.trading.signal.engine.service.replay.MomentumSignalService momentumSignalService;
+
+    private final com.ram.trading.signal.engine.service.replay.MomentumPaperService momentumPaperService;
+
     private final com.ram.trading.signal.engine.service.fadebook.FadePaperBookService fadePaperBookService;
+
+    private final com.ram.trading.signal.engine.service.longterm.LongTermMonitorService longTermMonitorService;
 
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
@@ -158,6 +164,49 @@ public class AnalyticsController {
     @GetMapping(value = "/swing-backtest", produces = "text/plain")
     public String swingBacktestStatus() {
         return swingBacktestService.status();
+    }
+
+    /** This month's momentum list from the latest closes; not stored or sent (takes ~2 minutes). */
+    @GetMapping(value = "/momentum-signal", produces = "text/plain")
+    public reactor.core.publisher.Mono<String> momentumSignalPreview() {
+        // Blocking (history fetch, JDBC): off the event loop.
+        return blocking(() -> momentumSignalService.toText(momentumSignalService.preview()));
+    }
+
+    /** Stores this month's list and sends it to Slack; force=true replaces a list already published. */
+    @PostMapping(value = "/momentum-signal/publish", produces = "text/plain")
+    public reactor.core.publisher.Mono<ResponseEntity<String>> publishMomentumSignal(
+            @RequestParam(required = false, defaultValue = "false") boolean force) {
+        return blocking(() -> momentumSignalService.publish(force)
+                .map(s -> ResponseEntity.ok(momentumSignalService.toText(s)))
+                .orElseGet(() -> ResponseEntity.status(409)
+                        .body("This month's list is already published; force=true replaces it.")));
+    }
+
+    /** Paper momentum portfolio: return since the start vs NIFTY, cash, holdings. */
+    @GetMapping(value = "/momentum-paper", produces = "text/plain")
+    public String momentumPaperReport() {
+        return momentumPaperService.report();
+    }
+
+    /** Trades this month's published list on paper now (once per month). */
+    @PostMapping(value = "/momentum-paper/rebalance", produces = "text/plain")
+    public reactor.core.publisher.Mono<ResponseEntity<String>> rebalanceMomentumPaper() {
+        return blocking(() -> momentumPaperService.rebalance()
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(409)
+                        .body("No list published this month yet, or this month is already traded.")));
+    }
+
+    /** Long-term holdings as the monitor last priced them, and the rules in force. */
+    @GetMapping(value = "/long-term-monitor", produces = "text/plain")
+    public reactor.core.publisher.Mono<String> longTermMonitor() {
+        return blocking(longTermMonitorService::status);
+    }
+
+    private static <T> reactor.core.publisher.Mono<T> blocking(java.util.concurrent.Callable<T> work) {
+        return reactor.core.publisher.Mono.fromCallable(work)
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
     /** The FADE paper book: the day's shorts (default today) and its record since the start. */
