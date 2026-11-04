@@ -85,7 +85,37 @@ public class MomentumPaperService {
                 + "open_positions int not null, nifty_close double)");
     }
 
-    record Holding(long id, String symbol, int quantity, double entryPrice, double buyCharges) {
+    public record Holding(long id, String symbol, int quantity, double entryPrice, double buyCharges) {
+    }
+
+    /** The open paper holdings (for the long-term monitor). */
+    public List<Holding> holdings() {
+        return open();
+    }
+
+    /**
+     * Sells one holding at the live price (slippage worse, delivery charges) outside a
+     * rebalance: the long-term monitor's stop. The cash waits for the next rebalance.
+     * Returns the realised P&L, or null when the holding is no longer open.
+     */
+    public synchronized Double sell(Holding h, double ltp, String reason) {
+        LocalDate today = LocalDate.now(IST);
+        accrueInterest(today);
+        double fill = ltp * (1 - slippagePct / 100);
+        double value = fill * h.quantity();
+        double charges = DeliveryCharges.sellSide(value, brokerage);
+        double pnl = value - charges - h.entryPrice() * h.quantity() - h.buyCharges();
+        int updated = jdbc.update("update momentum_paper_position set exit_day = ?, exit_price = ?, sell_charges = ?, "
+                + "net_pnl = ?, status = 'CLOSED' where id = ? and status = 'OPEN'", today, fill, charges, pnl, h.id());
+        if (updated == 0) {
+            return null;
+        }
+        jdbc.update("update momentum_paper_account set cash = cash + ? where id = 1", value - charges);
+        String text = String.format("PAPER MOMENTUM SELL %s (%s): %d @ %.2f, bought %.2f, P&L Rs %+.0f%n%s",
+                h.symbol(), reason, h.quantity(), fill, h.entryPrice(), pnl, report());
+        log.info("{}", text);
+        send("Paper momentum stop: " + h.symbol(), text);
+        return pnl;
     }
 
     /** Creates the account with the virtual capital on first use. */
@@ -132,7 +162,12 @@ public class MomentumPaperService {
      * the list is CASH), then buys the new names at an equal share of equity.
      * Returns the Slack text, or empty when there is no list yet or it was traded.
      */
-    public synchronized java.util.Optional<String> rebalance() {
+    public java.util.Optional<String> rebalance() {
+        return rebalance(false);
+    }
+
+    /** {@code force}: trade the list again although this month was traded (the weekly entry after a cash month). */
+    public synchronized java.util.Optional<String> rebalance(boolean force) {
         LocalDate today = LocalDate.now(IST);
         String month = YearMonth.from(today).toString();
         List<String> list = jdbc.queryForList(
@@ -140,7 +175,7 @@ public class MomentumPaperService {
         cash(today);
         String done = jdbc.queryForObject("select last_rebalance_month from momentum_paper_account where id = 1",
                 String.class);
-        if (list.isEmpty() || month.equals(done)) {
+        if (list.isEmpty() || (month.equals(done) && !force)) {
             return java.util.Optional.empty();
         }
         accrueInterest(today);

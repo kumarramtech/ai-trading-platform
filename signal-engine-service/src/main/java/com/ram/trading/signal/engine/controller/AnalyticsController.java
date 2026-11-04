@@ -46,6 +46,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.fadebook.FadePaperBookService fadePaperBookService;
 
+    private final com.ram.trading.signal.engine.service.longterm.LongTermMonitorService longTermMonitorService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -194,6 +196,12 @@ public class AnalyticsController {
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(409)
                         .body("No list published this month yet, or this month is already traded.")));
+    }
+
+    /** Long-term holdings as the monitor last priced them, and the rules in force. */
+    @GetMapping(value = "/long-term-monitor", produces = "text/plain")
+    public reactor.core.publisher.Mono<String> longTermMonitor() {
+        return blocking(longTermMonitorService::status);
     }
 
     private static <T> reactor.core.publisher.Mono<T> blocking(java.util.concurrent.Callable<T> work) {

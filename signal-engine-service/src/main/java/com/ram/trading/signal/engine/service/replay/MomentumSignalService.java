@@ -144,6 +144,31 @@ public class MomentumSignalService {
         return java.util.Optional.of(signal);
     }
 
+    /** True when the month's stored list is the market filter's CASH row. */
+    public boolean cashMonth(YearMonth month) {
+        Integer n = jdbc.queryForObject("select count(*) from momentum_signal where list_month = ? and symbol = ?",
+                Integer.class, month.toString(), CASH);
+        return n != null && n > 0;
+    }
+
+    /** NIFTY's last completed close above its regime average: one history request, no ranking. */
+    public boolean riskOnNow() {
+        LocalDate today = LocalDate.now(IST);
+        LocalDate from = today.minusDays(330);
+        HistoricalCandleResponse r = stockService.get()
+                .uri(b -> b.path("/api/v1/stocks/{symbol}/history")
+                        .queryParam("interval", "day")
+                        .queryParam("from", from).queryParam("to", today.minusDays(1))
+                        .build("NIFTY"))
+                .retrieve().bodyToMono(HistoricalCandleResponse.class)
+                .block(Duration.ofSeconds(30));
+        Series nifty = r == null ? null : SwingBacktestService.since(SwingBacktestService.toSeries("NIFTY", r.getCandles()), from);
+        if (nifty == null || nifty.size() < regimeSma) {
+            throw new IllegalStateException("No NIFTY daily history (broker token or stock-service down?)");
+        }
+        return SwingBacktestService.aboveAverage(nifty, nifty.date()[nifty.size() - 1], regimeSma);
+    }
+
     /** Symbols of the last stored month before {@code month} (empty after a cash month). */
     List<String> previous(YearMonth month) {
         return jdbc.queryForList("select symbol from momentum_signal where symbol <> ? and list_month = "
