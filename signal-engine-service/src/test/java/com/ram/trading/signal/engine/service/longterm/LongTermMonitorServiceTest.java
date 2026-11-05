@@ -40,6 +40,7 @@ class LongTermMonitorServiceTest {
     private MomentumSignalService signal;
     private StockServiceClient stocks;
     private NotificationClient notifications;
+    private JdbcTemplate jdbc;
     private LongTermMonitorService monitor;
 
     @BeforeEach
@@ -48,7 +49,7 @@ class LongTermMonitorServiceTest {
         signal = mock(MomentumSignalService.class);
         stocks = mock(StockServiceClient.class);
         notifications = mock(NotificationClient.class);
-        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        jdbc = mock(JdbcTemplate.class);
         when(notifications.sendNotification(any())).thenReturn(Mono.empty());
         when(jdbc.queryForList(anyString(), eq(Double.class), any(Object[].class))).thenReturn(List.of());
         when(paper.holdings()).thenReturn(List.of(abc));
@@ -106,8 +107,7 @@ class LongTermMonitorServiceTest {
         verify(paper, never()).sell(any(), anyDouble(), anyString());
     }
 
-    @Test
-    void weeklyEntryListsBeforeTheOpenAndBuysAfterIt() {
+    private void weeklyEntryReady() {
         ReflectionTestUtils.setField(monitor, "weeklyEntry", true);
         when(paper.holdings()).thenReturn(List.of());
         when(signal.cashMonth(YearMonth.of(2026, 11))).thenReturn(true);
@@ -117,6 +117,41 @@ class LongTermMonitorServiceTest {
                 List.of(), List.of("ABC"), List.of(), List.of());
         when(signal.publish(true)).thenReturn(Optional.of(listed));
         when(paper.rebalance(true)).thenReturn(Optional.of("bought"));
+    }
+
+    private void niftyCandles(LocalDate from, LocalDate to, int count) {
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), eq(from), eq(to))).thenReturn(count);
+    }
+
+    @Test
+    void weeklyEntryOnlyInTheWeeksFirstSessionEvenAfterARestart() {
+        weeklyEntryReady();
+        niftyCandles(LocalDate.of(2026, 11, 2), WED, 750);   // Monday and Tuesday traded
+
+        monitor.tick(WED.atTime(8, 53));
+
+        verify(signal, never()).publish(anyBoolean());
+    }
+
+    @Test
+    void weeklyEntryWaitsOutAMarketHoliday() {
+        weeklyEntryReady();
+        niftyCandles(WED, WED.plusDays(1), 0);               // closed today
+        niftyCandles(WED.plusDays(1), WED.plusDays(2), 5);   // open tomorrow
+
+        monitor.tick(WED.atTime(8, 53));
+        monitor.tick(WED.atTime(9, 20, 10));
+        monitor.tick(WED.atTime(10, 1));
+        verify(paper, never()).rebalance(anyBoolean());
+
+        monitor.tick(WED.plusDays(1).atTime(9, 20, 10));
+        verify(paper, times(1)).rebalance(true);
+    }
+
+    @Test
+    void weeklyEntryListsBeforeTheOpenAndBuysAfterIt() {
+        weeklyEntryReady();
+        niftyCandles(WED, WED.plusDays(1), 5);
 
         monitor.tick(WED.atTime(8, 53));
         monitor.tick(WED.atTime(8, 54));

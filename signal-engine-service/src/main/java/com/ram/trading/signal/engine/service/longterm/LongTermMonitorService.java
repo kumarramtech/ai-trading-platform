@@ -44,9 +44,9 @@ import java.util.concurrent.TimeUnit;
  *     (a close below the stop), so an intraday wick does not shake a holding out;
  *   - alerts once a day when NIFTY is {@code nifty-drop-pct} below yesterday's close.
  * Rebalancing stays monthly (MomentumSignalScheduler). With {@code weekly-entry} on, a
- * month the market filter left in cash is entered on the first weekday of the first
- * week after NIFTY closed back above its average: list at 08:52, paper buys at 09:20.
- * stop-pct 0 = alerts only; both rules ship off until the backtest supports them.
+ * month the market filter left in cash is entered on the first session of the first
+ * week after NIFTY closed back above its average: list at 08:52, paper buys from 09:20.
+ * stop-pct 0 = alerts only.
  */
 @Service
 @Slf4j
@@ -57,6 +57,7 @@ public class LongTermMonitorService {
     private static final LocalTime CLOSE = LocalTime.of(15, 29);
     private static final LocalTime LIST_TIME = LocalTime.of(8, 52);
     private static final LocalTime BUY_TIME = LocalTime.of(9, 20);
+    private static final LocalTime HOLIDAY_BY = LocalTime.of(10, 0);
 
     private final MomentumPaperService paper;
     private final MomentumSignalService signal;
@@ -201,17 +202,32 @@ public class LongTermMonitorService {
         YearMonth month = YearMonth.from(today);
         if (week != weekChecked && !t.isBefore(LIST_TIME) && t.isBefore(OPEN)) {
             weekChecked = week;
-            if (signal.cashMonth(month) && signal.riskOnNow()) {
+            // The week's first session only, as backtested; the candles also survive a restart mid-week.
+            LocalDate monday = today.with(DayOfWeek.MONDAY);
+            if (niftySessions(monday, today) == 0 && signal.cashMonth(month) && signal.riskOnNow()) {
                 signal.publish(true).filter(s -> !s.target().isEmpty()).ifPresent(s -> {
                     buyOn = today;
                     log.info("LONG-TERM WEEKLY ENTRY | NIFTY back above its average | {} stocks listed", s.target().size());
                 });
             }
         }
-        if (today.equals(buyOn) && !t.isBefore(BUY_TIME)) {
-            buyOn = null;
-            paper.rebalance(true).ifPresent(text -> log.info("LONG-TERM WEEKLY ENTRY BOUGHT\n{}", text));
+        if (buyOn != null && !today.isBefore(buyOn) && !t.isBefore(BUY_TIME)) {
+            if (niftySessions(today, today.plusDays(1)) > 0) {
+                buyOn = null;
+                paper.rebalance(true).ifPresent(text -> log.info("LONG-TERM WEEKLY ENTRY BOUGHT\n{}", text));
+            } else if (t.isAfter(HOLIDAY_BY)) {
+                // No NIFTY candle by mid-morning: a market holiday, so the buy waits for the next weekday.
+                buyOn = today.plusDays(1);
+                log.info("LONG-TERM WEEKLY ENTRY | No NIFTY candles today, buying on the next session");
+            }
         }
+    }
+
+    /** NIFTY minute candles from {@code from} (inclusive) to {@code to} (exclusive): 0 means no session. */
+    private int niftySessions(LocalDate from, LocalDate to) {
+        Integer n = jdbc.queryForObject("select count(*) from minute_candle where symbol = 'NIFTY' "
+                + "and candle_minute >= ? and candle_minute < ?", Integer.class, from, to);
+        return n == null ? 0 : n;
     }
 
     private void niftyCheck(LocalDate today) {
