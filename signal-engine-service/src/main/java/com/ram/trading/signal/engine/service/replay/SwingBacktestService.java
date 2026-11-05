@@ -232,6 +232,10 @@ public class SwingBacktestService {
                 PortfolioRule.live("LIVE + weekly entry + stop 20%", true, 20))) {
             out.append(renderPortfolio(rule, momentumPortfolio(data, calendar, rule, niftyFull), calendar, nifty.close()));
         }
+        out.append("\nMANAGED MOMENTUM (the live rule day by day; exits decided on the close, filled at the next open)\n");
+        for (ManagedRule rule : MANAGED_RULES) {
+            out.append(renderManaged(rule, managedPortfolio(data, calendar, rule, niftyFull), calendar));
+        }
         out.append("\n");
         out.append("Go-live bar for swing: avg >= +0.30R net, PF >= 1.5, max DD <= 15% of capital, beats NIFTY.\n");
         return out.toString();
@@ -780,6 +784,217 @@ public class SwingBacktestService {
     private static boolean newWeek(LocalDate[] calendar, int d) {
         return calendar[d].getDayOfWeek().getValue() < calendar[d - 1].getDayOfWeek().getValue()
                 || java.time.temporal.ChronoUnit.DAYS.between(calendar[d - 1], calendar[d]) > 3;
+    }
+
+    /** Which sessions a month that started in cash may buy on, once NIFTY closed back above its average. */
+    enum EntryDay { MONTH_START, FIRST_OF_WEEK, ANY_DAY }
+
+    /**
+     * The live rule with exits during the month. {@code targetPct}: sell after a close that
+     * far above the real buy price. {@code trailPct}: sell after a close that far below the
+     * highest close since buying. {@code refill}: put the proceeds in the best-ranked stock
+     * not held and not sold this month, while NIFTY is above its average; otherwise they
+     * earn the cash yield until the next rebalance.
+     */
+    record ManagedRule(String name, EntryDay entry, double targetPct, double trailPct, boolean refill) {
+    }
+
+    record ManagedResult(TreeMap<LocalDate, Double> months, double dailyMaxDdPct, int cashMonths, int midMonthEntries,
+                         int targetExits, int trailExits, int refills, double costs) {
+    }
+
+    private static final List<ManagedRule> MANAGED_RULES = List.of(
+            new ManagedRule("locked: month start only", EntryDay.MONTH_START, 0, 0, false),
+            new ManagedRule("weekly entry (running now)", EntryDay.FIRST_OF_WEEK, 0, 0, false),
+            new ManagedRule("daily entry", EntryDay.ANY_DAY, 0, 0, false),
+            new ManagedRule("daily + target 20%, cash", EntryDay.ANY_DAY, 20, 0, false),
+            new ManagedRule("daily + target 30%, cash", EntryDay.ANY_DAY, 30, 0, false),
+            new ManagedRule("daily + target 50%, cash", EntryDay.ANY_DAY, 50, 0, false),
+            new ManagedRule("daily + target 20%, refill", EntryDay.ANY_DAY, 20, 0, true),
+            new ManagedRule("daily + target 30%, refill", EntryDay.ANY_DAY, 30, 0, true),
+            new ManagedRule("daily + target 50%, refill", EntryDay.ANY_DAY, 50, 0, true),
+            new ManagedRule("daily + trail 15%, cash", EntryDay.ANY_DAY, 0, 15, false),
+            new ManagedRule("daily + trail 20%, cash", EntryDay.ANY_DAY, 0, 20, false),
+            new ManagedRule("daily + trail 25%, cash", EntryDay.ANY_DAY, 0, 25, false),
+            new ManagedRule("daily + trail 30%, cash", EntryDay.ANY_DAY, 0, 30, false),
+            new ManagedRule("daily + trail 15%, refill", EntryDay.ANY_DAY, 0, 15, true),
+            new ManagedRule("daily + trail 20%, refill", EntryDay.ANY_DAY, 0, 20, true),
+            new ManagedRule("daily + trail 25%, refill", EntryDay.ANY_DAY, 0, 25, true),
+            new ManagedRule("daily + trail 30%, refill", EntryDay.ANY_DAY, 0, 30, true),
+            new ManagedRule("daily + target 30% + trail 25%, refill", EntryDay.ANY_DAY, 30, 25, true));
+
+    private static final class ManagedPosition {
+        final Series series;
+        final double buyPrice;
+        double shares;
+        double peak;
+        double last;
+
+        ManagedPosition(Series series, double buyPrice, double shares) {
+            this.series = series;
+            this.buyPrice = buyPrice;
+            this.shares = shares;
+            this.peak = buyPrice;
+            this.last = buyPrice;
+        }
+
+        double openOn(LocalDate day) {
+            int i = series.indexOf(day);
+            return i >= 0 ? series.open()[i] : last;
+        }
+    }
+
+    /**
+     * Day-by-day version of the live rule, so a target and a trailing stop see the real buy
+     * price and the peak across months, and the fall is measured on daily closes. As in
+     * {@link #momentumPortfolio}, kept stocks return to an equal slot each month free of
+     * charge, and the last unfinished month is not reported.
+     */
+    ManagedResult managedPortfolio(Map<String, Series> data, LocalDate[] calendar, ManagedRule rule, Series index) {
+        PortfolioRule base = PortfolioRule.live(rule.name(), false, 0);
+        PortfolioRule wide = new PortfolioRule(rule.name(), base.top() * 3, true, base.lookback(), base.skip(),
+                base.volAdjusted(), base.brokerage(), base.costs(), base.regimeSma(), base.cashYieldPct(), false, false, 0);
+        TreeMap<LocalDate, Double> months = new TreeMap<>();
+        Map<String, ManagedPosition> book = new java.util.LinkedHashMap<>();
+        java.util.Set<String> soldThisMonth = new java.util.HashSet<>();
+        double[] cash = {capital};
+        double[] costs = {0};
+        double peakEquity = capital, maxDd = 0, monthStartEquity = capital;
+        LocalDate monthStart = null;
+        boolean waiting = false;
+        boolean invested = false;
+        int cashMonths = 0, entries = 0, targetExits = 0, trailExits = 0, refills = 0;
+
+        for (int d = base.lookback() + 2; d < calendar.length; d++) {
+            LocalDate day = calendar[d];
+            LocalDate prev = calendar[d - 1];
+            boolean rebalance = day.getMonthValue() != prev.getMonthValue();
+            if (monthStart == null && !rebalance) {
+                continue;
+            }
+            cash[0] += Math.max(0, cash[0]) * base.cashYieldPct() / 100
+                    * java.time.temporal.ChronoUnit.DAYS.between(prev, day) / 365;
+            double openEquity = cash[0];
+            for (ManagedPosition p : book.values()) {
+                openEquity += p.shares * p.openOn(day);
+            }
+            boolean riskOn = aboveAverage(index, prev, base.regimeSma());
+
+            if (rebalance) {
+                if (monthStart != null) {
+                    months.put(monthStart, openEquity / monthStartEquity - 1);
+                    cashMonths += invested ? 0 : 1;
+                }
+                monthStart = day;
+                monthStartEquity = openEquity;
+                soldThisMonth.clear();
+                List<String> target = riskOn ? topList(data, base, prev, day) : List.of();
+                book.keySet().removeIf(sym -> {
+                    if (!target.contains(sym)) {
+                        sellManaged(book.get(sym), day, cash, costs, base);
+                        return true;
+                    }
+                    return false;
+                });
+                buyTarget(data, target, openEquity / base.top(), day, book, cash, costs, base);
+                invested = !target.isEmpty();
+                waiting = !riskOn && rule.entry() != EntryDay.MONTH_START;
+            } else {
+                boolean entryDay = rule.entry() == EntryDay.ANY_DAY || newWeek(calendar, d);
+                if (waiting && entryDay && riskOn) {
+                    buyTarget(data, topList(data, base, prev, day), openEquity / base.top(), day, book, cash, costs, base);
+                    waiting = false;
+                    invested = true;
+                    entries++;
+                }
+                List<Double> proceeds = new ArrayList<>();
+                for (ManagedPosition p : List.copyOf(book.values())) {
+                    boolean hitTarget = rule.targetPct() > 0 && p.last >= p.buyPrice * (1 + rule.targetPct() / 100);
+                    boolean hitTrail = rule.trailPct() > 0 && p.last <= p.peak * (1 - rule.trailPct() / 100);
+                    if ((hitTarget || hitTrail) && p.series.indexOf(day) >= 0) {
+                        proceeds.add(sellManaged(p, day, cash, costs, base));
+                        book.remove(p.series.symbol());
+                        soldThisMonth.add(p.series.symbol());
+                        targetExits += hitTarget ? 1 : 0;
+                        trailExits += hitTarget ? 0 : 1;
+                    }
+                }
+                if (rule.refill() && !proceeds.isEmpty() && riskOn) {
+                    List<String> next = topList(data, wide, prev, day).stream()
+                            .filter(sym -> !book.containsKey(sym) && !soldThisMonth.contains(sym)).toList();
+                    for (int i = 0; i < proceeds.size() && i < next.size(); i++) {
+                        buyTarget(data, List.of(next.get(i)), proceeds.get(i), day, book, cash, costs, base);
+                        refills++;
+                    }
+                }
+            }
+
+            double closeEquity = cash[0];
+            for (ManagedPosition p : book.values()) {
+                int i = p.series.indexOf(day);
+                if (i >= 0) {
+                    p.last = p.series.close()[i];
+                    p.peak = Math.max(p.peak, p.last);
+                }
+                closeEquity += p.shares * p.last;
+            }
+            peakEquity = Math.max(peakEquity, closeEquity);
+            maxDd = Math.max(maxDd, (peakEquity - closeEquity) / peakEquity);
+        }
+        return new ManagedResult(months, maxDd * 100, cashMonths, entries, targetExits, trailExits, refills, costs[0]);
+    }
+
+    /** Sells at the day's open and returns the money received after charges and slippage. */
+    private double sellManaged(ManagedPosition p, LocalDate day, double[] cash, double[] costs, PortfolioRule base) {
+        double value = p.shares * p.openOn(day);
+        double cost = DeliveryCharges.sellSide(value, base.brokerage()) + value * slippagePct / 100;
+        cash[0] += value - cost;
+        costs[0] += cost;
+        return value - cost;
+    }
+
+    /** Brings each symbol to {@code amount} at the day's open; only new positions pay charges. */
+    private void buyTarget(Map<String, Series> data, List<String> symbols, double amount, LocalDate day,
+                           Map<String, ManagedPosition> book, double[] cash, double[] costs, PortfolioRule base) {
+        for (String sym : symbols) {
+            ManagedPosition held = book.get(sym);
+            if (held != null) {
+                double open = held.openOn(day);
+                cash[0] += held.shares * open - amount;
+                held.shares = amount / open;
+                continue;
+            }
+            Series s = data.get(sym);
+            double open = s.open()[s.indexOf(day)];
+            double cost = DeliveryCharges.buySide(amount, base.brokerage()) + amount * slippagePct / 100;
+            cash[0] -= amount + cost;
+            costs[0] += cost;
+            book.put(sym, new ManagedPosition(s, open, amount / open));
+        }
+    }
+
+    private String renderManaged(ManagedRule rule, ManagedResult result, LocalDate[] calendar) {
+        if (result.months().isEmpty()) {
+            return "  " + rule.name() + ": no data\n";
+        }
+        double equity = 1, peak = 1, monthEndDd = 0;
+        int up = 0;
+        for (double m : result.months().values()) {
+            equity *= 1 + m;
+            peak = Math.max(peak, equity);
+            monthEndDd = Math.max(monthEndDd, (peak - equity) / peak);
+            up += m > 0 ? 1 : 0;
+        }
+        int first = java.util.Arrays.binarySearch(calendar, result.months().firstKey());
+        double total = equity - 1;
+        return String.format("  %-40s total %+7.1f%% | %+6.1f%%/yr | DD month-end %5.1f%% daily %5.1f%% | +months %2d/%2d"
+                        + " | worst month %+5.1f%% | in cash %2d | late entries %2d | target exits %3d | trail exits %3d"
+                        + " | refills %3d | costs Rs %6.0f%n",
+                rule.name(), total * 100, annualised(total, calendar.length - Math.max(0, first)), monthEndDd * 100,
+                result.dailyMaxDdPct(), up, result.months().size(),
+                result.months().values().stream().mapToDouble(Double::doubleValue).min().orElse(0) * 100,
+                result.cashMonths(), result.midMonthEntries(), result.targetExits(), result.trailExits(),
+                result.refills(), result.costs());
     }
 
     /** The rule's top list ranked on {@code signalDay}'s close, among stocks trading on {@code tradeDay}. */

@@ -163,6 +163,112 @@ class SwingBacktestServiceTest {
         assertEquals(none.firstEntry().getValue(), stop.firstEntry().getValue(), 1e-12);
     }
 
+    private static SwingBacktestService newService() {
+        return new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
+    }
+
+    private static LocalDate[] days(int n) {
+        LocalDate[] d = new LocalDate[n];
+        for (int i = 0; i < n; i++) {
+            d[i] = LocalDate.of(2025, 1, 1).plusDays(i);
+        }
+        return d;
+    }
+
+    private static SwingBacktestService.ManagedRule managed(SwingBacktestService.EntryDay entry, double target, double trail,
+                                                            boolean refill) {
+        return new SwingBacktestService.ManagedRule("m", entry, target, trail, refill);
+    }
+
+    @Test
+    void managedBaselineReproducesTheLockedRule() {
+        LocalDate[] d = days(500);
+        // Up, then a bear market below the average, then a recovery: invested and cash months both.
+        double[] c = new double[500], v = new double[500];
+        for (int i = 0; i < 500; i++) {
+            c[i] = i < 250 ? 100 + i * 0.2 : i < 350 ? 150 - (i - 250) * 1.0 : 50 + (i - 350) * 1.0;
+            v[i] = 1_000_000;
+        }
+        SwingBacktestService.Series index = new SwingBacktestService.Series("NIFTY", d, c, c, c, c, v);
+        Map<String, SwingBacktestService.Series> data = Map.of("UP", trend("UP", d, 0.002), "SLOW", trend("SLOW", d, 0.001));
+        SwingBacktestService svc = newService();
+
+        var locked = svc.momentumPortfolio(data, d, SwingBacktestService.PortfolioRule.live("l", false, 0), index);
+        var day = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 0, 0, false), index);
+
+        assertEquals(locked.keySet(), day.months().keySet());
+        locked.forEach((month, r) -> assertEquals(r, day.months().get(month), 0.001, "month " + month));
+        assertTrue(day.cashMonths() > 0, "the bear market is sat out in cash");
+    }
+
+    @Test
+    void anyDayEntryBuysBeforeTheWeeklyEntryAfterTheIndexRecovers() {
+        LocalDate[] d = days(400);
+        double[] c = new double[400], v = new double[400];
+        int october = (int) java.time.temporal.ChronoUnit.DAYS.between(d[0], LocalDate.of(2025, 10, 1));
+        for (int i = 0; i < 400; i++) {
+            // Below the average from before 1 October (a Wednesday) to the 3rd; back above from the 4th.
+            c[i] = i >= october - 3 && i <= october + 2 ? 50 : 100 + i * 0.2;
+            v[i] = 1_000_000;
+        }
+        SwingBacktestService.Series index = new SwingBacktestService.Series("NIFTY", d, c, c, c, c, v);
+        Map<String, SwingBacktestService.Series> data = Map.of("UP", trend("UP", d, 0.002));
+        SwingBacktestService svc = newService();
+        LocalDate oct = LocalDate.of(2025, 10, 1);
+
+        var locked = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 0, 0, false), index);
+        var weekly = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.FIRST_OF_WEEK, 0, 0, false), index);
+        var daily = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.ANY_DAY, 0, 0, false), index);
+
+        assertEquals(0, locked.midMonthEntries());
+        assertEquals(1, weekly.midMonthEntries());
+        assertEquals(1, daily.midMonthEntries());
+        assertTrue(daily.months().get(oct) > weekly.months().get(oct) && weekly.months().get(oct) > locked.months().get(oct),
+                "earlier entry earns more of the rise: " + daily.months().get(oct) + " " + weekly.months().get(oct));
+    }
+
+    @Test
+    void trailingStopFollowsThePeakAcrossMonthsAndSellsAfterTheFall() {
+        LocalDate[] d = days(400);
+        double[] c = new double[400], v = new double[400];
+        for (int i = 0; i < 400; i++) {
+            c[i] = i < 300 ? 100 + i * 0.2 : 160 * Math.pow(0.98, i - 300);   // up, then -2% a day
+            v[i] = 1_000_000;
+        }
+        SwingBacktestService.Series stock = new SwingBacktestService.Series("S", d, c, c, c, c, v);
+        SwingBacktestService.Series index = trend("NIFTY", d, 0.001);
+        Map<String, SwingBacktestService.Series> data = Map.of("S", stock);
+        SwingBacktestService svc = newService();
+
+        var hold = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 0, 0, false), index);
+        var trail = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 0, 15, false), index);
+
+        assertEquals(0, hold.trailExits());
+        assertTrue(trail.trailExits() >= 1, "sold on the way down");
+        assertTrue(trail.dailyMaxDdPct() < hold.dailyMaxDdPct(), trail.dailyMaxDdPct() + " vs " + hold.dailyMaxDdPct());
+    }
+
+    @Test
+    void targetSellsOnTheRealBuyPriceAndRefillBuysTheNextBest() {
+        LocalDate[] d = days(400);
+        Map<String, SwingBacktestService.Series> data = new java.util.HashMap<>();
+        for (int k = 0; k < 31; k++) {   // one more stock than the 30 slots
+            data.put("S" + k, trend("S" + k, d, 0.002));
+        }
+        SwingBacktestService.Series index = trend("NIFTY", d, 0.001);
+        SwingBacktestService svc = newService();
+
+        // +10% takes about 48 days, so a target measured from each month's price could never fire.
+        var cash = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 10, 0, false), index);
+        var refill = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 10, 0, true), index);
+        var hold = svc.managedPortfolio(data, d, managed(SwingBacktestService.EntryDay.MONTH_START, 0, 0, false), index);
+
+        assertTrue(cash.targetExits() >= 30, "exits " + cash.targetExits());
+        assertEquals(0, cash.refills());
+        assertTrue(refill.refills() >= 1, "refills " + refill.refills());
+        assertTrue(hold.costs() < cash.costs(), "selling early pays charges again");
+    }
+
     private static SwingBacktestService.Series trend(String symbol, LocalDate[] d, double dailyChange) {
         int n = d.length;
         double[] o = new double[n], h = new double[n], l = new double[n], c = new double[n], v = new double[n];
