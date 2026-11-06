@@ -221,6 +221,7 @@ public class StrategyReplayService {
         }
         List<FadeLookAheadStudy.Trade> round4 = new ArrayList<>();
         List<LocalDate> round4Days = new ArrayList<>();
+        List<FadeBothMarketsStudy.Day> round5 = new ArrayList<>();
 
         DailyBars daily = DailyBars.load(jdbc, universe, from.minusDays(45), to.plusDays(1));
         int chunkDays = universe.size() > LARGE_UNIVERSE ? 4 : CHUNK_CALENDAR_DAYS;
@@ -273,6 +274,11 @@ public class StrategyReplayService {
                     round4Days.add(day);
                     round4.addAll(fade);
                 }
+                FadeBothMarketsStudy.Day both = FadeBothMarketsStudy.replayDay(day, daySeries, nifty.get(day), prevNiftyClose,
+                        daily, minPrice, minTurnoverCrore, slippagePct, charges);
+                if (both != null) {
+                    round5.add(both);
+                }
                 List<MinuteCandle> niftyDay = nifty.get(day);
                 prevNiftyClose = niftyDay.isEmpty() ? null : niftyDay.get(niftyDay.size() - 1).getClose();
                 days++;
@@ -280,7 +286,8 @@ public class StrategyReplayService {
         }
 
         progress("simulated " + days + " sessions, " + results.size() + " setups; building report");
-        String fadeReports = FadeLookAheadStudy.render(round4, round4Days) + "\n" + RiskBookStudy.render(books);
+        String fadeReports = FadeBothMarketsStudy.render(round5) + "\n" + FadeLookAheadStudy.render(round4, round4Days)
+                + "\n" + RiskBookStudy.render(books);
         if (fadeOnly) {
             return fadeReports;
         }

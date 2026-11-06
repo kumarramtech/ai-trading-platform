@@ -219,6 +219,14 @@ public class AnalyticsController {
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
+    /** The FADE paper book as JSON for a dashboard: the day's shorts (default today) and its record. */
+    @GetMapping(value = "/fade-book/summary", produces = "application/json")
+    public reactor.core.publisher.Mono<com.ram.trading.signal.engine.service.fadebook.FadePaperBookService.BookView> fadeBookSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        return blocking(() -> fadePaperBookService.toView(day));
+    }
+
     /** Progress of the running replay, or the report of the last one (plain text). */
     @GetMapping(value = "/replay", produces = "text/plain")
     public String replayStatus() {

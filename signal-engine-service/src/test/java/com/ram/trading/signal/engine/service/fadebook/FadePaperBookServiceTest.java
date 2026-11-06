@@ -156,6 +156,45 @@ class FadePaperBookServiceTest {
                 chunked.stream().map(FadePaperTrade::getExitReason).toList());
     }
 
+    private FadePaperTrade closedTrade(LocalDate day, double net) {
+        return FadePaperTrade.builder().tradeDate(day).symbol("S").quantity(10).entryPrice(100.0).lastPrice(100.0)
+                .status(FadePaperBookService.CLOSED).exitPrice(100.0).exitReason("TIME").netPnl(net).build();
+    }
+
+    @Test
+    void viewEstimatesAnOpenShortAndLeavesItsDayOutOfTheRecord() {
+        LocalDate yesterday = DAY.minusDays(1);
+        FadePaperTrade open = FadePaperTrade.builder().tradeDate(DAY).symbol("OPEN1").quantity(10).entryPrice(100.0)
+                .lastPrice(90.0).status(FadePaperBookService.OPEN).build();
+        List<FadePaperTrade> all = List.of(closedTrade(yesterday, -300), closedTrade(yesterday, 100),
+                closedTrade(DAY, 50), open);
+
+        FadePaperBookService.BookView view = FadePaperBookService.view(DAY, all, settings(1500),
+                FadePaperBookService.Pool.ROUND3, true, charges);
+
+        assertEquals(2, view.trades().size());
+        assertEquals(1, view.openTrades());
+        assertTrue(view.dayPnlEstimated());
+        double openPnl = view.trades().get(1).pnl();
+        assertTrue(view.trades().get(1).pnlEstimated() && openPnl > 0 && openPnl < 100, "marked at 90: " + openPnl);
+        assertEquals(50 + openPnl, view.dayPnl(), 0.01);
+        assertEquals(1, view.record().sessions(), "the unfinished day is not in the record");
+        assertEquals(-200, view.record().total(), 0.01);
+        assertEquals(yesterday, view.record().since());
+        assertEquals(1, view.record().days().get(0).winners());
+    }
+
+    @Test
+    void viewOfAnEmptyBook() {
+        FadePaperBookService.BookView view = FadePaperBookService.view(DAY, List.of(), settings(1500),
+                FadePaperBookService.Pool.ROUND3, true, charges);
+
+        assertTrue(view.paperOnly() && view.trades().isEmpty());
+        assertEquals(0, view.dayPnl());
+        assertEquals(0, view.record().sessions());
+        assertEquals(null, view.record().since());
+    }
+
     @Test
     void labelNamesTheBook() {
         assertEquals("5x40000 stop 2% day 1500",

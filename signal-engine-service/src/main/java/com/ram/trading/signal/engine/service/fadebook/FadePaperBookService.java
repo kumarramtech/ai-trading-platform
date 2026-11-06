@@ -537,6 +537,64 @@ public class FadePaperBookService {
         return out.toString();
     }
 
+    /** One short for a dashboard. {@code pnl}: the final net, or while open the estimate at the last close. */
+    public record TradeView(Long id, String symbol, Integer turnoverRank, Double relMovePct, Double niftyMovePct,
+                            Integer quantity, Double entryPrice, LocalDateTime entryTime, Double stopLoss,
+                            Double lastPrice, Double exitPrice, LocalDateTime exitTime, String exitReason,
+                            String status, Double charges, double pnl, boolean pnlEstimated) {
+    }
+
+    public record DayView(LocalDate date, int trades, int winners, double net) {
+    }
+
+    /** Finished sessions only; a session with an open short is left out, as in the text report. */
+    public record RecordView(LocalDate since, int sessions, double total, double perSession, int winDays,
+                             double worstDay, double bestDay, int dayStops, List<DayView> days) {
+    }
+
+    public record BookView(LocalDate date, boolean enabled, boolean paperOnly, String book, String pool,
+                           List<TradeView> trades, int openTrades, double dayPnl, boolean dayPnlEstimated,
+                           RecordView record) {
+    }
+
+    /** The same figures as {@link #toText}, as data. */
+    public BookView toView(LocalDate day) {
+        return view(day, repository.findAllByOrderByTradeDateAscIdAsc(), settings(), pool(), enabled, charges);
+    }
+
+    static BookView view(LocalDate day, List<FadePaperTrade> all, Settings s, Pool pool, boolean enabled,
+                         IntradayChargesCalculator charges) {
+        List<TradeView> trades = all.stream().filter(t -> t.getTradeDate().equals(day)).map(t -> {
+            boolean estimated = t.getNetPnl() == null;
+            return new TradeView(t.getId(), t.getSymbol(), t.getTurnoverRank(), t.getRelMovePct(), t.getNiftyMovePct(),
+                    t.getQuantity(), t.getEntryPrice(), t.getEntryTime(), t.getStopLoss(), t.getLastPrice(),
+                    t.getExitPrice(), t.getExitTime(), t.getExitReason(), t.getStatus(), t.getCharges(),
+                    round(estimated ? mark(t, t.getLastPrice(), s, charges) : t.getNetPnl()), estimated);
+        }).toList();
+        int open = (int) trades.stream().filter(t -> OPEN.equals(t.status())).count();
+        double dayPnl = round(trades.stream().mapToDouble(TradeView::pnl).sum());
+        boolean estimated = trades.stream().anyMatch(TradeView::pnlEstimated);
+        return new BookView(day, enabled, true, s.label(), pool.label(), trades, open, dayPnl, estimated, record(all));
+    }
+
+    private static RecordView record(List<FadePaperTrade> all) {
+        Map<LocalDate, List<FadePaperTrade>> byDay = new TreeMap<>();
+        all.forEach(t -> byDay.computeIfAbsent(t.getTradeDate(), k -> new ArrayList<>()).add(t));
+        byDay.values().removeIf(list -> list.stream().anyMatch(t -> !CLOSED.equals(t.getStatus()) || t.getNetPnl() == null));
+        List<DayView> days = byDay.entrySet().stream()
+                .map(e -> new DayView(e.getKey(), e.getValue().size(),
+                        (int) e.getValue().stream().filter(t -> t.getNetPnl() > 0).count(), round(dayNet(e.getValue()))))
+                .toList();
+        double total = days.stream().mapToDouble(DayView::net).sum();
+        int dayStops = (int) byDay.values().stream()
+                .filter(list -> list.stream().anyMatch(t -> "DAY_STOP".equals(t.getExitReason()))).count();
+        return new RecordView(days.isEmpty() ? null : days.get(0).date(), days.size(), round(total),
+                days.isEmpty() ? 0 : round(total / days.size()),
+                (int) days.stream().filter(d -> d.net() > 0).count(),
+                days.stream().mapToDouble(DayView::net).min().orElse(0),
+                days.stream().mapToDouble(DayView::net).max().orElse(0), dayStops, days);
+    }
+
     private static String entryText(LocalDate day, OpeningScreen.Screen screen, List<FadePaperTrade> trades,
                                     Settings s, Pool pool) {
         StringBuilder out = new StringBuilder(String.format(
