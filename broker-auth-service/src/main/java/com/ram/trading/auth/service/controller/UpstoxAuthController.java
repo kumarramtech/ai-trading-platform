@@ -1,6 +1,8 @@
 package com.ram.trading.auth.service.controller;
 
 import com.ram.trading.auth.service.constant.BrokerConstants;
+import com.ram.trading.auth.service.notification.BrokerAuthNotifier;
+import com.ram.trading.auth.service.notification.UpstoxLoginWatch;
 import com.ram.trading.auth.service.service.BrokerSessionService;
 import com.ram.trading.auth.service.upstox.UpstoxAuthService;
 import com.ram.trading.auth.service.upstox.UpstoxTokenService;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
@@ -31,6 +34,8 @@ public class UpstoxAuthController {
     private final UpstoxAuthService authService;
     private final UpstoxTokenService tokenService;
     private final BrokerSessionService brokerSessionService;
+    private final BrokerAuthNotifier notifier;
+    private final UpstoxLoginWatch loginWatch;
 
     @Operation(
             summary = "Login to Upstox",
@@ -50,8 +55,18 @@ public class UpstoxAuthController {
     )
     @GetMapping("/callback")
     public Mono<String> callback(
-            @RequestParam String code) {
-        log.info("Authorization Code={}", code);
+            @RequestParam(required = false) String code,
+            @RequestParam(required = false) String error,
+            @RequestParam(name = "error_description", required = false) String errorDescription) {
+        if (code == null || code.isBlank()) {
+            // Upstox sends the user back without a code when the login is refused or cancelled.
+            String reason = error == null ? "Upstox sent no authorization code."
+                    : "Upstox refused the login: " + error + (errorDescription == null ? "" : " - " + errorDescription);
+            log.warn("Upstox callback without a code: {}", reason);
+            notifier.loginFailed(reason);
+            return Mono.error(new ResponseStatusException(HttpStatus.BAD_REQUEST, reason));
+        }
+        log.info("Upstox authorization code received");
         return authService.authenticate(code);
     }
 
@@ -61,7 +76,12 @@ public class UpstoxAuthController {
     )
     @GetMapping("/auth/token")
     public String getAccessToken() {
-        return brokerSessionService.getAccessToken(BrokerConstants.UPSTOX);
+        try {
+            return brokerSessionService.getAccessToken(BrokerConstants.UPSTOX);
+        } catch (RuntimeException ex) {
+            loginWatch.tokenRequestFailed(ex);
+            throw ex;
+        }
     }
 
     @Operation(
