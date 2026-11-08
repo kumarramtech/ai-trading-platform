@@ -269,13 +269,114 @@ public class MomentumPaperService {
         accrueInterest(today);
         double holdings = 0;
         List<Holding> open = open();
+        List<Mark> marks = new ArrayList<>();
         for (Holding h : open) {
             Double ltp = price(h.symbol());
+            marks.add(new Mark(h.symbol(), h.quantity(), h.entryPrice(), ltp));
             holdings += (ltp != null ? ltp : h.entryPrice()) * h.quantity();
         }
         double cash = cash(today);
         jdbc.update("replace into momentum_paper_equity (equity_day, cash, holdings_value, equity, open_positions, nifty_close) "
                 + "values (?, ?, ?, ?, ?, ?)", today, cash, holdings, cash + holdings, open.size(), niftyClose(today));
+        if (dailySummary) {
+            dailySummary(today, marks).ifPresent(text -> send("Paper momentum daily " + today, text));
+        }
+    }
+
+    @Value("${trading.momentum.paper.daily-summary:true}")
+    private boolean dailySummary = true;
+
+    /** One holding valued at the close; ltp null when no price came back. */
+    public record Mark(String symbol, int quantity, double entryPrice, Double ltp) {
+        Double pct() {
+            return ltp == null ? null : (ltp / entryPrice - 1) * 100;
+        }
+    }
+
+    /**
+     * The day's Slack summary, from the equity row just stored. Empty on a day with no
+     * holdings and nothing sold (an all-cash book has nothing to report every evening).
+     */
+    java.util.Optional<String> dailySummary(LocalDate today, List<Mark> marks) {
+        Double realisedToday = jdbc.queryForObject("select sum(net_pnl) from momentum_paper_position "
+                + "where status = 'CLOSED' and exit_day = ?", Double.class, today);
+        if (marks.isEmpty() && realisedToday == null) {
+            return java.util.Optional.empty();
+        }
+        List<Map<String, Object>> days = jdbc.queryForList(
+                "select equity_day, cash, equity, nifty_close from momentum_paper_equity where equity_day <= ? "
+                        + "order by equity_day", today);
+        if (days.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        double start = jdbc.queryForObject("select start_capital from momentum_paper_account where id = 1", Double.class);
+        List<Double> equity = days.stream().map(d -> ((Number) d.get("equity")).doubleValue()).toList();
+        List<Double> nifty = days.stream()
+                .map(d -> d.get("nifty_close") == null ? null : ((Number) d.get("nifty_close")).doubleValue()).toList();
+        double cash = ((Number) days.get(days.size() - 1).get("cash")).doubleValue();
+        return java.util.Optional.of(formatDaily(today, start, cash, equity, nifty,
+                realisedToday == null ? 0 : realisedToday, marks));
+    }
+
+    /**
+     * equity and nifty: one value per stored day up to today, oldest first (a NIFTY value
+     * may be null). The NIFTY return runs from the first day it is known, as report() does.
+     */
+    static String formatDaily(LocalDate today, double startCapital, double cash, List<Double> equity,
+                              List<Double> nifty, double realisedToday, List<Mark> marks) {
+        StringBuilder out = new StringBuilder();
+        int n = equity.size();
+        double now = equity.get(n - 1);
+        double peak = startCapital, maxDd = 0;
+        for (double e : equity) {
+            peak = Math.max(peak, e);
+            maxDd = Math.max(maxDd, (peak - e) / peak * 100);
+        }
+        double fromPeak = (peak - now) / peak * 100;
+        out.append(String.format("PAPER MOMENTUM %s (paper only, no real orders)%n", today));
+        if (n >= 2) {
+            double prev = equity.get(n - 2);
+            out.append(String.format("  today      Rs %+,.0f (%+.2f%%)", now - prev, (now / prev - 1) * 100));
+            Double nt = nifty.get(n - 1), np = nifty.get(n - 2);
+            if (nt != null && np != null) {
+                out.append(String.format(", NIFTY %+.2f%%", (nt / np - 1) * 100));
+            }
+            out.append("\n");
+        }
+        out.append(String.format("  since start Rs %+,.0f (%+.2f%%)", now - startCapital, (now / startCapital - 1) * 100));
+        Double first = nifty.stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        Double last = nifty.get(n - 1);
+        if (first != null && last != null) {
+            out.append(String.format(", NIFTY %+.2f%%", (last / first - 1) * 100));
+        }
+        out.append("\n");
+        out.append(String.format("  equity Rs %,.0f = holdings Rs %,.0f + cash Rs %,.0f%n", now, now - cash, cash));
+        out.append(String.format("  below peak %.1f%%, worst fall so far %.1f%%%n", fromPeak, maxDd));
+        if (realisedToday != 0) {
+            out.append(String.format("  sold today: realised Rs %+,.0f%n", realisedToday));
+        }
+
+        List<Mark> priced = marks.stream().filter(m -> m.ltp() != null)
+                .sorted(java.util.Comparator.comparing(Mark::pct).reversed()).toList();
+        long up = priced.stream().filter(m -> m.pct() > 0).count();
+        out.append(String.format("  holdings %d: %d up, %d down vs the buy price%n", marks.size(), up, priced.size() - up));
+        int k = Math.min(3, priced.size());
+        if (k > 0) {
+            out.append("  best:  ").append(marksText(priced.subList(0, k))).append("\n");
+            if (priced.size() > 3) {
+                out.append("  worst: ").append(marksText(priced.subList(priced.size() - k, priced.size()).reversed())).append("\n");
+            }
+        }
+        List<String> noPrice = marks.stream().filter(m -> m.ltp() == null).map(Mark::symbol).toList();
+        if (!noPrice.isEmpty()) {
+            out.append("  no price (valued at the buy price): ").append(String.join(", ", noPrice)).append("\n");
+        }
+        out.append("  Rules: hold to the monthly review; no daily action needed.\n");
+        return out.toString();
+    }
+
+    private static String marksText(List<Mark> marks) {
+        return String.join(", ", marks.stream().map(m -> String.format("%s %+.1f%%", m.symbol(), m.pct())).toList());
     }
 
     private Double niftyClose(LocalDate today) {

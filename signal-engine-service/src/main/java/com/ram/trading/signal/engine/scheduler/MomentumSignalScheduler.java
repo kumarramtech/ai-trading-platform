@@ -64,7 +64,10 @@ public class MomentumSignalScheduler {
         }
     }
 
-    /** Daily paper equity at the close, for the return and drawdown against NIFTY. */
+    /**
+     * Daily paper equity at the close, for the return and drawdown against NIFTY, and the
+     * daily Slack summary (trading.momentum.paper.daily-summary; skipped for an all-cash book).
+     */
     @Scheduled(cron = "${trading.momentum.paper.snapshot-cron:0 40 15 * * MON-FRI}", zone = "Asia/Kolkata")
     public void snapshotPaperPortfolio() {
         if (!enabled) {
