@@ -48,6 +48,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.longterm.LongTermMonitorService longTermMonitorService;
 
+    private final com.ram.trading.signal.engine.service.account.AccountOverviewService accountOverviewService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -189,6 +191,16 @@ public class AnalyticsController {
         return momentumPaperService.report();
     }
 
+    /**
+     * Paper momentum holdings at the latest price (live in the session, else the last
+     * stored minute close), with cost, value, unrealised and total P&L, as JSON.
+     */
+    @GetMapping(value = "/momentum-paper/holdings", produces = "application/json")
+    public reactor.core.publisher.Mono<com.ram.trading.signal.engine.service.replay.MomentumPaperService.PortfolioView>
+    momentumPaperHoldings() {
+        return blocking(momentumPaperService::portfolioView);
+    }
+
     /** Trades this month's published list on paper now (once per month). */
     @PostMapping(value = "/momentum-paper/rebalance", produces = "text/plain")
     public reactor.core.publisher.Mono<ResponseEntity<String>> rebalanceMomentumPaper() {
@@ -225,6 +237,25 @@ public class AnalyticsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
         return blocking(() -> fadePaperBookService.toView(day));
+    }
+
+    /**
+     * Read-only view across intraday, FADE and monthly momentum (default today):
+     * budgets, today's and total P&L, charges, open exposure, worst day and worst fall.
+     * format=text returns a plain-text version.
+     */
+    @GetMapping("/account-overview")
+    public reactor.core.publisher.Mono<ResponseEntity<?>> accountOverview(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false, defaultValue = "json") String format) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        return blocking(() -> {
+            var o = accountOverviewService.overview(day);
+            return "text".equalsIgnoreCase(format)
+                    ? ResponseEntity.ok().contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                    .body((Object) com.ram.trading.signal.engine.service.account.AccountOverviewService.toText(o))
+                    : ResponseEntity.ok((Object) o);
+        });
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */

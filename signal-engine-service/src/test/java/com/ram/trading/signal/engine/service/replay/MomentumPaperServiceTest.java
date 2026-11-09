@@ -134,4 +134,35 @@ class MomentumPaperServiceTest {
         assertTrue(text.contains("holdings 2: 0 up, 2 down"), text);
         assertTrue(text.contains("since start Rs -"), "slippage and charges show as a small loss: " + text);
     }
+
+    @Test
+    void holdingsArePricedLiveInTheSessionAndFromTheLastStoredMinuteAfterIt() {
+        jdbc.execute("create table minute_candle (id bigint auto_increment primary key, symbol varchar(64), "
+                + "candle_minute timestamp, close_price double)");
+        list("AAA", "BBB");
+        paper.rebalance();
+        java.time.LocalDateTime t1 = LocalDate.now().atTime(15, 27), t2 = LocalDate.now().atTime(15, 28);
+        jdbc.update("insert into minute_candle (symbol, candle_minute, close_price) values ('AAA', ?, 109), ('AAA', ?, 110)",
+                t1, t2);
+
+        // Monday 2026-11-09 18:00: market closed, AAA from its last minute (110), BBB has none.
+        MomentumPaperService.PortfolioView after = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(18, 0));
+        MomentumPaperService.HoldingView a = after.positions().get(0), b = after.positions().get(1);
+        assertEquals("AAA", a.symbol());
+        assertEquals("LAST_MINUTE", a.priceSource());
+        assertEquals(110, a.lastPrice(), 0.001);
+        assertEquals(t2, a.priceTime());
+        assertEquals(499 * 110 - 499 * 100.1, a.pnl(), 0.01);
+        assertEquals("NONE", b.priceSource());
+        assertEquals(null, b.pnl());
+        assertEquals(1, after.priced());
+        assertEquals(after.cash() + after.marketValue(), after.equity(), 0.01);
+        assertEquals(after.equity() - 100000, after.totalPnl(), 0.01);
+
+        // Monday 11:00: in the session the market stream price wins (mock: AAA 100, BBB 200).
+        MomentumPaperService.PortfolioView live = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(11, 0));
+        assertEquals("LIVE", live.positions().get(0).priceSource());
+        assertEquals(100, live.positions().get(0).lastPrice(), 0.001);
+        assertEquals(2, live.priced());
+    }
 }

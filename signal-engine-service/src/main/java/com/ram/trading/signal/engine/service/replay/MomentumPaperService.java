@@ -439,6 +439,111 @@ public class MomentumPaperService {
         return out.toString();
     }
 
+    /** One holding priced now. source: LIVE (market stream), LAST_MINUTE (stored candle) or NONE (buy price). */
+    public record HoldingView(String symbol, int quantity, double buyPrice, double cost, Double lastPrice,
+                              String priceSource, java.time.LocalDateTime priceTime, double value,
+                              Double pnl, Double pnlPct) {
+    }
+
+    public record PortfolioView(java.time.LocalDateTime asOf, boolean paperOnly, LocalDate since, double startCapital,
+                                double cash, double cost, double marketValue, double unrealised, double unrealisedPct,
+                                double realised, double charges, double equity, double totalPnl, double totalPnlPct,
+                                int holdings, int priced, List<HoldingView> positions) {
+    }
+
+    /**
+     * The holdings at the latest price: live from the market stream during the session,
+     * otherwise the last stored 1-minute close (after the close: about 15:29 that day),
+     * otherwise the buy price (flagged NONE). Read-only.
+     */
+    public PortfolioView portfolioView() {
+        return portfolioView(java.time.LocalDateTime.now(IST));
+    }
+
+    /** At {@code now} (IST): package-visible for tests. */
+    PortfolioView portfolioView(java.time.LocalDateTime now) {
+        List<Map<String, Object>> account = jdbc.queryForList(
+                "select start_capital, cash, started_on from momentum_paper_account where id = 1");
+        if (account.isEmpty()) {
+            return new PortfolioView(now, true, null, startCapital, startCapital, 0, 0, 0, 0, 0, 0,
+                    startCapital, 0, 0, 0, 0, List.of());
+        }
+        double start = ((Number) account.get(0).get("start_capital")).doubleValue();
+        double cash = ((Number) account.get(0).get("cash")).doubleValue();
+        Object startedOn = account.get(0).get("started_on");
+        LocalDate since = startedOn instanceof java.sql.Date d ? d.toLocalDate()
+                : startedOn instanceof LocalDate d ? d : LocalDate.parse(String.valueOf(startedOn).substring(0, 10));
+
+        List<Holding> open = open();
+        boolean session = now.getDayOfWeek().getValue() <= 5
+                && !now.toLocalTime().isBefore(java.time.LocalTime.of(9, 15))
+                && now.toLocalTime().isBefore(java.time.LocalTime.of(15, 31));
+        Map<String, Double> live = new java.util.HashMap<>();
+        if (session && !open.isEmpty()) {
+            reactor.core.publisher.Flux.fromIterable(open)
+                    .flatMap(h -> stockServiceClient.getStockPrice(h.symbol())
+                            .timeout(Duration.ofSeconds(3))
+                            .filter(r -> r.getPrice() != null && r.getPrice() > 0)
+                            .map(r -> Map.entry(h.symbol(), r.getPrice()))
+                            .onErrorResume(ex -> Mono.empty()), 8)
+                    .collectList()
+                    .blockOptional(Duration.ofSeconds(15))
+                    .ifPresent(list -> list.forEach(e -> live.put(e.getKey(), e.getValue())));
+        }
+        Map<String, Object[]> stored = lastMinuteCloses(open.stream().map(Holding::symbol).toList());
+
+        List<HoldingView> rows = new ArrayList<>();
+        double cost = 0, value = 0;
+        int priced = 0;
+        for (Holding h : open) {
+            double c = h.entryPrice() * h.quantity();
+            Double last = live.get(h.symbol());
+            String source = "LIVE";
+            java.time.LocalDateTime at = now;
+            if (last == null && stored.containsKey(h.symbol())) {
+                Object[] s = stored.get(h.symbol());
+                last = (Double) s[0];
+                at = (java.time.LocalDateTime) s[1];
+                source = "LAST_MINUTE";
+            }
+            if (last == null) {
+                source = "NONE";
+                at = null;
+            } else {
+                priced++;
+            }
+            double v = (last != null ? last : h.entryPrice()) * h.quantity();
+            cost += c;
+            value += v;
+            rows.add(new HoldingView(h.symbol(), h.quantity(), h.entryPrice(), c, last, source, at, v,
+                    last == null ? null : v - c, last == null ? null : (last / h.entryPrice() - 1) * 100));
+        }
+        Double realised = jdbc.queryForObject(
+                "select coalesce(sum(net_pnl), 0) from momentum_paper_position where status = 'CLOSED'", Double.class);
+        Double charges = jdbc.queryForObject("select coalesce(sum(buy_charges + coalesce(sell_charges, 0)), 0) "
+                + "from momentum_paper_position", Double.class);
+        double equity = cash + value;
+        return new PortfolioView(now, true, since, start, cash, cost, value, value - cost,
+                cost > 0 ? (value / cost - 1) * 100 : 0, realised, charges, equity, equity - start,
+                (equity / start - 1) * 100, open.size(), priced, rows);
+    }
+
+    /** symbol -> {close, minute} of its latest stored 1-minute candle. */
+    private Map<String, Object[]> lastMinuteCloses(List<String> symbols) {
+        Map<String, Object[]> out = new java.util.HashMap<>();
+        if (symbols.isEmpty()) {
+            return out;
+        }
+        String in = String.join(",", java.util.Collections.nCopies(symbols.size(), "?"));
+        jdbc.query("select m.symbol, m.close_price, m.candle_minute from minute_candle m join ("
+                        + "select symbol, max(candle_minute) mx from minute_candle where symbol in (" + in + ") "
+                        + "and close_price > 0 group by symbol) x on m.symbol = x.symbol and m.candle_minute = x.mx",
+                rs -> {
+                    out.put(rs.getString(1), new Object[]{rs.getDouble(2), rs.getTimestamp(3).toLocalDateTime()});
+                }, symbols.toArray());
+        return out;
+    }
+
     private void send(String title, String text) {
         notificationClient.sendNotification(NotificationRequest.builder()
                         .channel(NotificationChannel.SLACK).title(title).message(text).build())
