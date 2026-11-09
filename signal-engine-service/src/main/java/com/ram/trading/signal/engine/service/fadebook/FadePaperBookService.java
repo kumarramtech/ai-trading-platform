@@ -65,6 +65,8 @@ public class FadePaperBookService {
     private final FadePaperTradeRepository repository;
     private final IntradayChargesCalculator charges;
     private final NotificationClient notificationClient;
+    /** News study: tags each short at entry in the background; it changes no FADE rule. */
+    private final FadeNewsTagger newsTagger;
 
     private Clock clock = Clock.system(IST);
 
@@ -304,6 +306,7 @@ public class FadePaperBookService {
         Settings s = settings();
         List<FadePaperTrade> trades = open(day, screen, s, charges);
         repository.saveAll(trades);
+        newsTagger.tagAtEntry(trades);
         log.info("FADE BOOK | {} | NIFTY {}% at 09:45 | Liquid={} | Candidates={} | Shorts={} | Book={} | Pool={}",
                 day, String.format("%+.2f", screen.niftyMove()), screen.liquid(), screen.fade().size(),
                 trades.size(), s.label(), pool.label());

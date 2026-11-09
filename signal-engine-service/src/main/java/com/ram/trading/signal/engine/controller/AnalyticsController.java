@@ -50,6 +50,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.account.AccountOverviewService accountOverviewService;
 
+    private final com.ram.trading.signal.engine.service.fadebook.FadeNewsStudyService fadeNewsStudyService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -256,6 +258,13 @@ public class AnalyticsController {
                     .body((Object) com.ram.trading.signal.engine.service.account.AccountOverviewService.toText(o))
                     : ResponseEntity.ok((Object) o);
         });
+    }
+
+    /** FADE news study: shorts with and without news at entry, against the pre-registered pass mark. */
+    @GetMapping(value = "/fade-news-study", produces = "text/plain")
+    public reactor.core.publisher.Mono<String> fadeNewsStudy() {
+        return blocking(() -> com.ram.trading.signal.engine.service.fadebook.FadeNewsStudyService.toText(
+                fadeNewsStudyService.report()));
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */
