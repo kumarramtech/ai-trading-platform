@@ -64,6 +64,19 @@ public class MomentumSignalScheduler {
         }
     }
 
+    /** 09:25 weekdays: idle cash left by whole shares goes to this month's list (no-op below 5% of equity). */
+    @Scheduled(cron = "${trading.momentum.paper.fill-cron:0 25 9 * * MON-FRI}", zone = "Asia/Kolkata")
+    public void fillIdleCash() {
+        if (!enabled) {
+            return;
+        }
+        try {
+            momentumPaperService.fillIdleCash();
+        } catch (Exception ex) {
+            log.error("Paper momentum idle cash top-up failed", ex);
+        }
+    }
+
     /**
      * Daily paper equity at the close, for the return and drawdown against NIFTY, and the
      * daily Slack summary (trading.momentum.paper.daily-summary; skipped for an all-cash book).

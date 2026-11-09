@@ -39,7 +39,12 @@ class MomentumPaperServiceTest {
         when(notifications.sendNotification(any())).thenReturn(Mono.empty());
         StockServiceClient prices = mock(StockServiceClient.class);
         when(prices.getStockPrice(anyString())).thenAnswer(inv -> Mono.just(StockResponse.builder()
-                .symbol(inv.getArgument(0)).price("AAA".equals(inv.getArgument(0)) ? 100.0 : 200.0).build()));
+                .symbol(inv.getArgument(0)).price(switch ((String) inv.getArgument(0)) {
+                    case "AAA" -> 100.0;
+                    case "BIG" -> 30000.0;
+                    case "HUGE" -> 60000.0;
+                    default -> 200.0;
+                }).build()));
 
         new MomentumSignalService(jdbc, WebClient.builder(), notifications, "http://localhost").createTable();
         paper = new MomentumPaperService(jdbc, prices, notifications);
@@ -133,6 +138,45 @@ class MomentumPaperServiceTest {
         String text = paper.dailySummary(LocalDate.now(ZoneId.of("Asia/Kolkata")), marks).orElseThrow();
         assertTrue(text.contains("holdings 2: 0 up, 2 down"), text);
         assertTrue(text.contains("since start Rs -"), "slippage and charges show as a small loss: " + text);
+    }
+
+    @Test
+    void planFillGivesOneShareToNearMissesThenTopsUpTheMostUnderweightUpToTheCap() {
+        // Slot 1,000. X: one share 1,400 (<= 1.5 slots) unheld; Y: 2,000 (> 1.5 slots); A and B held at 900 and 500.
+        List<MomentumPaperService.FillSlot> slots = List.of(
+                new MomentumPaperService.FillSlot("A", 100, 9),
+                new MomentumPaperService.FillSlot("B", 250, 2),
+                new MomentumPaperService.FillSlot("X", 1400, 0),
+                new MomentumPaperService.FillSlot("Y", 2000, 0));
+        java.util.Map<String, Integer> plan = MomentumPaperService.planFill(slots, 3000, 1000, 1.5, 1.3, 0);
+        assertEquals(1, plan.get("X"));
+        assertEquals(null, plan.get("Y"), "one share above 1.5 slots stays skipped");
+        // After X (1,400) there is 1,600: B to 1,250 (3 more = 750), A to 1,300 (4 more = 400); 450 left.
+        assertEquals(3, plan.get("B"));
+        assertEquals(4, plan.get("A"));
+
+        assertTrue(MomentumPaperService.planFill(slots, 50, 1000, 1.5, 1.3, 0).isEmpty(), "not enough cash");
+    }
+
+    @Test
+    void rebalanceSpendsTheIdleCashOfWholeSharesOnTheList() {
+        ReflectionTestUtils.setField(paper, "top", 4);
+        // Slot 25,000: BIG (30,000) gets one share, HUGE (60,000) stays out, AAA and BBB top up to 1.3 slots.
+        list("AAA", "BBB", "BIG", "HUGE");
+        String text = paper.rebalance().orElseThrow();
+
+        assertEquals(1, jdbc.queryForObject("select quantity from momentum_paper_position where symbol = 'BIG'", Integer.class));
+        assertEquals(0, jdbc.queryForObject("select count(*) from momentum_paper_position where symbol = 'HUGE'", Integer.class));
+        assertEquals(324, jdbc.queryForObject("select quantity from momentum_paper_position where symbol = 'AAA'", Integer.class));
+        assertEquals(162, jdbc.queryForObject("select quantity from momentum_paper_position where symbol = 'BBB'", Integer.class));
+        assertTrue(cash() < 6000, "most of the idle cash is invested: " + cash());
+        assertTrue(text.contains("WHOLE-SHARE TOP-UP"), text);
+        double charges = jdbc.queryForObject("select sum(buy_charges) from momentum_paper_position", Double.class);
+        double cost = jdbc.queryForObject("select sum(quantity * entry_price) from momentum_paper_position", Double.class);
+        assertEquals(100000, cost + charges + cash(), 0.01, "every rupee accounted for");
+
+        // The 09:25 check does nothing now: idle cash is below 5% of equity.
+        assertTrue(paper.fillIdleCash().isEmpty());
     }
 
     @Test

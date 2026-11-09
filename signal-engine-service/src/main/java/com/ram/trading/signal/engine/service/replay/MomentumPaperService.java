@@ -243,6 +243,12 @@ public class MomentumPaperService {
             jdbc.update("update momentum_paper_account set cash = cash - ? where id = 1", value + charges);
             out.append(String.format("  BUY  %-12s %4d @ %9.2f  = Rs %8.0f%n", symbol, quantity, fill, value));
         }
+        if (fillEnabled && !target.isEmpty()) {
+            StringBuilder topUp = new StringBuilder();
+            if (fill(today, month, open(), 0, topUp)) {
+                out.append("  WHOLE-SHARE TOP-UP (idle cash to the list, equal weight as backtested)\n").append(topUp);
+            }
+        }
         jdbc.update("update momentum_paper_account set last_rebalance_month = ? where id = 1", month);
 
         if (target.isEmpty()) {
@@ -437,6 +443,162 @@ public class MomentumPaperService {
         out.append("  holding ").append(open.size()).append(": ")
                 .append(String.join(", ", open.stream().map(Holding::symbol).toList())).append("\n");
         return out.toString();
+    }
+
+    // ------------------------------------------------------------ idle cash (whole shares)
+
+    @Value("${trading.momentum.paper.fill.enabled:true}")
+    private boolean fillEnabled = true;
+
+    /** A listed stock whose one share costs up to this many slots still gets one share. */
+    @Value("${trading.momentum.paper.fill.one-share-max-slots:1.5}")
+    private double oneShareMaxSlots = 1.5;
+
+    /** Top-ups never take a holding above this many slots. */
+    @Value("${trading.momentum.paper.fill.max-slots:1.3}")
+    private double maxSlots = 1.3;
+
+    /** The 09:25 check tops up only when idle cash is above this share of equity. */
+    @Value("${trading.momentum.paper.fill.min-idle-pct:5}")
+    private double minIdlePct = 5;
+
+    /** A stock in the plan: fill price (slippage included), shares held now, and whether it is on this month's list. */
+    public record FillSlot(String symbol, double price, int held) {
+    }
+
+    /**
+     * Pure: extra shares to buy with {@code cash}. First one share for each unheld stock
+     * whose share costs up to oneShareMaxSlots x slot; then one share at a time for the
+     * most underweight stock, never above maxSlots x slot. {@code costPct}: charges allowance.
+     */
+    static Map<String, Integer> planFill(List<FillSlot> slots, double cash, double slot, double oneShareMaxSlots,
+                                        double maxSlots, double costPct) {
+        Map<String, Integer> add = new java.util.LinkedHashMap<>();
+        double left = cash;
+        double k = 1 + costPct / 100;
+        for (FillSlot s : slots) {
+            if (s.held() == 0 && s.price() <= oneShareMaxSlots * slot && s.price() * k <= left) {
+                add.put(s.symbol(), 1);
+                left -= s.price() * k;
+            }
+        }
+        while (true) {
+            FillSlot best = null;
+            double bestValue = Double.MAX_VALUE;
+            for (FillSlot s : slots) {
+                int q = s.held() + add.getOrDefault(s.symbol(), 0);
+                if (q == 0 || (q + 1) * s.price() > maxSlots * slot || s.price() * k > left) {
+                    continue;
+                }
+                double value = q * s.price();
+                if (value < bestValue) {
+                    bestValue = value;
+                    best = s;
+                }
+            }
+            if (best == null) {
+                return add;
+            }
+            add.merge(best.symbol(), 1, Integer::sum);
+            left -= best.price() * k;
+        }
+    }
+
+    /**
+     * 09:25 weekdays: when whole shares left more than min-idle-pct of equity in cash,
+     * spends it on this month's list by {@link #planFill}. Empty when nothing to do.
+     */
+    public synchronized java.util.Optional<String> fillIdleCash() {
+        if (!fillEnabled) {
+            return java.util.Optional.empty();
+        }
+        LocalDate today = LocalDate.now(IST);
+        List<Holding> open = open();
+        Integer started = jdbc.queryForObject("select count(*) from momentum_paper_account", Integer.class);
+        if (open.isEmpty() || started == null || started == 0) {
+            return java.util.Optional.empty();
+        }
+        accrueInterest(today);
+        StringBuilder out = new StringBuilder();
+        boolean done = fill(today, YearMonth.from(today).toString(), open, minIdlePct, out);
+        if (!done) {
+            return java.util.Optional.empty();
+        }
+        out.append("\n").append(report());
+        String text = "PAPER MOMENTUM IDLE CASH TOP-UP " + today + "\n" + out;
+        log.info("{}", text);
+        send("Paper momentum idle cash top-up", text);
+        return java.util.Optional.of(text);
+    }
+
+    /** Prices the list, plans and books the top-up; false when idle cash is below {@code minIdle} % or nothing fits. */
+    private boolean fill(LocalDate today, String month, List<Holding> open, double minIdle, StringBuilder out) {
+        List<String> list = jdbc.queryForList(
+                "select symbol from momentum_signal where list_month = ? and symbol <> 'CASH' order by rank_no",
+                String.class, month);
+        Map<String, Holding> held = new java.util.HashMap<>();
+        open.forEach(h -> held.put(h.symbol(), h));
+        double cash = cash(today);
+        Map<String, Double> prices = new java.util.HashMap<>();
+        double equity = cash;
+        for (Holding h : open) {
+            Double ltp = price(h.symbol());
+            prices.put(h.symbol(), ltp);
+            equity += (ltp != null ? ltp : h.entryPrice()) * h.quantity();
+        }
+        if (cash < equity * minIdle / 100) {
+            return false;
+        }
+        double slot = equity / top;
+        List<FillSlot> slots = new ArrayList<>();
+        java.util.LinkedHashSet<String> universe = new java.util.LinkedHashSet<>(list);
+        universe.addAll(held.keySet());
+        for (String symbol : universe) {
+            Double ltp = prices.containsKey(symbol) ? prices.get(symbol) : price(symbol);
+            if (ltp == null) {
+                continue;
+            }
+            Holding h = held.get(symbol);
+            // Only stocks on this month's list: a holding that left the list is not topped up.
+            if (!list.contains(symbol)) {
+                continue;
+            }
+            slots.add(new FillSlot(symbol, ltp * (1 + slippagePct / 100), h == null ? 0 : h.quantity()));
+        }
+        Map<String, Integer> plan = planFill(slots, cash, slot, oneShareMaxSlots, maxSlots, 0.2);
+        if (plan.isEmpty()) {
+            return false;
+        }
+        out.append(String.format("  idle cash Rs %.0f of equity Rs %.0f (slot Rs %.0f; one share up to %.1f slots, "
+                + "top-ups up to %.1f slots)%n", cash, equity, slot, oneShareMaxSlots, maxSlots));
+        double spent = 0;
+        for (Map.Entry<String, Integer> e : plan.entrySet()) {
+            FillSlot s = slots.stream().filter(x -> x.symbol().equals(e.getKey())).findFirst().orElseThrow();
+            int qty = e.getValue();
+            double value = qty * s.price();
+            double charges = DeliveryCharges.buySide(value, brokerage);
+            double available = cash(today);
+            if (value + charges > available) {
+                continue;
+            }
+            Holding h = held.get(s.symbol());
+            if (h == null) {
+                jdbc.update("insert into momentum_paper_position (list_month, symbol, quantity, entry_day, entry_price, "
+                        + "buy_charges, status) values (?, ?, ?, ?, ?, ?, 'OPEN')", month, s.symbol(), qty, today,
+                        s.price(), charges);
+            } else {
+                int total = h.quantity() + qty;
+                double avg = (h.entryPrice() * h.quantity() + value) / total;
+                jdbc.update("update momentum_paper_position set quantity = ?, entry_price = ?, buy_charges = buy_charges + ? "
+                        + "where id = ?", total, avg, charges, h.id());
+            }
+            jdbc.update("update momentum_paper_account set cash = cash - ? where id = 1", value + charges);
+            spent += value + charges;
+            out.append(String.format("  %s %-12s +%3d @ %9.2f = Rs %7.0f%n", h == null ? "BUY " : "ADD ",
+                    s.symbol(), qty, s.price(), value));
+        }
+        out.append(String.format("  spent Rs %.0f, cash now Rs %.0f%n", spent, cash(today)));
+        return spent > 0;
     }
 
     /** One holding priced now. source: LIVE (market stream), LAST_MINUTE (stored candle) or NONE (buy price). */
