@@ -126,6 +126,88 @@ public class FadeNewsStudyService {
         return v.isEmpty() ? null : v.get(0);
     }
 
+    // ------------------------------------------------------------ daily split (dashboard, Slack)
+
+    /** One FADE short with its news tag; pnl is the final net, or while open (entry - last) x qty before charges. */
+    public record TaggedTrade(long id, LocalDate date, String symbol, String tag, String headlines, String status,
+                              double pnl, boolean estimated) {
+    }
+
+    /** trades and P&L of one group: NO_NEWS, WITH_NEWS (NEWS + CATALYST) or UNTAGGED (no tag, ERROR, EMPTY). */
+    public record Part(int trades, double pnl, int winners) {
+    }
+
+    public record Split(Part all, Part noNews, Part withNews, Part untagged) {
+    }
+
+    public record Summary(LocalDate date, boolean paperOnly, String note, Split today, List<TaggedTrade> trades,
+                          LocalDate studySince, int studySessions, Split sinceStart, String verdict) {
+    }
+
+    /** Today's FADE shorts split by news tag, and the same split since the study started. */
+    public Summary summary(LocalDate day) {
+        List<TaggedTrade> today = tagged("f.trade_date = ?", day);
+        List<LocalDate> first = jdbc.queryForList("select min(trade_date) from fade_news_tag", LocalDate.class);
+        LocalDate since = first.isEmpty() ? null : first.get(0);
+        List<TaggedTrade> study = since == null ? List.of()
+                : tagged("f.trade_date >= ? and f.status = 'CLOSED'", since);
+        int sessions = (int) study.stream().map(TaggedTrade::date).distinct().count();
+        return new Summary(day, true,
+                "Data collection: FADE shorts every candidate as before; the split shows what a NO_NEWS-only book "
+                        + "would have made. Judged only after " + MIN_SESSIONS + " sessions.",
+                split(today), today, since, sessions, split(study), report().verdict());
+    }
+
+    private List<TaggedTrade> tagged(String where, LocalDate day) {
+        return jdbc.query("select f.id, f.trade_date, f.symbol, f.status, f.net_pnl, f.entry_price, f.last_price, "
+                        + "f.quantity, t.tag, t.headlines from fade_paper_trade f left join fade_news_tag t on t.trade_id = f.id "
+                        + "where " + where + " order by f.trade_date, f.id",
+                (rs, n) -> {
+                    Double net = rs.getObject(5) == null ? null : rs.getDouble(5);
+                    double est = (rs.getDouble(6) - rs.getDouble(7)) * rs.getInt(8);
+                    return new TaggedTrade(rs.getLong(1), rs.getDate(2).toLocalDate(), rs.getString(3),
+                            rs.getString(9) == null ? "UNTAGGED" : rs.getString(9), rs.getString(10), rs.getString(4),
+                            net != null ? net : est, net == null);
+                }, day);
+    }
+
+    /** Pure: P&L by group. */
+    static Split split(List<TaggedTrade> trades) {
+        return new Split(part(trades),
+                part(trades.stream().filter(t -> FadeNewsTagger.NO_NEWS.equals(t.tag())).toList()),
+                part(trades.stream().filter(t -> FadeNewsTagger.NEWS.equals(t.tag())
+                        || FadeNewsTagger.CATALYST.equals(t.tag())).toList()),
+                part(trades.stream().filter(t -> !isStudied(t.tag())).toList()));
+    }
+
+    private static Part part(List<TaggedTrade> trades) {
+        return new Part(trades.size(), Math.round(trades.stream().mapToDouble(TaggedTrade::pnl).sum() * 100) / 100.0,
+                (int) trades.stream().filter(t -> t.pnl() > 0).count());
+    }
+
+    /** Lines for the 15:00 FADE Slack message. */
+    public String splitText(LocalDate day) {
+        Summary s = summary(day);
+        if (s.today().all().trades() == 0) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder("\nNEWS SPLIT (study only, FADE traded all shorts):\n");
+        out.append("  today       ").append(partsText(s.today())).append("\n");
+        if (s.studySince() != null) {
+            out.append(String.format("  since %s (%d sessions) %s%n", s.studySince(), s.studySessions(), partsText(s.sinceStart())));
+        }
+        s.trades().forEach(t -> out.append(String.format("  %-12s %-9s Rs %+,.0f%n", t.symbol(), t.tag(), t.pnl())));
+        out.append("  ").append(s.verdict()).append("\n");
+        return out.toString();
+    }
+
+    private static String partsText(Split s) {
+        return String.format("NO_NEWS Rs %+,.0f (%d) | with news Rs %+,.0f (%d)%s",
+                s.noNews().pnl(), s.noNews().trades(), s.withNews().pnl(), s.withNews().trades(),
+                s.untagged().trades() > 0 ? String.format(" | untagged Rs %+,.0f (%d)", s.untagged().pnl(),
+                        s.untagged().trades()) : "");
+    }
+
     private static LocalDate toDate(Object o) {
         if (o instanceof java.sql.Date d) {
             return d.toLocalDate();

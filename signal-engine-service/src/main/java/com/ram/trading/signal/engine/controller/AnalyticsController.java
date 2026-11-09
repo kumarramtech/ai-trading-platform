@@ -267,6 +267,17 @@ public class AnalyticsController {
                 fadeNewsStudyService.report()));
     }
 
+    /**
+     * FADE news split for a dashboard (JSON): the day's shorts (default today) with their news
+     * tag and P&L, NO_NEWS vs with-news totals today and since the study started, and the verdict.
+     */
+    @GetMapping(value = "/fade-news-study/summary", produces = "application/json")
+    public reactor.core.publisher.Mono<com.ram.trading.signal.engine.service.fadebook.FadeNewsStudyService.Summary>
+    fadeNewsStudySummary(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        return blocking(() -> fadeNewsStudyService.summary(day));
+    }
+
     /** Progress of the running replay, or the report of the last one (plain text). */
     @GetMapping(value = "/replay", produces = "text/plain")
     public String replayStatus() {

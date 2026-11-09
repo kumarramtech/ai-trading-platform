@@ -67,6 +67,7 @@ public class FadePaperBookService {
     private final NotificationClient notificationClient;
     /** News study: tags each short at entry in the background; it changes no FADE rule. */
     private final FadeNewsTagger newsTagger;
+    private final FadeNewsStudyService newsStudy;
 
     private Clock clock = Clock.system(IST);
 
@@ -270,7 +271,7 @@ public class FadePaperBookService {
             repository.saveAll(open);
             List<FadePaperTrade> all = repository.findByTradeDate(day);
             if (!all.isEmpty()) {
-                notifySlack("FADE book " + day + ": Rs " + String.format("%.0f", dayNet(all)), toText(day));
+                notifySlack("FADE book " + day + ": Rs " + String.format("%.0f", dayNet(all)), toText(day) + newsSplit(day));
             }
         } catch (Exception ex) {
             log.error("FADE BOOK | Square-off failed", ex);
@@ -615,6 +616,16 @@ public class FadePaperBookService {
         }
         return out.append(s.dailyStop() > 0 ? String.format("Day stop: all covered at Rs -%.0f.", s.dailyStop())
                 : "No day stop.").toString();
+    }
+
+    /** The news study's split for the Slack message; a study problem never blocks the square-off message. */
+    private String newsSplit(LocalDate day) {
+        try {
+            return newsStudy.splitText(day);
+        } catch (RuntimeException ex) {
+            log.warn("FADE news split unavailable: {}", ex.toString());
+            return "";
+        }
     }
 
     static double dayNet(List<FadePaperTrade> trades) {

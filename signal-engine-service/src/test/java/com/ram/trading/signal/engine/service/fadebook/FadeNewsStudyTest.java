@@ -91,6 +91,52 @@ class FadeNewsStudyTest {
     }
 
     @Test
+    void summarySplitsTodayAndTheStudyByTagWithOpenShortsEstimated() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = new org.springframework.jdbc.core.JdbcTemplate(
+                new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                        "jdbc:h2:mem:fadenews" + System.nanoTime() + ";MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", ""));
+        jdbc.execute("create table fade_paper_trade (id bigint primary key, trade_date date, symbol varchar(64), "
+                + "status varchar(8), net_pnl double, entry_price double, last_price double, quantity int)");
+        jdbc.execute("create table minute_candle (id bigint auto_increment primary key, symbol varchar(64), "
+                + "candle_minute timestamp, close_price double)");
+        FadeNewsTagger tagger = new FadeNewsTagger(null, jdbc);
+        tagger.createTable();
+        LocalDate d1 = LocalDate.of(2026, 11, 10), d2 = LocalDate.of(2026, 11, 11);
+        Object[][] trades = {
+                // id, day, symbol, status, net, entry, last, qty, tag (null = untagged)
+                {1L, d1, "A", "CLOSED", 500.0, 100.0, 95.0, 100, FadeNewsTagger.NO_NEWS},
+                {2L, d1, "B", "CLOSED", -300.0, 100.0, 103.0, 100, FadeNewsTagger.CATALYST},
+                {3L, d2, "C", "CLOSED", 200.0, 100.0, 98.0, 100, FadeNewsTagger.NO_NEWS},
+                {4L, d2, "D", "OPEN", null, 200.0, 190.0, 10, FadeNewsTagger.NEWS},
+                {5L, d2, "E", "CLOSED", -50.0, 100.0, 100.5, 100, null}};
+        for (Object[] t : trades) {
+            jdbc.update("insert into fade_paper_trade values (?, ?, ?, ?, ?, ?, ?, ?)", t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
+            if (t[8] != null) {
+                jdbc.update("insert into fade_news_tag values (?, ?, ?, ?, 1, 3, 'h', ?)", t[0], t[1], t[2], t[8],
+                        ((LocalDate) t[1]).atTime(9, 47));
+            }
+        }
+        FadeNewsStudyService study = new FadeNewsStudyService(jdbc);
+        FadeNewsStudyService.Summary s = study.summary(d2);
+
+        assertEquals(3, s.today().all().trades());
+        assertEquals(200, s.today().noNews().pnl(), 0.01);
+        assertEquals(100, s.today().withNews().pnl(), 0.01, "open short D marked (200 - 190) x 10");
+        assertEquals(-50, s.today().untagged().pnl(), 0.01);
+        assertTrue(s.trades().get(1).estimated());
+        assertEquals("UNTAGGED", s.trades().get(2).tag());
+
+        assertEquals(d1, s.studySince());
+        assertEquals(2, s.studySessions());
+        assertEquals(700, s.sinceStart().noNews().pnl(), 0.01, "closed shorts only since the study start");
+        assertEquals(-300, s.sinceStart().withNews().pnl(), 0.01);
+        assertTrue(s.verdict().startsWith("COLLECTING"));
+
+        String text = study.splitText(d2);
+        assertTrue(text.contains("today       NO_NEWS Rs +200 (1) | with news Rs +100 (1) | untagged Rs -50 (1)"), text);
+    }
+
+    @Test
     void verdictWaitsForSixtySessionsThenAppliesThePassMark() {
         assertTrue(FadeNewsStudyService.evaluate(rows(59, 40, -20, true)).verdict().startsWith("COLLECTING 59/60"));
 
