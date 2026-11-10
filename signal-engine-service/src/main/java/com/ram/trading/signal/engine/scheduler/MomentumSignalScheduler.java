@@ -14,8 +14,9 @@ import org.springframework.stereotype.Component;
  * Monthly momentum list to Slack before the open on the first weekday of the month.
  * The cron fires on weekdays 1-7 of each month (twice, the second as a retry when
  * the broker token was not ready); a month already published is skipped, so the
- * first successful run of the month wins. No market-holiday calendar: on a holiday
- * the list arrives the day before the orders can be placed.
+ * first successful run of the month wins. The list has no holiday calendar (on a holiday
+ * it arrives the day before the orders can be placed); the paper rebalance, top-up and
+ * snapshot skip days when NIFTY did not trade.
  */
 @Component
 @RequiredArgsConstructor
@@ -58,6 +59,9 @@ public class MomentumSignalScheduler {
             return;
         }
         try {
+            if (marketClosed("rebalance")) {
+                return;
+            }
             momentumPaperService.rebalance();
         } catch (Exception ex) {
             log.error("Paper momentum rebalance failed", ex);
@@ -71,6 +75,9 @@ public class MomentumSignalScheduler {
             return;
         }
         try {
+            if (marketClosed("idle cash top-up")) {
+                return;
+            }
             momentumPaperService.fillIdleCash();
         } catch (Exception ex) {
             log.error("Paper momentum idle cash top-up failed", ex);
@@ -87,9 +94,25 @@ public class MomentumSignalScheduler {
             return;
         }
         try {
+            if (marketClosed("snapshot")) {
+                return;
+            }
             momentumPaperService.snapshot();
         } catch (Exception ex) {
             log.error("Paper momentum snapshot failed", ex);
         }
+    }
+
+    /**
+     * Market holiday guard: no NIFTY minute candle today means the exchange did not trade
+     * (the feed only repeats the last day's prices), so paper buys and the snapshot wait for
+     * the next trading day. A rebalance skipped on a holiday runs on the next weekday (days 1-7).
+     */
+    private boolean marketClosed(String job) {
+        if (momentumPaperService.marketTradedToday()) {
+            return false;
+        }
+        log.info("Paper momentum {} skipped: no NIFTY candles today (market holiday or no data)", job);
+        return true;
     }
 }

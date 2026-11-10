@@ -181,6 +181,18 @@ class MomentumPaperServiceTest {
     }
 
     @Test
+    void marketTradedOnlyWhenNiftyHasACandleThatDay() {
+        LocalDate monday = LocalDate.of(2026, 11, 9), holiday = LocalDate.of(2026, 11, 10);
+        assertEquals(false, paper.marketTraded(monday), "no minute_candle table: treated as not traded");
+        jdbc.execute("create table minute_candle (id bigint auto_increment primary key, symbol varchar(64), "
+                + "candle_minute timestamp, close_price double)");
+        jdbc.update("insert into minute_candle (symbol, candle_minute, close_price) values ('NIFTY', ?, 25000), "
+                + "('AAA', ?, 100)", monday.atTime(9, 15), holiday.atTime(9, 30));
+        assertEquals(true, paper.marketTraded(monday));
+        assertEquals(false, paper.marketTraded(holiday), "another stock's candle does not count, only NIFTY");
+    }
+
+    @Test
     void holdingsArePricedLiveInTheSessionAndFromTheLastStoredMinuteAfterIt() {
         jdbc.execute("create table minute_candle (id bigint auto_increment primary key, symbol varchar(64), "
                 + "candle_minute timestamp, close_price double)");

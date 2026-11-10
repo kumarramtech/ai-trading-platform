@@ -729,6 +729,27 @@ public class MomentumPaperService {
         return out;
     }
 
+    /**
+     * True when NIFTY has a stored minute candle today from 09:15, i.e. the exchange traded.
+     * False on market holidays (the feed then repeats the last day's prices) or if no candles
+     * were stored, so the scheduled buys and the snapshot never use stale prices.
+     */
+    public boolean marketTradedToday() {
+        return marketTraded(LocalDate.now(IST));
+    }
+
+    boolean marketTraded(LocalDate day) {
+        try {
+            Integer n = jdbc.queryForObject("select count(*) from minute_candle where symbol = 'NIFTY' "
+                    + "and candle_minute >= ? and candle_minute < ?", Integer.class,
+                    day.atTime(9, 15), day.plusDays(1).atStartOfDay());
+            return n != null && n > 0;
+        } catch (Exception ex) {
+            log.warn("Momentum paper: could not check today's NIFTY candles: {}", ex.getMessage());
+            return false;
+        }
+    }
+
     /** symbol -> {price, day at 15:40} from the latest snapshot that priced it. */
     private Map<String, Object[]> snapshotCloses(List<String> symbols) {
         Map<String, Object[]> out = new java.util.HashMap<>();
