@@ -26,6 +26,13 @@ public class DailyTradingSummaryScheduler {
 
     private final NotificationClient notificationClient;
 
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("dd-MM-yyyy");
 
@@ -42,6 +49,11 @@ public class DailyTradingSummaryScheduler {
             zone = "Asia/Kolkata"
     )
     public void sendDailyTradingSummary() {
+
+        if (calendar != null && !calendar.isTradingDay()) {
+            log.info("Daily trading summary skipped: market closed ({})", calendar.reason());
+            return;
+        }
 
         log.info("==============================================");
         log.info("DAILY TRADING SUMMARY SCHEDULER STARTED");

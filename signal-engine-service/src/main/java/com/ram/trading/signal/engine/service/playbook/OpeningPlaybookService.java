@@ -51,6 +51,13 @@ public class OpeningPlaybookService {
     private final JdbcTemplate jdbc;
     private final NotificationClient notificationClient;
 
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
     @Value("${trading.playbook.enabled:true}")
     private boolean enabled = true;
 
@@ -86,7 +93,7 @@ public class OpeningPlaybookService {
 
     @Scheduled(cron = "${trading.playbook.cron:0 31 9 * * MON-FRI}", zone = "Asia/Kolkata")
     public void buildAtOpen() {
-        if (!enabled) {
+        if (!enabled || (calendar != null && !calendar.isTradingDay())) {
             return;
         }
         try {

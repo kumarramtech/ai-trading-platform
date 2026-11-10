@@ -13,11 +13,17 @@ public class WatchlistScheduler {
 
     private final WatchlistService watchlistService;
 
+    private final com.ram.trading.watchlist.calendar.TradingCalendar calendar;
+
     @Scheduled(
             cron = "${watchlist.scheduler.cron}",
             zone = "Asia/Kolkata"
     )
     public void generateDailyWatchlist() {
+        if (!calendar.isTradingDay()) {
+            log.info("Scheduled watchlist generation skipped: market closed ({})", calendar.reason());
+            return;
+        }
 
         log.info("==============================================");
         log.info("SCHEDULED WATCHLIST GENERATION STARTED");

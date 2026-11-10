@@ -18,6 +18,13 @@ public class MarketSessionServiceImpl implements MarketSessionService {
     private static final LocalTime MARKET_START = LocalTime.of(9, 15);
     private static final LocalTime MARKET_END = LocalTime.of(15, 30);
 
+    private com.ram.trading.market.data.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.market.data.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
     @Override
     public boolean isMarketOpen() {
 
@@ -25,6 +32,10 @@ public class MarketSessionServiceImpl implements MarketSessionService {
 
         if (today.getDayOfWeek() == DayOfWeek.SATURDAY
                 || today.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return false;
+        }
+        // NSE holiday: no connection, like a weekend (cached once a day; fail-open).
+        if (calendar != null && !calendar.isTradingDay()) {
             return false;
         }
 

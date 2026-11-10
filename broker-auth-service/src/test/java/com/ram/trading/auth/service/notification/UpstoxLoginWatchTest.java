@@ -88,4 +88,19 @@ class UpstoxLoginWatchTest {
 
         verify(notifier, never()).tokenRequestFailed(anyString());
     }
+
+    @Test
+    void onAMarketHolidaySendsOneClosedNoteAndNoLoginReminder() {
+        com.ram.trading.auth.service.calendar.TradingCalendar calendar =
+                mock(com.ram.trading.auth.service.calendar.TradingCalendar.class);
+        when(calendar.isTradingDay()).thenReturn(false);
+        when(calendar.reason()).thenReturn("NSE holiday: Diwali-Balipratipada");
+        watch.setCalendar(calendar);
+
+        watch.morningCheck();
+        watch.morningCheck();
+
+        verify(notifier, times(1)).marketHoliday(contains("Diwali"));
+        verify(notifier, never()).loginNeeded(anyString());
+    }
 }

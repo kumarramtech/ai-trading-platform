@@ -19,8 +19,8 @@ import java.time.ZoneId;
 /**
  * Warns on Slack before a missing Upstox login costs a trading day. The token expires at
  * 03:30 IST, so each weekday morning it reminds until someone logs in, and it stops by
- * itself once the session is valid. Weekdays only; there is no holiday calendar, so a
- * market holiday gets the reminders too.
+ * itself once the session is valid. Weekdays only; on an NSE holiday (stock-service's
+ * trading calendar) it sends one "market closed" note instead of login reminders.
  */
 @Component
 @RequiredArgsConstructor
@@ -37,6 +37,15 @@ public class UpstoxLoginWatch {
 
     private LocalDateTime lastTokenAlert;
 
+    private com.ram.trading.auth.service.calendar.TradingCalendar calendar;
+
+    private java.time.LocalDate holidayNoticeSent;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.auth.service.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
     @Schedules({
             @Scheduled(cron = "0 0,15,25 7 * * MON-FRI", zone = "Asia/Kolkata"),
             @Scheduled(cron = "0 30 8 * * MON-FRI", zone = "Asia/Kolkata"),
@@ -44,7 +53,16 @@ public class UpstoxLoginWatch {
     })
     public void morningCheck() {
         try {
-            check(LocalDateTime.now(IST));
+            LocalDateTime now = LocalDateTime.now(IST);
+            if (calendar != null && !calendar.isTradingDay()) {
+                // One Slack note on the first check of a holiday morning, then silence.
+                if (!now.toLocalDate().equals(holidayNoticeSent)) {
+                    holidayNoticeSent = now.toLocalDate();
+                    notifier.marketHoliday(calendar.reason());
+                }
+                return;
+            }
+            check(now);
         } catch (RuntimeException ex) {
             log.error("Upstox login check failed", ex);
             notifier.loginNeeded("The login check itself failed (" + ex.getClass().getSimpleName()
@@ -78,7 +96,8 @@ public class UpstoxLoginWatch {
         DayOfWeek day = now.getDayOfWeek();
         boolean weekend = day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
         LocalTime t = now.toLocalTime();
-        if (weekend || t.isBefore(ALERTS_FROM) || !t.isBefore(ALERTS_UNTIL)) {
+        if (weekend || t.isBefore(ALERTS_FROM) || !t.isBefore(ALERTS_UNTIL)
+                || (calendar != null && !calendar.isTradingDay())) {
             return;
         }
         if (lastTokenAlert != null && Duration.between(lastTokenAlert, now).compareTo(TOKEN_ALERT_GAP) < 0) {

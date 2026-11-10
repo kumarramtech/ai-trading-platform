@@ -150,11 +150,21 @@ public class LongTermMonitorService {
         }
     }
 
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
     /** One pass at {@code now} (IST); package-visible for tests. */
     void tick(LocalDateTime now) {
         DayOfWeek dow = now.getDayOfWeek();
         if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) {
             return;
+        }
+        if (calendar != null && !calendar.isTradingDay()) {
+            return; // NSE holiday: prices are the last day's, nothing to watch or buy
         }
         LocalDate today = now.toLocalDate();
         LocalTime t = now.toLocalTime();

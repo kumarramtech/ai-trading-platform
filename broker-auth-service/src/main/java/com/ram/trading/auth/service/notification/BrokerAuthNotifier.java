@@ -51,6 +51,11 @@ public class BrokerAuthNotifier {
         send("Upstox token unavailable", "A service could not get the Upstox token: " + reason + "\n" + HOW_TO_LOGIN);
     }
 
+    public void marketHoliday(String reason) {
+        send("Market closed today", reason + "\nNo Upstox login needed. The scheduled market jobs (data load, "
+                + "watchlist, stream, intraday, FADE, momentum) skip today and run again on the next trading day.");
+    }
+
     void send(String title, String message) {
         if (!enabled) {
             return;

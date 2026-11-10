@@ -35,6 +35,22 @@ public class TradingSessionService {
     @Value("${trading.market.timezone:Asia/Kolkata}")
     private String timezone;
 
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
+    /** False on weekends and NSE holidays: scheduled market jobs skip the day. */
+    public boolean isTradingDay() {
+        LocalDate today = LocalDate.now(zoneId());
+        if (today.getDayOfWeek() == DayOfWeek.SATURDAY || today.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return false;
+        }
+        return calendar == null || calendar.isTradingDay();
+    }
+
     private ZoneId zoneId() {
         return ZoneId.of(timezone);
     }
@@ -56,6 +72,10 @@ public class TradingSessionService {
 
         if (today.getDayOfWeek() == DayOfWeek.SATURDAY ||
                 today.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return false;
+        }
+        // NSE holiday (stock-service calendar, cached daily, fail-open): closed like a weekend.
+        if (calendar != null && !calendar.isTradingDay()) {
             return false;
         }
 

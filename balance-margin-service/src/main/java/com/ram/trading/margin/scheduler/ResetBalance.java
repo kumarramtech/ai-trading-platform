@@ -13,10 +13,16 @@ public class ResetBalance {
 
     private final PaperTradingAccountService paperTradingAccountService;
 
+    private final com.ram.trading.margin.calendar.TradingCalendar calendar;
+
     @Scheduled(
             cron = "0 30 8 * * MON-FRI",
             zone = "Asia/Kolkata")
     public void resetPaperTradingBalance() {
+        if (!calendar.isTradingDay()) {
+            log.info("Paper trading balance reset skipped: market closed ({})", calendar.reason());
+            return;
+        }
 
         log.info("========================================");
         log.info("RESETTING PAPER TRADING BALANCE");

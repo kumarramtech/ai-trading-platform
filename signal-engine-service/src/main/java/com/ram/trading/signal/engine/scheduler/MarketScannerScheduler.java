@@ -335,6 +335,11 @@ public class MarketScannerScheduler {
     )
     public void analyzePreMarket() {
 
+        if (!tradingSessionService.isTradingDay()) {
+            log.info("PRE-MARKET ANALYSIS SKIPPED | Market closed today (weekend or NSE holiday)");
+            return;
+        }
+
         log.info("======================================================");
         log.info("V2.2 PRE-MARKET ANALYSIS STARTED");
         log.info("Analysis Time : 09:15 AM IST");

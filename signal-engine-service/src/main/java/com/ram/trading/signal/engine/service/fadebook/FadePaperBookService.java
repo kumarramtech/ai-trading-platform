@@ -64,6 +64,18 @@ public class FadePaperBookService {
     private final JdbcTemplate jdbc;
     private final FadePaperTradeRepository repository;
     private final IntradayChargesCalculator charges;
+
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
+    /** NSE holiday: the scheduled entry, monitor and square-off skip the day. */
+    private boolean closedToday() {
+        return calendar != null && !calendar.isTradingDay();
+    }
     private final NotificationClient notificationClient;
     /** News study: tags each short at entry in the background; it changes no FADE rule. */
     private final FadeNewsTagger newsTagger;
@@ -225,7 +237,7 @@ public class FadePaperBookService {
     /** 09:46:40: the 09:45 candle is complete and stored. */
     @Scheduled(cron = "40 46 9 * * MON-FRI", zone = "Asia/Kolkata")
     public void enterAtScreen() {
-        if (!enabled) {
+        if (!enabled || closedToday()) {
             return;
         }
         try {
@@ -238,7 +250,7 @@ public class FadePaperBookService {
     /** Every minute: stops and the daily stop on the candles completed since the last run. */
     @Scheduled(cron = "20 * 9-14 * * MON-FRI", zone = "Asia/Kolkata")
     public void monitor() {
-        if (!enabled) {
+        if (!enabled || closedToday()) {
             return;
         }
         LocalDateTime now = LocalDateTime.now(clock);
@@ -259,7 +271,7 @@ public class FadePaperBookService {
     /** 15:00:20: last stop checks through the 14:59 candle, then cover what is left. */
     @Scheduled(cron = "20 0 15 * * MON-FRI", zone = "Asia/Kolkata")
     public void squareOff() {
-        if (!enabled) {
+        if (!enabled || closedToday()) {
             return;
         }
         try {

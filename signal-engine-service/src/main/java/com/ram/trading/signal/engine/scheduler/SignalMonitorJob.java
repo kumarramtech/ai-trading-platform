@@ -13,7 +13,16 @@ public class SignalMonitorJob {
 
     @Scheduled(fixedRate = 60000)
     public void monitorSignals() {
-
+        if (calendar != null && !calendar.isTradingDay()) {
+            return; // weekend or NSE holiday: no session, nothing to monitor
+        }
         service.checkOpenSignals();
+    }
+
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
     }
 }

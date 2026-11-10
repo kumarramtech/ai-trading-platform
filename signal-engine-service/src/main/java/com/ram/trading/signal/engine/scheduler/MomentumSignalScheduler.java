@@ -32,6 +32,13 @@ public class MomentumSignalScheduler {
     @Value("${trading.momentum.enabled:true}")
     private boolean enabled;
 
+    private com.ram.trading.signal.engine.calendar.TradingCalendar calendar;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCalendar(com.ram.trading.signal.engine.calendar.TradingCalendar calendar) {
+        this.calendar = calendar;
+    }
+
     @Scheduled(cron = "${trading.momentum.cron:0 50 8,10 1-7 * MON-FRI}", zone = "Asia/Kolkata")
     public void publishMonthlyList() {
         if (!enabled) {
@@ -109,6 +116,10 @@ public class MomentumSignalScheduler {
      * the next trading day. A rebalance skipped on a holiday runs on the next weekday (days 1-7).
      */
     private boolean marketClosed(String job) {
+        if (calendar != null && !calendar.isTradingDay()) {
+            log.info("Paper momentum {} skipped: market closed ({})", job, calendar.reason());
+            return true;
+        }
         if (momentumPaperService.marketTradedToday()) {
             return false;
         }

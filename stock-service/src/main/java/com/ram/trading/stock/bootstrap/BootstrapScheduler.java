@@ -14,9 +14,16 @@ import org.springframework.stereotype.Component;
 public class BootstrapScheduler {
 
     private final BootstrapService bootstrapService;
+
+    private final com.ram.trading.stock.service.calendar.MarketCalendarService calendar;
+
     @Scheduled(cron = "${bootstrap.cron}", zone = "Asia/Kolkata")
     public void bootstrap() {
-
+        var day = calendar.today();
+        if (!day.tradingDay()) {
+            log.info("Bootstrap skipped: {} ({})", day.date(), day.reason());
+            return;
+        }
         bootstrapService.bootstrap();
 
     }

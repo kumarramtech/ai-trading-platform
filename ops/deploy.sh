@@ -6,7 +6,8 @@
 #   ops/deploy.sh <ec2-ip> <service> [<service> ...]
 #   ops/deploy.sh 13.200.231.191 signal-engine-service watchlist-service
 #
-# Never during market hours (09:15-15:30 IST, Mon-Fri): the script refuses.
+# Never during market hours (09:15-15:30 IST, Mon-Fri): the script refuses,
+# unless Upstox's holiday API confirms NSE is closed that day.
 # Key: TRADING_KEY (default "E:/AI Trading Project/trading-platform-key.pem").
 
 set -euo pipefail
@@ -31,8 +32,18 @@ SSH=(ssh -o ConnectTimeout=20 -i "$KEY" "$HOST")
 ist_day=$(TZ=IST-5:30 date +%u)
 ist_hm=$(TZ=IST-5:30 date +%H%M)
 if [ "$ist_day" -le 5 ] && [ "$ist_hm" -ge 0915 ] && [ "$ist_hm" -le 1530 ]; then
-  echo "Refusing to deploy during market hours (IST $ist_hm). Deploy after 15:30." >&2
-  exit 1
+  # Allowed only when Upstox confirms NSE is closed today (an exchange holiday);
+  # any doubt (no answer, other error) keeps the refusal.
+  ist_date=$(TZ=IST-5:30 date +%F)
+  hol=$(curl -s -m 15 -H "Accept: application/json" "https://api.upstox.com/v2/market/holidays/$ist_date" || true)
+  if echo "$hol" | grep -q '"holiday_type":"TRADING_HOLIDAY"' \
+     && echo "$hol" | grep -o '"closed_exchanges":\[[^]]*\]' | grep -q '"NSE"'; then
+    desc=$(echo "$hol" | grep -o '"description":"[^"]*"' | head -1 | cut -d'"' -f4)
+    echo "== market hours but NSE is closed today ($ist_date: $desc), deploy allowed"
+  else
+    echo "Refusing to deploy during market hours (IST $ist_hm). Deploy after 15:30." >&2
+    exit 1
+  fi
 fi
 
 # --- build --------------------------------------------------------------------
