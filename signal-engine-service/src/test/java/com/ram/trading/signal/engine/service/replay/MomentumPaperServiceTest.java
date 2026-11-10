@@ -28,6 +28,7 @@ class MomentumPaperServiceTest {
 
     private JdbcTemplate jdbc;
     private MomentumPaperService paper;
+    private StockServiceClient prices;
     private final String month = YearMonth.now(ZoneId.of("Asia/Kolkata")).toString();
 
     @BeforeEach
@@ -37,7 +38,7 @@ class MomentumPaperServiceTest {
         jdbc = new JdbcTemplate(ds);
         NotificationClient notifications = mock(NotificationClient.class);
         when(notifications.sendNotification(any())).thenReturn(Mono.empty());
-        StockServiceClient prices = mock(StockServiceClient.class);
+        prices = mock(StockServiceClient.class);
         when(prices.getStockPrice(anyString())).thenAnswer(inv -> Mono.just(StockResponse.builder()
                 .symbol(inv.getArgument(0)).price(switch ((String) inv.getArgument(0)) {
                     case "AAA" -> 100.0;
@@ -189,7 +190,20 @@ class MomentumPaperServiceTest {
         jdbc.update("insert into minute_candle (symbol, candle_minute, close_price) values ('AAA', ?, 109), ('AAA', ?, 110)",
                 t1, t2);
 
-        // Monday 2026-11-09 18:00: market closed, AAA from its last minute (110), BBB has none.
+        // Monday 2026-11-09 11:00: in the session the market stream price wins (mock: AAA 100, BBB 200).
+        MomentumPaperService.PortfolioView live = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(11, 0));
+        assertEquals("LIVE", live.positions().get(0).priceSource());
+        assertEquals(100, live.positions().get(0).lastPrice(), 0.001);
+        assertEquals(2, live.priced());
+
+        // 18:00, market closed: still the stream's last price (as the 15:40 snapshot), labelled CLOSE.
+        MomentumPaperService.PortfolioView close = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(18, 0));
+        assertEquals("CLOSE", close.positions().get(0).priceSource());
+        assertEquals(100, close.positions().get(0).lastPrice(), 0.001);
+        assertEquals(2, close.priced());
+
+        // Stream has no prices (e.g. after a restart): AAA from its last minute (110), BBB has none.
+        when(prices.getStockPrice(anyString())).thenReturn(Mono.empty());
         MomentumPaperService.PortfolioView after = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(18, 0));
         MomentumPaperService.HoldingView a = after.positions().get(0), b = after.positions().get(1);
         assertEquals("AAA", a.symbol());
@@ -203,10 +217,18 @@ class MomentumPaperServiceTest {
         assertEquals(after.cash() + after.marketValue(), after.equity(), 0.01);
         assertEquals(after.equity() - 100000, after.totalPnl(), 0.01);
 
-        // Monday 11:00: in the session the market stream price wins (mock: AAA 100, BBB 200).
-        MomentumPaperService.PortfolioView live = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(11, 0));
-        assertEquals("LIVE", live.positions().get(0).priceSource());
-        assertEquals(100, live.positions().get(0).lastPrice(), 0.001);
-        assertEquals(2, live.priced());
+        // The 15:40 snapshot stores each price (105 here); after a restart the view uses it (newer than 15:28).
+        when(prices.getStockPrice(anyString())).thenAnswer(inv -> Mono.just(StockResponse.builder()
+                .symbol(inv.getArgument(0)).price(105.0).build()));
+        paper.snapshot();
+        when(prices.getStockPrice(anyString())).thenReturn(Mono.empty());
+        MomentumPaperService.PortfolioView restarted = paper.portfolioView(LocalDate.of(2026, 11, 9).atTime(18, 0));
+        assertEquals("CLOSE", restarted.positions().get(0).priceSource());
+        assertEquals(105, restarted.positions().get(0).lastPrice(), 0.001);
+        assertEquals("CLOSE", restarted.positions().get(1).priceSource());
+        assertEquals(2, restarted.priced());
+        Double snapEquity = jdbc.queryForObject(
+                "select equity from momentum_paper_equity order by equity_day desc limit 1", Double.class);
+        assertEquals(snapEquity, restarted.equity(), 0.01);
     }
 }

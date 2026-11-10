@@ -83,6 +83,10 @@ public class MomentumPaperService {
         jdbc.execute("create table if not exists momentum_paper_equity ("
                 + "equity_day date primary key, cash double not null, holdings_value double not null, equity double not null, "
                 + "open_positions int not null, nifty_close double)");
+        // Each holding's price at the 15:40 snapshot, so the holdings view matches it even after a restart.
+        jdbc.execute("create table if not exists momentum_paper_close ("
+                + "equity_day date not null, symbol varchar(32) not null, price double not null, "
+                + "primary key (equity_day, symbol))");
     }
 
     public record Holding(long id, String symbol, int quantity, double entryPrice, double buyCharges) {
@@ -280,6 +284,10 @@ public class MomentumPaperService {
             Double ltp = price(h.symbol());
             marks.add(new Mark(h.symbol(), h.quantity(), h.entryPrice(), ltp));
             holdings += (ltp != null ? ltp : h.entryPrice()) * h.quantity();
+            if (ltp != null) {
+                jdbc.update("replace into momentum_paper_close (equity_day, symbol, price) values (?, ?, ?)",
+                        today, h.symbol(), ltp);
+            }
         }
         double cash = cash(today);
         jdbc.update("replace into momentum_paper_equity (equity_day, cash, holdings_value, equity, open_positions, nifty_close) "
@@ -601,7 +609,12 @@ public class MomentumPaperService {
         return spent > 0;
     }
 
-    /** One holding priced now. source: LIVE (market stream), LAST_MINUTE (stored candle) or NONE (buy price). */
+    /**
+     * One holding priced now. source: LIVE (market stream in the session), CLOSE (market stream's last
+     * price outside the session, as the 15:40 snapshot uses; or, when the stream has none, e.g. after a
+     * restart, the stored snapshot price), LAST_MINUTE (stored candle, when newer than the snapshot)
+     * or NONE (buy price).
+     */
     public record HoldingView(String symbol, int quantity, double buyPrice, double cost, Double lastPrice,
                               String priceSource, java.time.LocalDateTime priceTime, double value,
                               Double pnl, Double pnlPct) {
@@ -614,9 +627,9 @@ public class MomentumPaperService {
     }
 
     /**
-     * The holdings at the latest price: live from the market stream during the session,
-     * otherwise the last stored 1-minute close (after the close: about 15:29 that day),
-     * otherwise the buy price (flagged NONE). Read-only.
+     * The holdings at the latest price from the market stream (LIVE in the session, CLOSE outside it),
+     * otherwise the last stored 1-minute close (about 15:29 that day), otherwise the buy price
+     * (flagged NONE). Read-only.
      */
     public PortfolioView portfolioView() {
         return portfolioView(java.time.LocalDateTime.now(IST));
@@ -640,8 +653,10 @@ public class MomentumPaperService {
         boolean session = now.getDayOfWeek().getValue() <= 5
                 && !now.toLocalTime().isBefore(java.time.LocalTime.of(9, 15))
                 && now.toLocalTime().isBefore(java.time.LocalTime.of(15, 31));
+        // The market stream keeps each stock's last price after the close: the same price the
+        // 15:40 snapshot stores, so after the close this view and the snapshot agree.
         Map<String, Double> live = new java.util.HashMap<>();
-        if (session && !open.isEmpty()) {
+        if (!open.isEmpty()) {
             reactor.core.publisher.Flux.fromIterable(open)
                     .flatMap(h -> stockServiceClient.getStockPrice(h.symbol())
                             .timeout(Duration.ofSeconds(3))
@@ -652,7 +667,9 @@ public class MomentumPaperService {
                     .blockOptional(Duration.ofSeconds(15))
                     .ifPresent(list -> list.forEach(e -> live.put(e.getKey(), e.getValue())));
         }
-        Map<String, Object[]> stored = lastMinuteCloses(open.stream().map(Holding::symbol).toList());
+        List<String> symbols = open.stream().map(Holding::symbol).toList();
+        Map<String, Object[]> stored = lastMinuteCloses(symbols);
+        Map<String, Object[]> snapshot = snapshotCloses(symbols);
 
         List<HoldingView> rows = new ArrayList<>();
         double cost = 0, value = 0;
@@ -660,13 +677,19 @@ public class MomentumPaperService {
         for (Holding h : open) {
             double c = h.entryPrice() * h.quantity();
             Double last = live.get(h.symbol());
-            String source = "LIVE";
+            String source = session ? "LIVE" : "CLOSE";
             java.time.LocalDateTime at = now;
-            if (last == null && stored.containsKey(h.symbol())) {
-                Object[] s = stored.get(h.symbol());
-                last = (Double) s[0];
-                at = (java.time.LocalDateTime) s[1];
-                source = "LAST_MINUTE";
+            if (last == null) {
+                // No stream price: the newer of the 15:40 snapshot price and the last stored minute.
+                Object[] snap = snapshot.get(h.symbol()), minute = stored.get(h.symbol());
+                boolean useSnap = snap != null && (minute == null
+                        || !((java.time.LocalDateTime) snap[1]).isBefore((java.time.LocalDateTime) minute[1]));
+                Object[] s = useSnap ? snap : minute;
+                if (s != null) {
+                    last = (Double) s[0];
+                    at = (java.time.LocalDateTime) s[1];
+                    source = useSnap ? "CLOSE" : "LAST_MINUTE";
+                }
             }
             if (last == null) {
                 source = "NONE";
@@ -702,6 +725,23 @@ public class MomentumPaperService {
                         + "and close_price > 0 group by symbol) x on m.symbol = x.symbol and m.candle_minute = x.mx",
                 rs -> {
                     out.put(rs.getString(1), new Object[]{rs.getDouble(2), rs.getTimestamp(3).toLocalDateTime()});
+                }, symbols.toArray());
+        return out;
+    }
+
+    /** symbol -> {price, day at 15:40} from the latest snapshot that priced it. */
+    private Map<String, Object[]> snapshotCloses(List<String> symbols) {
+        Map<String, Object[]> out = new java.util.HashMap<>();
+        if (symbols.isEmpty()) {
+            return out;
+        }
+        String in = String.join(",", java.util.Collections.nCopies(symbols.size(), "?"));
+        jdbc.query("select c.symbol, c.price, c.equity_day from momentum_paper_close c join ("
+                        + "select symbol, max(equity_day) mx from momentum_paper_close where symbol in (" + in + ") "
+                        + "group by symbol) x on c.symbol = x.symbol and c.equity_day = x.mx",
+                rs -> {
+                    out.put(rs.getString(1), new Object[]{rs.getDouble(2),
+                            rs.getDate(3).toLocalDate().atTime(15, 40)});
                 }, symbols.toArray());
         return out;
     }

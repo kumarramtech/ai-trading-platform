@@ -17,8 +17,8 @@ import java.util.TreeMap;
  *
  * Intraday and FADE are counted from the start of their current rules (intraday
  * rule_version, FADE's first trade); momentum from its account start. Momentum is
- * valued at its last 15:40 snapshot, so during the session its "today" is the last
- * stored day. Exposure is at cost (entry price x quantity); FADE's open shorts add
+ * valued at its 15:40 snapshots; for today before that snapshot, at the same latest
+ * prices as /analytics/momentum-paper/holdings. Exposure is at cost (entry price x quantity); FADE's open shorts add
  * their last-minute unrealised P&L.
  */
 @Service
@@ -47,8 +47,34 @@ public class AccountOverviewService {
     @Value("${trading.fade-book.daily-stop:10000}")
     private double fadeDailyStop = 10000;
 
+    /** Momentum at the latest price for today (before its 15:40 snapshot). Optional: tests pass a function. */
+    private java.util.function.Supplier<Double> momentumLiveEquity = () -> null;
+
     public AccountOverviewService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMomentumPaper(com.ram.trading.signal.engine.service.replay.MomentumPaperService paper) {
+        this.momentumLiveEquity = () -> {
+            try {
+                return paper.portfolioView().equity();
+            } catch (Exception ex) {
+                return null;
+            }
+        };
+    }
+
+    void setMomentumLiveEquity(java.util.function.Supplier<Double> supplier) {
+        this.momentumLiveEquity = supplier;
+    }
+
+    /** IST now; replaceable in tests. */
+    private java.util.function.Supplier<java.time.LocalDateTime> clock =
+            () -> java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+
+    void setClock(java.util.function.Supplier<java.time.LocalDateTime> clock) {
+        this.clock = clock;
     }
 
     /** One book. budget: capital (intraday, momentum) or the most it can short (FADE). */
@@ -164,6 +190,23 @@ public class AccountOverviewService {
             last = e;
             lastDay = d;
         }
+        // Today before the 15:40 snapshot: value at the same latest prices as /momentum-paper/holdings.
+        boolean live = false;
+        java.time.LocalDateTime now0 = clock.get();
+        boolean afterOpen = now0.getDayOfWeek().getValue() <= 5 && !now0.toLocalTime().isBefore(java.time.LocalTime.of(9, 15));
+        if (afterOpen && day.equals(now0.toLocalDate()) && !day.equals(lastDay)) {
+            Double now = momentumLiveEquity.get();
+            if (now != null) {
+                double change = now - prev;
+                combined.merge(day, change, Double::sum);
+                worstDay = Math.min(worstDay, change);
+                peak = Math.max(peak, now);
+                worstFall = Math.min(worstFall, now - peak);
+                todayNet = change;
+                last = now;
+                live = true;
+            }
+        }
         Map<String, Object> pos = jdbc.queryForMap("select count(*) n, "
                 + "coalesce(sum(case when status = 'OPEN' then quantity * entry_price else 0 end), 0) cost, "
                 + "coalesce(sum(case when status = 'OPEN' then 1 else 0 end), 0) open_n, "
@@ -177,8 +220,10 @@ public class AccountOverviewService {
                 + "from momentum_paper_position", day, day, day, day);
         double cost = num(pos.get("cost"));
         double holdings = last - cash;
-        String note = String.format("equity Rs %.0f (cash Rs %.0f) at the %s snapshot; %.0f%% of capital invested",
-                last, cash, lastDay == null ? "first" : lastDay, last > 0 ? (last - cash) / last * 100 : 0);
+        String note = String.format("equity Rs %.0f (cash Rs %.0f) %s; %.0f%% of capital invested",
+                last, cash, live ? "at the latest prices (today's snapshot comes at 15:40)"
+                        : "at the " + (lastDay == null ? "first" : lastDay) + " snapshot",
+                last > 0 ? (last - cash) / last * 100 : 0);
         return new BookLine("MONTHLY MOMENTUM", "main bet, paper until January 2027", true,
                 String.format("capital Rs %.0f, top 30 equal weight, delivery", start), start, since, eq.size(),
                 (int) num(pos.get("closed_n")), (int) num(pos.get("won")), todayNet, (int) num(pos.get("today_n")),

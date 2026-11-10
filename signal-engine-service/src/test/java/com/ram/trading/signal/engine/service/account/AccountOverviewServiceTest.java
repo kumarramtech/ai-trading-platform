@@ -116,6 +116,32 @@ class AccountOverviewServiceTest {
     }
 
     @Test
+    void momentumTodayBeforeTheSnapshotUsesTheLatestPrices() {
+        LocalDate today = LocalDate.of(2026, 11, 10); // a Tuesday
+        LocalDate yesterday = today.minusDays(1);
+        jdbc.update("insert into momentum_paper_account values (1, 100000, 30000, ?)", yesterday);
+        jdbc.update("insert into momentum_paper_equity values (?, 100200)", yesterday);
+        service.setMomentumLiveEquity(() -> 100500.0);
+
+        // 06:00, before the open: still yesterday's snapshot, no made-up "today" move.
+        service.setClock(() -> today.atTime(6, 0));
+        AccountOverviewService.BookLine pre = service.overview(today).books().get(2);
+        assertEquals(200, pre.totalNet(), 0.01);
+        assertEquals(0, pre.todayNet(), 0.01);
+
+        service.setClock(() -> today.atTime(11, 0));
+        AccountOverviewService.BookLine mo = service.overview(today).books().get(2);
+        assertEquals(500, mo.totalNet(), 0.01, "live equity 100,500 vs 100,000 start");
+        assertEquals(300, mo.todayNet(), 0.01, "vs yesterday's snapshot 100,200");
+        assertTrue(mo.note().contains("latest prices"), mo.note());
+
+        // Once today's snapshot exists it wins; a past day never uses live prices.
+        jdbc.update("insert into momentum_paper_equity values (?, 100400)", today);
+        assertEquals(400, service.overview(today).books().get(2).totalNet(), 0.01);
+        assertEquals(200, service.overview(yesterday).books().get(2).totalNet(), 0.01);
+    }
+
+    @Test
     void emptyBooksGiveZerosNotErrors() {
         AccountOverviewService.Overview o = service.overview(D1);
         assertEquals(0, o.totalNet(), 0.01);
