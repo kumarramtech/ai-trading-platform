@@ -72,6 +72,14 @@ public class FadePaperBookService {
         this.calendar = calendar;
     }
 
+    private FadePromotionService promotion;
+
+    /** The fixed promotion test's progress line in the daily Slack message. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPromotion(FadePromotionService promotion) {
+        this.promotion = promotion;
+    }
+
     /** NSE holiday: the scheduled entry, monitor and square-off skip the day. */
     private boolean closedToday() {
         return calendar != null && !calendar.isTradingDay();
@@ -283,7 +291,8 @@ public class FadePaperBookService {
             repository.saveAll(open);
             List<FadePaperTrade> all = repository.findByTradeDate(day);
             if (!all.isEmpty()) {
-                notifySlack("FADE book " + day + ": Rs " + String.format("%.0f", dayNet(all)), toText(day) + newsSplit(day));
+                notifySlack("FADE book " + day + ": Rs " + String.format("%.0f", dayNet(all)), toText(day) + newsSplit(day)
+                        + (promotion == null ? "" : promotion.line()));
             }
         } catch (Exception ex) {
             log.error("FADE BOOK | Square-off failed", ex);

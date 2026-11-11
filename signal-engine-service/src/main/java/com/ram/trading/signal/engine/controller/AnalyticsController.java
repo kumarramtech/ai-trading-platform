@@ -54,6 +54,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.fadebook.FadeNewsStudyService fadeNewsStudyService;
 
+    private final com.ram.trading.signal.engine.service.fadebook.FadePromotionService fadePromotionService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -243,6 +245,22 @@ public class AnalyticsController {
         // JPA: off the event loop.
         return reactor.core.publisher.Mono.fromCallable(() -> fadePaperBookService.toText(day))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+    }
+
+    /**
+     * FADE's fixed promotion test (agreed 2026-11-11): after 60 sessions, net >= +10 bps with t >= 2,
+     * both halves positive, NIFTY-hedged positive, worst day better than Rs -5,000. format=text for text.
+     */
+    @GetMapping("/fade-book/promotion")
+    public reactor.core.publisher.Mono<ResponseEntity<?>> fadePromotion(
+            @RequestParam(required = false, defaultValue = "json") String format) {
+        return blocking(() -> {
+            var r = fadePromotionService.report();
+            return "text".equalsIgnoreCase(format)
+                    ? ResponseEntity.ok().contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                    .body((Object) com.ram.trading.signal.engine.service.fadebook.FadePromotionService.toText(r))
+                    : ResponseEntity.ok((Object) r);
+        });
     }
 
     /** The FADE paper book as JSON for a dashboard: the day's shorts (default today) and its record. */
