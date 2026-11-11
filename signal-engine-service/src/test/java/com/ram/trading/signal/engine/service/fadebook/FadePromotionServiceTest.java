@@ -27,6 +27,14 @@ class FadePromotionServiceTest {
     }
 
     @Test
+    void theTestCountsOnlySessionsAfterTheRulesWereFixed() {
+        assertEquals(LocalDate.of(2026, 11, 12), FadePromotionService.TEST_SINCE, "decided once; never moved");
+        var r = FadePromotionService.evaluate(List.of());
+        assertEquals("COLLECTING 0/60 sessions", r.verdict());
+        assertEquals(0, r.trades());
+    }
+
+    @Test
     void noVerdictBeforeSixtySessions() {
         var r = FadePromotionService.evaluate(book(59, 40, 20, 100));
         assertEquals("COLLECTING 59/60 sessions", r.verdict());

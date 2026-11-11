@@ -11,9 +11,9 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * FADE's promotion test, agreed 2026-11-11 and fixed before the data: the paper book, rules
- * unchanged since its first day (2026-11-04), earns a small live pilot only if after
- * {@value #MIN_SESSIONS} sessions ALL of these hold:
+ * FADE's promotion test, agreed 2026-11-11: the paper book (rules unchanged since 2026-11-04)
+ * earns a small live pilot only if, over the {@value #MIN_SESSIONS} sessions from
+ * {@link #TEST_SINCE}, ALL of these hold:
  * <ol>
  *   <li>net after charges at least +{@value #MIN_BPS} bps per short, t at least {@value #MIN_T};</li>
  *   <li>both halves of the sessions net positive;</li>
@@ -27,7 +27,12 @@ import java.util.TreeMap;
 @Service
 public class FadePromotionService {
 
-    static final LocalDate RULES_SINCE = LocalDate.of(2026, 11, 4);
+    /**
+     * The first session counted: the day after the rules were fixed, so the test sees only data
+     * that came after them (the Nov 4-11 sessions were known when the rules were written).
+     * Decided once on 2026-11-11; never move it again.
+     */
+    static final LocalDate TEST_SINCE = LocalDate.of(2026, 11, 12);
     static final int MIN_SESSIONS = 60;
     static final double MIN_BPS = 10;
     static final double MIN_T = 2;
@@ -56,7 +61,7 @@ public class FadePromotionService {
         for (Map<String, Object> r : jdbc.queryForList(
                 "select trade_date d, symbol s, net_pnl net, entry_price p, quantity q, entry_time ti, exit_time tx "
                         + "from fade_paper_trade where status = 'CLOSED' and net_pnl is not null and trade_date >= ? "
-                        + "order by trade_date, id", RULES_SINCE)) {
+                        + "order by trade_date, id", TEST_SINCE)) {
             double notional = ((Number) r.get("p")).doubleValue() * ((Number) r.get("q")).doubleValue();
             double net = ((Number) r.get("net")).doubleValue();
             double bps = notional > 0 ? net / notional * 10000 : 0;
@@ -102,7 +107,7 @@ public class FadePromotionService {
             verdict = "FAILED";
             next = "Stop FADE (trading.fade-book.enabled=false); put the effort into monthly momentum.";
         }
-        return new Report(RULES_SINCE, sessions, MIN_SESSIONS, rows.size(), total, all, h1, h2, hedged, worst,
+        return new Report(TEST_SINCE, sessions, MIN_SESSIONS, rows.size(), total, all, h1, h2, hedged, worst,
                 verdict, checks, next);
     }
 
@@ -135,7 +140,7 @@ public class FadePromotionService {
 
     public static String toText(Report r) {
         StringBuilder out = new StringBuilder();
-        out.append("FADE PROMOTION TEST (paper only; rules fixed 2026-11-11, book rules unchanged since ")
+        out.append("FADE PROMOTION TEST (paper only; rules fixed 2026-11-11, sessions counted from ")
                 .append(r.since()).append(")\n");
         out.append(String.format("  %s | %d shorts, Rs %+,.0f net%n", r.verdict(), r.trades(), r.totalRs()));
         r.checks().forEach(c -> out.append("  ").append(c).append("\n"));
