@@ -59,7 +59,14 @@ public class MomentumSignalScheduler {
         }
     }
 
-    /** Paper fills for the month's list shortly after the open (11:05 after a 10:50 list). */
+    /**
+     * Rebalance day: sells shortly after the open (11:20 after a 10:50 list), buys at 13:00
+     * (execution timing study c2f6940: midday buys 9.5 bps cheaper, sells best early).
+     * With trading.momentum.paper.split-buys=false the 09:20 run buys too, as before.
+     */
+    @Value("${trading.momentum.paper.split-buys:true}")
+    private boolean splitBuys = true;
+
     @Scheduled(cron = "${trading.momentum.paper.rebalance-cron:0 20 9,11 1-7 * MON-FRI}", zone = "Asia/Kolkata")
     public void rebalancePaperPortfolio() {
         if (!enabled) {
@@ -69,9 +76,29 @@ public class MomentumSignalScheduler {
             if (marketClosed("rebalance")) {
                 return;
             }
-            momentumPaperService.rebalance();
+            if (splitBuys) {
+                momentumPaperService.sellsOnly();
+            } else {
+                momentumPaperService.rebalance();
+            }
         } catch (Exception ex) {
             log.error("Paper momentum rebalance failed", ex);
+        }
+    }
+
+    /** Rebalance day, 13:00: the buys (and any sell that had no price at 09:20). */
+    @Scheduled(cron = "${trading.momentum.paper.buy-cron:0 0 13 1-7 * MON-FRI}", zone = "Asia/Kolkata")
+    public void buyPaperPortfolio() {
+        if (!enabled || !splitBuys) {
+            return;
+        }
+        try {
+            if (marketClosed("rebalance buys")) {
+                return;
+            }
+            momentumPaperService.rebalance();
+        } catch (Exception ex) {
+            log.error("Paper momentum rebalance buys failed", ex);
         }
     }
 

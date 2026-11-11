@@ -94,6 +94,26 @@ class MomentumPaperServiceTest {
     }
 
     @Test
+    void rebalanceDaySellsFirstAndBuysLaterWithNoTopUpInBetween() {
+        list("AAA", "BBB");
+        paper.rebalance();
+        jdbc.update("update momentum_paper_account set last_rebalance_month = null where id = 1");
+        list("BBB", "CCC");
+
+        String sells = paper.sellsOnly().orElseThrow();
+        assertTrue(sells.contains("SELL AAA"), sells);
+        assertFalse(sells.contains("BUY"), sells);
+        assertEquals(List.of("BBB"), jdbc.queryForList(
+                "select symbol from momentum_paper_position where status = 'OPEN'", String.class));
+        assertTrue(paper.fillIdleCash().isEmpty(), "09:25 top-up waits for the 13:00 buys");
+        assertTrue(paper.sellsOnly().isEmpty(), "11:20 retry: nothing left to sell");
+
+        String buys = paper.rebalance().orElseThrow();
+        assertTrue(buys.contains("BUY  CCC"), buys);
+        assertTrue(paper.sellsOnly().isEmpty(), "month traded");
+    }
+
+    @Test
     void dailySummaryShowsTheDayTheTotalAgainstNiftyAndBestAndWorst() {
         List<MomentumPaperService.Mark> marks = List.of(
                 new MomentumPaperService.Mark("AAA", 10, 100, 110.0),

@@ -188,26 +188,7 @@ public class MomentumPaperService {
                 .append(slippagePct).append("% slippage, delivery charges)\n");
 
         List<String> missing = new ArrayList<>();
-        double realised = 0;
-        for (Holding h : open()) {
-            if (target.contains(h.symbol())) {
-                continue;
-            }
-            Double ltp = price(h.symbol());
-            if (ltp == null) {
-                missing.add(h.symbol() + " (sell)");
-                continue;
-            }
-            double fill = ltp * (1 - slippagePct / 100);
-            double value = fill * h.quantity();
-            double charges = DeliveryCharges.sellSide(value, brokerage);
-            double pnl = value - charges - h.entryPrice() * h.quantity() - h.buyCharges();
-            realised += pnl;
-            jdbc.update("update momentum_paper_position set exit_day = ?, exit_price = ?, sell_charges = ?, net_pnl = ?, "
-                    + "status = 'CLOSED' where id = ?", today, fill, charges, pnl, h.id());
-            jdbc.update("update momentum_paper_account set cash = cash + ? where id = 1", value - charges);
-            out.append(String.format("  SELL %-12s %4d @ %9.2f  P&L Rs %+8.0f%n", h.symbol(), h.quantity(), fill, pnl));
-        }
+        double realised = sellLeavers(target, today, out, missing);
 
         List<Holding> kept = open();
         double equity = cash(today);
@@ -265,6 +246,78 @@ public class MomentumPaperService {
         log.info("{}", text);
         send("Paper momentum rebalance " + month, text);
         return java.util.Optional.of(text);
+    }
+
+    /**
+     * Rebalance day, first half: sells the holdings that left this month's list (all of them
+     * for a CASH month) at the live price, without buying. The buys follow at 13:00 by
+     * {@link #rebalance()} (execution timing study, c2f6940: buys at 13:00 cost 9.5 bps less
+     * than at 09:20; sells are best at 09:20). Empty when there is no list, the month was
+     * traded, or nothing is to be sold.
+     */
+    public synchronized java.util.Optional<String> sellsOnly() {
+        LocalDate today = LocalDate.now(IST);
+        String month = YearMonth.from(today).toString();
+        List<String> list = jdbc.queryForList(
+                "select symbol from momentum_signal where list_month = ? order by rank_no", String.class, month);
+        cash(today);
+        String done = jdbc.queryForObject("select last_rebalance_month from momentum_paper_account where id = 1",
+                String.class);
+        if (list.isEmpty() || month.equals(done)) {
+            return java.util.Optional.empty();
+        }
+        accrueInterest(today);
+        List<String> target = list.contains(CASH) ? List.of() : list;
+        StringBuilder out = new StringBuilder();
+        List<String> missing = new ArrayList<>();
+        double realised = sellLeavers(target, today, out, missing);
+        if (out.isEmpty() && missing.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        StringBuilder text = new StringBuilder("PAPER MOMENTUM REBALANCE " + month
+                + " - SELLS (buys follow at 13:00, when prices are calmer)\n").append(out);
+        if (!missing.isEmpty()) {
+            text.append("  NOT DONE (no price, retried at 13:00): ").append(String.join(", ", missing)).append("\n");
+        }
+        text.append(String.format("  realised Rs %+.0f%n%n", realised)).append(report());
+        log.info("{}", text);
+        send("Paper momentum sells " + month, text.toString());
+        return java.util.Optional.of(text.toString());
+    }
+
+    /** True while this month's list is published but not yet traded (between the 09:20 sells and the 13:00 buys). */
+    boolean rebalancePending(LocalDate today) {
+        String month = YearMonth.from(today).toString();
+        Integer listed = jdbc.queryForObject("select count(*) from momentum_signal where list_month = ?",
+                Integer.class, month);
+        List<String> done = jdbc.queryForList("select last_rebalance_month from momentum_paper_account where id = 1",
+                String.class);
+        return listed != null && listed > 0 && !(done.size() == 1 && month.equals(done.get(0)));
+    }
+
+    /** Sells every open holding not in {@code target}; returns the realised P&L. */
+    private double sellLeavers(List<String> target, LocalDate today, StringBuilder out, List<String> missing) {
+        double realised = 0;
+        for (Holding h : open()) {
+            if (target.contains(h.symbol())) {
+                continue;
+            }
+            Double ltp = price(h.symbol());
+            if (ltp == null) {
+                missing.add(h.symbol() + " (sell)");
+                continue;
+            }
+            double fill = ltp * (1 - slippagePct / 100);
+            double value = fill * h.quantity();
+            double charges = DeliveryCharges.sellSide(value, brokerage);
+            double pnl = value - charges - h.entryPrice() * h.quantity() - h.buyCharges();
+            realised += pnl;
+            jdbc.update("update momentum_paper_position set exit_day = ?, exit_price = ?, sell_charges = ?, net_pnl = ?, "
+                    + "status = 'CLOSED' where id = ?", today, fill, charges, pnl, h.id());
+            jdbc.update("update momentum_paper_account set cash = cash + ? where id = 1", value - charges);
+            out.append(String.format("  SELL %-12s %4d @ %9.2f  P&L Rs %+8.0f%n", h.symbol(), h.quantity(), fill, pnl));
+        }
+        return realised;
     }
 
     /** Values the holdings at today's prices and stores the day's equity (after the close). */
@@ -527,7 +580,7 @@ public class MomentumPaperService {
         LocalDate today = LocalDate.now(IST);
         List<Holding> open = open();
         Integer started = jdbc.queryForObject("select count(*) from momentum_paper_account", Integer.class);
-        if (open.isEmpty() || started == null || started == 0) {
+        if (open.isEmpty() || started == null || started == 0 || rebalancePending(today)) {
             return java.util.Optional.empty();
         }
         accrueInterest(today);
