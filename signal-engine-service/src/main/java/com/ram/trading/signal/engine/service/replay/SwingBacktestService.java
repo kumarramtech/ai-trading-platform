@@ -243,7 +243,12 @@ public class SwingBacktestService {
                 PortfolioRule.live("LIVE + stop 20% (close)", false, 20),
                 PortfolioRule.live("LIVE + stop 25% (close)", false, 25),
                 PortfolioRule.live("LIVE + weekly entry + stop 15%", true, 15),
-                PortfolioRule.live("LIVE + weekly entry + stop 20%", true, 20))) {
+                PortfolioRule.live("LIVE + weekly entry + stop 20%", true, 20),
+                // Rank buffer study (pre-registered 2026-11-11): buy the top 30, keep while ranked within N.
+                PortfolioRule.live("LIVE + hold to rank 40", false, 0).withHoldRank(40),
+                PortfolioRule.live("LIVE + hold to rank 50", false, 0).withHoldRank(50),
+                PortfolioRule.live("LIVE + hold to rank 60", false, 0).withHoldRank(60),
+                PortfolioRule.live("LIVE + weekly entry + hold to rank 50", true, 0).withHoldRank(50))) {
             out.append(renderPortfolio(rule, momentumPortfolio(data, calendar, rule, niftyFull), calendar, nifty.close()));
         }
         out.append("\nMANAGED MOMENTUM (the live rule day by day; exits decided on the close, filled at the next open)\n");
@@ -614,7 +619,7 @@ public class SwingBacktestService {
      */
     record PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
                          double brokerage, boolean costs, int regimeSma, double cashYieldPct, boolean weeklyExit,
-                         boolean weeklyEntry, double stopPct) {
+                         boolean weeklyEntry, double stopPct, int holdRank) {
         PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
                       double brokerage, boolean costs) {
             this(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, 0, 0, false);
@@ -628,19 +633,47 @@ public class SwingBacktestService {
         PortfolioRule(String name, int top, boolean monthly, int lookback, int skip, boolean volAdjusted,
                       double brokerage, boolean costs, int regimeSma, double cashYieldPct, boolean weeklyExit) {
             this(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, regimeSma, cashYieldPct, weeklyExit,
-                    false, 0);
+                    false, 0, 0);
         }
 
         /** The locked live rule (top 30, 6m-1m vol-adjusted, NIFTY > 100DMA, 6.5% cash, Rs 0) with entry/stop variants. */
         static PortfolioRule live(String name, boolean weeklyEntry, double stopPct) {
-            return new PortfolioRule(name, 30, true, 126, 21, true, 0, true, 100, 6.5, false, weeklyEntry, stopPct);
+            return new PortfolioRule(name, 30, true, 126, 21, true, 0, true, 100, 6.5, false, weeklyEntry, stopPct, 0);
         }
 
         PortfolioRule withWeeklyExit() {
             return new PortfolioRule(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, regimeSma,
-                    cashYieldPct, true, weeklyEntry, stopPct);
+                    cashYieldPct, true, weeklyEntry, stopPct, holdRank);
+        }
+
+        /** Keep a holding while it ranks within {@code rank} (buy only the top; fewer sales, lower costs and tax). */
+        PortfolioRule withHoldRank(int rank) {
+            return new PortfolioRule(name, top, monthly, lookback, skip, volAdjusted, brokerage, costs, regimeSma,
+                    cashYieldPct, weeklyExit, weeklyEntry, stopPct, rank);
         }
     }
+
+    /** Buys, sales and how long sold holdings were held, per rule (costs and tax in the report). */
+    static final class Turnover {
+        int buys;
+        int sells;
+        int longTermSells;
+        long heldDays;
+
+        void sold(LocalDate bought, LocalDate sold) {
+            if (bought == null) {
+                return;
+            }
+            long d = java.time.temporal.ChronoUnit.DAYS.between(bought, sold);
+            sells++;
+            heldDays += d;
+            if (sold.isAfter(bought.plusMonths(12))) {
+                longTermSells++;
+            }
+        }
+    }
+
+    private final Map<String, Turnover> turnover = new ConcurrentHashMap<>();
 
     /** Mid-period exits by the weekly filter check, per rule name (for the report). */
     private final Map<String, Integer> weeklyExits = new ConcurrentHashMap<>();
@@ -687,13 +720,16 @@ public class SwingBacktestService {
         int entries = 0;
         int stops = 0;
         List<String> held = new ArrayList<>();
+        Map<String, LocalDate> boughtOn = new java.util.HashMap<>();
+        Turnover turn = new Turnover();
+        turnover.put(rule.name(), turn);
         for (int k = 0; k + 1 < rebalanceDays.size(); k++) {
             int r = rebalanceDays.get(k);
             int r2 = rebalanceDays.get(k + 1);
             LocalDate signalDay = calendar[r - 1];
             boolean riskOn = rule.regimeSma() <= 0 || index == null
                     || aboveAverage(index, signalDay, rule.regimeSma());
-            List<String> target = riskOn ? topList(data, rule, signalDay, calendar[r]) : List.of();
+            List<String> target = riskOn ? topList(data, rule, signalDay, calendar[r], held) : List.of();
 
             double start = equity;
             double slot = equity / rule.top();
@@ -715,7 +751,7 @@ public class SwingBacktestService {
             if (!riskOn && rule.weeklyEntry() && index != null) {
                 for (int d = r + 1; d < r2; d++) {
                     if (newWeek(calendar, d) && aboveAverage(index, calendar[d - 1], rule.regimeSma())) {
-                        target = topList(data, rule, calendar[d - 1], calendar[d]);
+                        target = topList(data, rule, calendar[d - 1], calendar[d], held);
                         entry = d;
                         entries++;
                         if (rule.costs()) {
@@ -724,6 +760,18 @@ public class SwingBacktestService {
                         }
                         break;
                     }
+                }
+            }
+            // Turnover and holding periods (costs and tax): sales at this rebalance, then the new buys.
+            for (String sym : held) {
+                if (!target.contains(sym)) {
+                    turn.sold(boughtOn.remove(sym), calendar[r]);
+                }
+            }
+            for (String sym : target) {
+                if (!held.contains(sym)) {
+                    turn.buys++;
+                    boughtOn.put(sym, calendar[entry]);
                 }
             }
             if (target.isEmpty()) {
@@ -774,6 +822,7 @@ public class SwingBacktestService {
                     }
                     interest += v * rule.cashYieldPct() / 100
                             * java.time.temporal.ChronoUnit.DAYS.between(sold, calendar[r2]) / 365;
+                    turn.sold(boughtOn.remove(sym), sold);
                 } else {
                     kept.add(sym);
                 }
@@ -867,7 +916,7 @@ public class SwingBacktestService {
     ManagedResult managedPortfolio(Map<String, Series> data, LocalDate[] calendar, ManagedRule rule, Series index) {
         PortfolioRule base = PortfolioRule.live(rule.name(), false, 0);
         PortfolioRule wide = new PortfolioRule(rule.name(), base.top() * 3, true, base.lookback(), base.skip(),
-                base.volAdjusted(), base.brokerage(), base.costs(), base.regimeSma(), base.cashYieldPct(), false, false, 0);
+                base.volAdjusted(), base.brokerage(), base.costs(), base.regimeSma(), base.cashYieldPct(), false, false, 0, 0);
         TreeMap<LocalDate, Double> months = new TreeMap<>();
         Map<String, ManagedPosition> book = new java.util.LinkedHashMap<>();
         java.util.Set<String> soldThisMonth = new java.util.HashSet<>();
@@ -1013,6 +1062,11 @@ public class SwingBacktestService {
 
     /** The rule's top list ranked on {@code signalDay}'s close, among stocks trading on {@code tradeDay}. */
     private List<String> topList(Map<String, Series> data, PortfolioRule rule, LocalDate signalDay, LocalDate tradeDay) {
+        return topList(data, rule, signalDay, tradeDay, List.of());
+    }
+
+    private List<String> topList(Map<String, Series> data, PortfolioRule rule, LocalDate signalDay, LocalDate tradeDay,
+                                 List<String> held) {
         List<Map.Entry<String, Double>> ranked = new ArrayList<>();
         for (Series s : data.values()) {
             int i = s.indexOf(signalDay);
@@ -1023,7 +1077,33 @@ public class SwingBacktestService {
             ranked.add(Map.entry(s.symbol(), momentumScore(s, i, rule.lookback(), rule.skip(), rule.volAdjusted())));
         }
         ranked.sort(Map.Entry.<String, Double>comparingByValue().reversed());
-        return ranked.stream().limit(rule.top()).map(Map.Entry::getKey).toList();
+        return bufferedList(ranked.stream().map(Map.Entry::getKey).toList(), held, rule.top(), rule.holdRank());
+    }
+
+    /**
+     * Pure: the period's list from {@code ranked} (best first). Without a buffer, the top
+     * {@code top}. With {@code holdRank} > top: holdings still ranked within holdRank stay,
+     * and the rest of the slots go to the best-ranked names not held.
+     */
+    static List<String> bufferedList(List<String> ranked, List<String> held, int top, int holdRank) {
+        if (holdRank <= top || held.isEmpty()) {
+            return ranked.stream().limit(top).toList();
+        }
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < Math.min(holdRank, ranked.size()) && out.size() < top; i++) {
+            if (held.contains(ranked.get(i))) {
+                out.add(ranked.get(i));
+            }
+        }
+        for (String s : ranked) {
+            if (out.size() >= top) {
+                break;
+            }
+            if (!out.contains(s)) {
+                out.add(s);
+            }
+        }
+        return out;
     }
 
     /**
@@ -1087,6 +1167,13 @@ public class SwingBacktestService {
         String extra = (rule.weeklyExit() ? " (+" + weeklyExits.getOrDefault(rule.name(), 0) + " mid-month exits)" : "")
                 + (rule.weeklyEntry() ? " (" + weeklyEntries.getOrDefault(rule.name(), 0) + " mid-month entries)" : "")
                 + (rule.stopPct() > 0 ? " (" + stopsHit.getOrDefault(rule.name(), 0) + " stops)" : "");
+        Turnover t = turnover.get(rule.name());
+        if (t != null && rule.costs()) {
+            // Buys a year drive costs; how long sold holdings were held drives the tax (> 12 months = LTCG).
+            extra += String.format(" | buys/yr %.0f, sold after avg %.0f days, %.0f%% held > 1y",
+                    t.buys / Math.max(sessions / 248.0, 0.1), t.sells == 0 ? 0 : (double) t.heldDays / t.sells,
+                    t.sells == 0 ? 0 : 100.0 * t.longTermSells / t.sells);
+        }
         return String.format("  %-46s total %+7.1f%% | %+6.1f%%/yr | max DD %5.1f%% | +months %2d/%2d | avg month Rs %6.0f"
                         + " | worst month %+5.1f%% | in cash %2d%s | NIFTY same window %+6.1f%%/yr%n",
                 rule.name(), total * 100, annualised(total, sessions), maxDd * 100,

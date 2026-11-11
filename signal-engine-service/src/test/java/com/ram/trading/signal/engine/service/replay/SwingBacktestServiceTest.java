@@ -13,6 +13,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SwingBacktestServiceTest {
 
     @Test
+    void rankBufferKeepsHoldingsWithinTheHoldRankAndFillsTheRestFromTheTop() {
+        List<String> ranked = List.of("A", "B", "C", "D", "E", "F", "G");
+        // No buffer (or nothing held): the plain top 3.
+        assertEquals(List.of("A", "B", "C"), SwingBacktestService.bufferedList(ranked, List.of("E"), 3, 0));
+        assertEquals(List.of("A", "B", "C"), SwingBacktestService.bufferedList(ranked, List.of(), 3, 5));
+        // Hold to rank 5: E (rank 5) stays, G (rank 7) goes; the free slots go to A and B.
+        assertEquals(List.of("E", "A", "B"), SwingBacktestService.bufferedList(ranked, List.of("E", "G"), 3, 5));
+        // A holding that left the ranking entirely goes too.
+        assertEquals(List.of("D", "A", "B"), SwingBacktestService.bufferedList(ranked, List.of("Z", "D"), 3, 5));
+    }
+
+    @Test
     void stockUniverseLeavesOutEtfsAndKeepsCompaniesAndUnknownSymbols() {
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(
                 "jdbc:h2:mem:universe" + System.nanoTime() + ";MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", ""));
@@ -148,9 +160,9 @@ class SwingBacktestServiceTest {
         SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
 
         var monthly = svc.momentumPortfolio(Map.of("UP", up), d,
-                new SwingBacktestService.PortfolioRule("m", 1, true, 126, 21, false, 0, false, 100, 0, false, false, 0), index);
+                new SwingBacktestService.PortfolioRule("m", 1, true, 126, 21, false, 0, false, 100, 0, false, false, 0, 0), index);
         var weekly = svc.momentumPortfolio(Map.of("UP", up), d,
-                new SwingBacktestService.PortfolioRule("e", 1, true, 126, 21, false, 0, false, 100, 0, false, true, 0), index);
+                new SwingBacktestService.PortfolioRule("e", 1, true, 126, 21, false, 0, false, 100, 0, false, true, 0, 0), index);
 
         LocalDate oct = LocalDate.of(2025, 10, 1);
         assertEquals(0.0, monthly.get(oct), 1e-12, "the locked rule sits out October in cash");
@@ -174,9 +186,9 @@ class SwingBacktestServiceTest {
         SwingBacktestService svc = new SwingBacktestService(null, org.springframework.web.reactive.function.client.WebClient.builder(), "http://x");
 
         var none = svc.momentumPortfolio(Map.of("S", stock), d,
-                new SwingBacktestService.PortfolioRule("n", 1, true, 126, 21, false, 0, false, 0, 0, false, false, 0));
+                new SwingBacktestService.PortfolioRule("n", 1, true, 126, 21, false, 0, false, 0, 0, false, false, 0, 0));
         var stop = svc.momentumPortfolio(Map.of("S", stock), d,
-                new SwingBacktestService.PortfolioRule("s", 1, true, 126, 21, false, 0, false, 0, 0, false, false, 15));
+                new SwingBacktestService.PortfolioRule("s", 1, true, 126, 21, false, 0, false, 0, 0, false, false, 15, 0));
 
         double worstNone = none.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
         double worstStop = stop.values().stream().mapToDouble(Double::doubleValue).min().orElse(0);
