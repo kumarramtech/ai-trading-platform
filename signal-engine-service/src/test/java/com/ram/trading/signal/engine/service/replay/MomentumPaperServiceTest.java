@@ -193,6 +193,22 @@ class MomentumPaperServiceTest {
     }
 
     @Test
+    void niftyCloseIsTodaysStreamPriceElseTodaysLastMinuteNeverAnOlderDay() {
+        LocalDate today = LocalDate.of(2026, 11, 11);
+        when(prices.getStockPrice("NIFTY")).thenReturn(Mono.just(StockResponse.builder().symbol("NIFTY").price(25130.0).build()));
+        assertEquals(25130.0, paper.niftyClose(today), 0.001, "the stream's price, as the holdings");
+
+        when(prices.getStockPrice("NIFTY")).thenReturn(Mono.empty());
+        jdbc.execute("create table minute_candle (id bigint auto_increment primary key, symbol varchar(64), "
+                + "candle_minute timestamp, close_price double)");
+        jdbc.update("insert into minute_candle (symbol, candle_minute, close_price) values ('NIFTY', ?, 25044.65), "
+                + "('NIFTY', ?, 25120), ('NIFTY', ?, 25129)", today.minusDays(2).atTime(15, 28), today.atTime(15, 27),
+                today.atTime(15, 28));
+        assertEquals(25129.0, paper.niftyClose(today), 0.001, "today's last minute");
+        assertEquals(null, paper.niftyClose(today.plusDays(1)), "no NIFTY that day: nothing, not the previous close");
+    }
+
+    @Test
     void holdingsArePricedLiveInTheSessionAndFromTheLastStoredMinuteAfterIt() {
         jdbc.execute("create table minute_candle (id bigint auto_increment primary key, symbol varchar(64), "
                 + "candle_minute timestamp, close_price double)");

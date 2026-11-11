@@ -3,8 +3,6 @@ package com.ram.trading.signal.engine.service.replay;
 import com.ram.trading.signal.engine.client.NotificationClient;
 import com.ram.trading.signal.engine.client.StockServiceClient;
 import com.ram.trading.signal.engine.dto.StockResponse;
-import com.ram.trading.signal.engine.dto.indicator.Candle;
-import com.ram.trading.signal.engine.dto.indicator.HistoricalCandleResponse;
 import com.ram.trading.signal.engine.dto.notification.NotificationChannel;
 import com.ram.trading.signal.engine.dto.notification.NotificationRequest;
 import com.ram.trading.signal.engine.service.replay.SwingBacktestService.DeliveryCharges;
@@ -393,16 +391,22 @@ public class MomentumPaperService {
         return String.join(", ", marks.stream().map(m -> String.format("%s %+.1f%%", m.symbol(), m.pct())).toList());
     }
 
-    private Double niftyClose(LocalDate today) {
+    /**
+     * NIFTY at the snapshot, on the same basis as the holdings: the market stream's last price,
+     * else today's last stored minute. Never the daily history: until the evening its latest
+     * candle is the previous session's (the stored close ran one session behind), and its
+     * closes differ from the stream's by up to 0.5%. Null when neither has today's NIFTY.
+     */
+    Double niftyClose(LocalDate today) {
+        Double live = price("NIFTY");
+        if (live != null) {
+            return live;
+        }
         try {
-            HistoricalCandleResponse r = stockServiceClient.getHistoricalCandles("NIFTY", "day", today.minusDays(10), today)
-                    .block(Duration.ofSeconds(20));
-            if (r == null || r.getCandles() == null) {
-                return null;
-            }
-            return r.getCandles().stream().filter(c -> c.getDateTime() != null && c.getClose() != null)
-                    .max(java.util.Comparator.comparing(Candle::getDateTime))
-                    .map(c -> c.getClose().doubleValue()).orElse(null);
+            List<Double> minute = jdbc.queryForList("select close_price from minute_candle where symbol = 'NIFTY' "
+                            + "and candle_minute >= ? and candle_minute < ? and close_price > 0 order by candle_minute desc limit 1",
+                    Double.class, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+            return minute.isEmpty() ? null : minute.get(0);
         } catch (Exception ex) {
             log.warn("Momentum paper: no NIFTY close: {}", ex.getMessage());
             return null;
