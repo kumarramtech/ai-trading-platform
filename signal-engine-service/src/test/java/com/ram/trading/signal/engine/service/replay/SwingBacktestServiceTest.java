@@ -13,6 +13,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SwingBacktestServiceTest {
 
     @Test
+    void stockUniverseLeavesOutEtfsAndKeepsCompaniesAndUnknownSymbols() {
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:universe" + System.nanoTime() + ";MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", ""));
+        jdbc.execute("create table historical_price (symbol varchar(32), interval_type varchar(8), trade_date date, "
+                + "close_price double, volume bigint)");
+        jdbc.execute("create table instrument_master (trading_symbol varchar(32), segment varchar(16), isin varchar(16))");
+        jdbc.update("insert into instrument_master values ('LIQUIDCASE', 'NSE_EQ', 'INF0R8F01034'), "
+                + "('RADICO', 'NSE_EQ', 'INE944F01028')");
+        LocalDate d = LocalDate.of(2026, 11, 1);
+        for (int i = 0; i < 20; i++) {
+            for (String s : List.of("LIQUIDCASE", "RADICO", "DELISTED")) {
+                jdbc.update("insert into historical_price values (?, 'DAY', ?, ?, ?)", s, d.plusDays(i),
+                        s.equals("LIQUIDCASE") ? 1000.0 : 100.0, 1000L);
+            }
+        }
+        assertEquals(List.of("DELISTED", "RADICO").stream().sorted().toList(),
+                SwingBacktestService.stockUniverse(jdbc, d, 10).stream().sorted().toList());
+
+        // Without instrument_master the universe still loads (unfiltered).
+        jdbc.execute("drop table instrument_master");
+        assertEquals(3, SwingBacktestService.stockUniverse(jdbc, d, 10).size());
+    }
+
+    @Test
     void deliveryRoundTripOnOneLakhCostsAboutPointTwoNinePercent() {
         double cost = SwingBacktestService.DeliveryCharges.roundTrip(100.0, 100.0, 1000);   // Rs 1 lakh each way
 

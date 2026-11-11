@@ -177,11 +177,7 @@ public class MomentumSignalService {
     }
 
     private MonthlySignal compute(LocalDate today, List<String> previous) {
-        List<String> symbols = new ArrayList<>(jdbc.queryForList(
-                "select symbol from historical_price where interval_type = 'DAY' and trade_date >= ? "
-                        + "group by symbol having count(*) >= 15 "
-                        + "order by avg(close_price * volume) desc limit ?",
-                String.class, today.minusDays(30), universe));
+        List<String> symbols = new ArrayList<>(SwingBacktestService.stockUniverse(jdbc, today.minusDays(30), universe));
         symbols.add("NIFTY");
         // About 220 sessions: the 126-session window, the 100-day NIFTY average and the 20-day turnover.
         LocalDate from = today.minusDays(330);

@@ -44,6 +44,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.replay.MomentumPaperService momentumPaperService;
 
+    private final com.ram.trading.signal.engine.service.replay.MomentumTaxService momentumTaxService;
+
     private final com.ram.trading.signal.engine.service.fadebook.FadePaperBookService fadePaperBookService;
 
     private final com.ram.trading.signal.engine.service.longterm.LongTermMonitorService longTermMonitorService;
@@ -204,6 +206,16 @@ public class AnalyticsController {
     }
 
     /** Trades this month's published list on paper now (once per month). */
+    /**
+     * Paper momentum after tax if everything were sold now (STCG/LTCG, set-off, cess), and the
+     * same capital in a Nifty200 Momentum 30 index fund over the same days. Read-only.
+     */
+    @GetMapping(value = "/momentum-paper/after-tax", produces = "application/json")
+    public reactor.core.publisher.Mono<com.ram.trading.signal.engine.service.replay.MomentumTaxService.AfterTaxView>
+    momentumPaperAfterTax() {
+        return blocking(momentumTaxService::afterTax);
+    }
+
     @PostMapping(value = "/momentum-paper/rebalance", produces = "text/plain")
     public reactor.core.publisher.Mono<ResponseEntity<String>> rebalanceMomentumPaper() {
         return blocking(() -> momentumPaperService.rebalance()

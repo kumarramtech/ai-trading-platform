@@ -143,15 +143,29 @@ public class SwingBacktestService {
         }
     }
 
+    /**
+     * The most traded symbols over the days since {@code since}, companies only: ETFs and other
+     * fund units (ISIN starting INF, e.g. LIQUIDCASE, GOLDBEES) are left out. A liquid fund's
+     * steady return with almost no volatility otherwise tops the risk-adjusted momentum score.
+     * Symbols unknown to instrument_master stay in (delisted names keep the backtest honest).
+     */
+    static List<String> stockUniverse(JdbcTemplate jdbc, LocalDate since, int limit) {
+        String sql = "select symbol from historical_price where interval_type = 'DAY' and trade_date >= ? %s"
+                + "group by symbol having count(*) >= 15 order by avg(close_price * volume) desc limit ?";
+        try {
+            return jdbc.queryForList(String.format(sql, "and symbol not in (select trading_symbol from instrument_master "
+                    + "where segment = 'NSE_EQ' and isin like 'INF%') "), String.class, since, limit);
+        } catch (org.springframework.jdbc.BadSqlGrammarException ex) {
+            log.warn("Stock universe: instrument_master not readable ({}), funds not filtered", ex.getMessage());
+            return jdbc.queryForList(String.format(sql, ""), String.class, since, limit);
+        }
+    }
+
     String run(int years, int universeSize, LocalDate to) {
         liquidByDay.clear();
         LocalDate from = to.minusYears(years);
         // Symbols listed today (an older period also misses names delisted since); liquidity is then point in time.
-        List<String> universe = jdbc.queryForList(
-                "select symbol from historical_price where interval_type = 'DAY' and trade_date >= ? "
-                        + "group by symbol having count(*) >= 15 "
-                        + "order by avg(close_price * volume) desc limit ?",
-                String.class, LocalDate.now(IST).minusDays(30), universeSize);
+        List<String> universe = stockUniverse(jdbc, LocalDate.now(IST).minusDays(30), universeSize);
         status.set("RUNNING | fetching " + universe.size() + " symbols, " + from + " .. " + to);
 
         Map<String, Series> data = new ConcurrentHashMap<>();
