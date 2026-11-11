@@ -69,6 +69,10 @@ public class MomentumSignalService {
     @Value("${trading.momentum.regime-sma:100}")
     private int regimeSma = 100;
 
+    /** Keep last month's names while they rank within this (0 = off); the 2026-11-11 buffer study passed at 40. */
+    @Value("${trading.momentum.hold-rank:0}")
+    private int holdRank = 0;
+
     @Value("${trading.momentum.min-price:50}")
     private double minPrice = 50;
 
@@ -204,13 +208,23 @@ public class MomentumSignalService {
         }
         log.info("Monthly momentum signal: {} of {} symbols fetched", data.size(), symbols.size() - 1);
         return build(data, nifty, previous, YearMonth.from(today), capital, top, lookback, skip, liquidRank,
-                regimeSma, minPrice);
+                regimeSma, minPrice, holdRank);
     }
 
     /** The month's list from daily series ending on the last completed session (pure, for tests). */
     static MonthlySignal build(Map<String, Series> data, Series nifty, List<String> previous, YearMonth month,
                                double capital, int top, int lookback, int skip, int liquidRank, int regimeSma,
                                double minPrice) {
+        return build(data, nifty, previous, month, capital, top, lookback, skip, liquidRank, regimeSma, minPrice, 0);
+    }
+
+    /**
+     * {@code holdRank} > top: a name on last month's list stays while it ranks within holdRank and the
+     * other slots go to the best-ranked new names (the backtest's bufferedList); the list is in score order.
+     */
+    static MonthlySignal build(Map<String, Series> data, Series nifty, List<String> previous, YearMonth month,
+                               double capital, int top, int lookback, int skip, int liquidRank, int regimeSma,
+                               double minPrice, int holdRank) {
         LocalDate signalDay = nifty.date()[nifty.size() - 1];
         int n = nifty.size() - 1;
         double niftyClose = nifty.close()[n];
@@ -231,8 +245,13 @@ public class MomentumSignalService {
         List<Pick> target = new ArrayList<>();
         if (riskOn) {
             double slot = capital / top;
-            for (Map.Entry<Series, Double> e : ranked.subList(0, Math.min(top, ranked.size()))) {
+            Set<String> chosen = new java.util.HashSet<>(SwingBacktestService.bufferedList(
+                    ranked.stream().map(e -> e.getKey().symbol()).toList(), previous, top, holdRank));
+            for (Map.Entry<Series, Double> e : ranked) {
                 Series s = e.getKey();
+                if (!chosen.contains(s.symbol())) {
+                    continue;
+                }
                 double close = s.close()[s.indexOf(signalDay)];
                 int quantity = (int) Math.floor(slot / close);
                 target.add(new Pick(target.size() + 1, s.symbol(), e.getValue(), close, quantity, quantity * close));
@@ -290,7 +309,9 @@ public class MomentumSignalService {
         }
         out.append("\nFULL LIST: ").append(String.join(", ", s.target().stream().map(Pick::symbol).toList())).append("\n");
         out.append("Rule: top ").append(top).append(" of the ").append(liquidRank)
-                .append(" most traded by 6m-1m return / volatility; no stops, next check next month.\n");
+                .append(" most traded by 6m-1m return / volatility")
+                .append(holdRank > top ? "; last month's names kept while ranked within " + holdRank : "")
+                .append("; no stops, next check next month.\n");
         return out.toString();
     }
 }

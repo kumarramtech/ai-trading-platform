@@ -64,6 +64,28 @@ class MomentumSignalServiceTest {
     }
 
     @Test
+    void holdRankKeepsLastMonthsNameWhileItRanksWithinTheBuffer() {
+        Map<String, Series> data = Map.of(
+                "FAST", series("FAST", 100, 0.30, 1_000_000),
+                "MID", series("MID", 100, 0.15, 1_000_000),
+                "SLOW", series("SLOW", 100, 0.05, 1_000_000));
+        Series nifty = series("NIFTY", 20000, 0.05, 0);
+
+        // No buffer: SLOW (rank 3 of 3) is sold for MID.
+        MonthlySignal plain = MomentumSignalService.build(data, nifty, List.of("SLOW"), YearMonth.of(2026, 12),
+                30000, 2, 126, 21, 3, 100, 50, 0);
+        assertEquals(List.of("FAST", "MID"), plain.target().stream().map(MomentumSignalService.Pick::symbol).toList());
+
+        // Hold to rank 3: SLOW stays, the free slot goes to the best new name; the list keeps score order.
+        MonthlySignal held = MomentumSignalService.build(data, nifty, List.of("SLOW"), YearMonth.of(2026, 12),
+                30000, 2, 126, 21, 3, 100, 50, 3);
+        assertEquals(List.of("FAST", "SLOW"), held.target().stream().map(MomentumSignalService.Pick::symbol).toList());
+        assertEquals(List.of("SLOW"), held.holds());
+        assertTrue(held.sells().isEmpty());
+        assertEquals(List.of(1, 2), held.target().stream().map(MomentumSignalService.Pick::rank).toList());
+    }
+
+    @Test
     void sellsEverythingWhenNiftyIsBelowItsAverage() {
         Map<String, Series> data = Map.of("FAST", series("FAST", 100, 0.30, 1_000_000));
         Series falling = series("NIFTY", 20000, -0.20, 0);
