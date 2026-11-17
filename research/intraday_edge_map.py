@@ -85,17 +85,19 @@ def token():
 def api(url):
     req = urllib.request.Request(url, headers={"Authorization": "Bearer " + TOK, "Accept": "application/json",
                                                "User-Agent": UA})
-    for attempt in range(6):
+    time.sleep(0.9)  # stay under Upstox's ~2,000 historical calls per 30 minutes
+    for attempt in range(40):
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.load(r)
         except urllib.error.HTTPError as ex:
             if ex.code in (400, 404):
                 return None
-            time.sleep(3 + 6 * attempt)
+            # 429 = rate limit: wait it out instead of skipping the month
+            time.sleep(60 if ex.code == 429 else 5 + 5 * min(attempt, 6))
         except Exception:
-            time.sleep(3 + 6 * attempt)
-    return None
+            time.sleep(5 + 5 * min(attempt, 6))
+    raise RuntimeError("Upstox kept failing for " + url.split("?")[0])
 
 
 def fname(prefix, key, extra=""):
