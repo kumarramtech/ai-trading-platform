@@ -298,6 +298,55 @@ public class StrategyReplayService {
                 + "\n" + ReplayExperiments.renderBaseline(results, charges, slippagePct, maxNotional);
     }
 
+    /** Live-rule ORB and JUDAS setups of a period, and how many sessions were replayed. */
+    public record LiveSetups(List<Result> results, int sessions) {
+    }
+
+    /**
+     * Research only, for the separate intraday fix study: replays the period and keeps the
+     * LIVE_RULES ORB and JUDAS setups (with their price paths); none of the other studies run.
+     * keepGoing is checked before each chunk (the caller stops the run in market hours).
+     */
+    public LiveSetups replayLiveSetups(LocalDate from, LocalDate to, int universeSize,
+                                       java.util.function.Consumer<String> progress,
+                                       java.util.function.BooleanSupplier keepGoing) {
+        if ("RUNNING".equals(status.get().state())) {
+            throw new IllegalStateException("the strategy replay is running");
+        }
+        runRequestsPerSecond = requestsPerSecond;
+        List<String> universe = universe(to, universeSize, 0);
+        DailyBars daily = DailyBars.load(jdbc, universe, from.minusDays(45), to.plusDays(1));
+        int chunkDays = universe.size() > LARGE_UNIVERSE ? 4 : CHUNK_CALENDAR_DAYS;
+        List<Result> out = new ArrayList<>();
+        int sessions = 0;
+        for (LocalDate chunkStart = from; !chunkStart.isAfter(to); chunkStart = chunkStart.plusDays(chunkDays)) {
+            if (!keepGoing.getAsBoolean()) {
+                throw new IllegalStateException("stopped before " + chunkStart + " (market hours)");
+            }
+            LocalDate chunkEnd = chunkStart.plusDays(chunkDays - 1).isAfter(to) ? to : chunkStart.plusDays(chunkDays - 1);
+            Map<String, Map<LocalDate, List<MinuteCandle>>> candles = fetch(universe, chunkStart, chunkEnd);
+            Map<LocalDate, List<MinuteCandle>> nifty = candles.remove("NIFTY");
+            Map<LocalDate, List<MinuteCandle>> bank = candles.remove("BANKNIFTY");
+            if (nifty == null || bank == null) {
+                progress.accept("no index candles for " + chunkStart + " .. " + chunkEnd + ", chunk skipped");
+                continue;
+            }
+            for (LocalDate day : new TreeSet<>(nifty.keySet())) {
+                if (!bank.containsKey(day)) {
+                    continue;
+                }
+                for (Result r : replayDay(day, candles, nifty.get(day), bank.get(day), daily)) {
+                    if (r.passesLiveRules() && ("ORB".equals(r.strategy()) || "JUDAS".equals(r.strategy()))) {
+                        out.add(r);
+                    }
+                }
+                sessions++;
+            }
+            progress.accept("replayed to " + chunkEnd + ": " + sessions + " sessions, " + out.size() + " live setups");
+        }
+        return new LiveSetups(out, sessions);
+    }
+
     /** The most traded stocks (20-session average turnover) priced at or above the liquidity minimum. */
     private List<String> universe(LocalDate asOf, int size, int offset) {
         return jdbc.queryForList(
