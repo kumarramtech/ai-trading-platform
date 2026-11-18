@@ -1,0 +1,48 @@
+index	side	symbol	announce_date	change_close_date	source
+MSCI INDIA	ADD	ALKEM	2024-11-06	2024-11-25	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov24_STPublicList.pdf
+MSCI INDIA	ADD	BSE	2024-11-06	2024-11-25	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov24_STPublicList.pdf
+MSCI INDIA	ADD	KALYANKJIL	2024-11-06	2024-11-25	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov24_STPublicList.pdf
+MSCI INDIA	ADD	OBEROIRLTY	2024-11-06	2024-11-25	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov24_STPublicList.pdf
+MSCI INDIA	ADD	VOLTAS	2024-11-06	2024-11-25	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov24_STPublicList.pdf
+MSCI INDIA	ADD	HYUNDAI	2025-02-11	2025-02-28	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Feb25_STPublicList.pdf
+MSCI INDIA	DROP	ADANIGREEN	2025-02-11	2025-02-28	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Feb25_STPublicList.pdf
+MSCI INDIA	ADD	COROMANDEL	2025-05-13	2025-05-30	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May25_STPublicList.pdf
+MSCI INDIA	ADD	NYKAA	2025-05-13	2025-05-30	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May25_STPublicList.pdf
+MSCI INDIA	ADD	POWERINDIA	2025-08-07	2025-08-26	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug25_STPublicList.pdf
+MSCI INDIA	ADD	SWIGGY	2025-08-07	2025-08-26	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug25_STPublicList.pdf
+MSCI INDIA	ADD	VMM	2025-08-07	2025-08-26	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug25_STPublicList.pdf
+MSCI INDIA	ADD	WAAREEENER	2025-08-07	2025-08-26	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug25_STPublicList.pdf
+MSCI INDIA	DROP	SONACOMS	2025-08-07	2025-08-26	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug25_STPublicList.pdf
+MSCI INDIA	DROP	THERMAX	2025-08-07	2025-08-26	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug25_STPublicList.pdf
+MSCI INDIA	ADD	FORTIS	2025-11-05	2025-11-24	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov25_STPublicList.pdf
+MSCI INDIA	ADD	GVT&D	2025-11-05	2025-11-24	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov25_STPublicList.pdf
+MSCI INDIA	ADD	PAYTM	2025-11-05	2025-11-24	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov25_STPublicList.pdf
+MSCI INDIA	ADD	ENRIN	2025-11-05	2025-11-24	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov25_STPublicList.pdf
+MSCI INDIA	DROP	CONCOR	2025-11-05	2025-11-24	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov25_STPublicList.pdf
+MSCI INDIA	DROP	TATAELXSI	2025-11-05	2025-11-24	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Nov25_STPublicList.pdf
+MSCI INDIA	ADD	ABCAPITAL	2026-02-10	2026-02-27	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Feb26_STPublicList.pdf
+MSCI INDIA	ADD	LTF	2026-02-10	2026-02-27	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Feb26_STPublicList.pdf
+MSCI INDIA	DROP	IRCTC	2026-02-10	2026-02-27	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Feb26_STPublicList.pdf
+MSCI INDIA	ADD	FEDERALBNK	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	ADD	INDIANB	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	ADD	MCX	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	ADD	NATIONALUM	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	DROP	HYUNDAI	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	DROP	JUBLFOOD	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	DROP	KALYANKJIL	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	DROP	RVNL	2026-05-12	2026-05-29	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_May26_STPublicList.pdf
+MSCI INDIA	ADD	ADANIENSOL	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+MSCI INDIA	ADD	GROWW	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+MSCI INDIA	ADD	LAURUSLABS	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+MSCI INDIA	ADD	LENSKART	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+MSCI INDIA	DROP	ASTRAL	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+MSCI INDIA	DROP	BALKRISIND	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+MSCI INDIA	DROP	SBICARD	2026-08-12	2026-08-31	MSCI official list app2.msci.com/eqb/gimi/stdindex/MSCI_Aug26_STPublicList.pdf
+SENSEX	ADD	ZOMATO	2024-11-22	2024-12-20	NEWS (Asia Index/BSE release, effective open of 2024-12-23; change date = trading day before)
+SENSEX	DROP	JSWSTEEL	2024-11-22	2024-12-20	NEWS (Asia Index/BSE release, effective open of 2024-12-23; change date = trading day before)
+SENSEX	ADD	TRENT	2025-05-22	2025-06-20	NEWS (Asia Index/BSE release, effective open of 2025-06-23; change date = trading day before)
+SENSEX	ADD	BEL	2025-05-22	2025-06-20	NEWS (Asia Index/BSE release, effective open of 2025-06-23; change date = trading day before)
+SENSEX	DROP	NESTLEIND	2025-05-22	2025-06-20	NEWS (Asia Index/BSE release, effective open of 2025-06-23; change date = trading day before)
+SENSEX	DROP	INDUSINDBK	2025-05-22	2025-06-20	NEWS (Asia Index/BSE release, effective open of 2025-06-23; change date = trading day before)
+SENSEX	ADD	INDIGO	2025-11-21	2025-12-19	NEWS (Asia Index/BSE release, effective open of 2025-12-22; change date = trading day before)
+SENSEX	DROP	TMPV	2025-11-21	2025-12-19	NEWS (Asia Index/BSE release, effective open of 2025-12-22; change date = trading day before)
