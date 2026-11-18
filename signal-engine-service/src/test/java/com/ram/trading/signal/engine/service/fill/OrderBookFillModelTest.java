@@ -24,6 +24,24 @@ class OrderBookFillModelTest {
     }
 
     @Test
+    void exitGuardRejectsAStrayPrintOutsideTheBook() {
+        // No book yet: unchanged behaviour.
+        assertTrue(model.priceConsistentWithBook("ADF", 223.76));
+
+        model.update(Tick.builder().symbol("ADF")
+                .bidPrices(List.of(227.50)).bidQuantities(List.of(50L))
+                .askPrices(List.of(227.90)).askQuantities(List.of(50L)).build());
+
+        assertFalse(model.priceConsistentWithBook("ADF", 223.76), "1.6% below the bid is bad data");
+        assertTrue(model.priceConsistentWithBook("ADF", 227.54));
+        assertTrue(model.priceConsistentWithBook("ADF", 226.50), "within 0.5% of the bid");
+        assertFalse(model.priceConsistentWithBook("ADF", 229.50));
+
+        ReflectionTestUtils.setField(model, "exitGuardEnabled", false);
+        assertTrue(model.priceConsistentWithBook("ADF", 223.76));
+    }
+
+    @Test
     void smallBuyFillsAtTheBestAsk() {
         model.update(book("ABC"));
 

@@ -45,6 +45,10 @@ public class TradeExitServiceImpl implements TradeExitService {
 
     private final TrailingStopService trailingStopService;
 
+    /** Optional so tests that build the service by hand keep working; null disables the book guard. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.ram.trading.signal.engine.service.fill.OrderBookFillModel orderBookFillModel;
+
     /*
      * ============================================================
      * HARD MAX LOSS
@@ -125,6 +129,15 @@ public class TradeExitServiceImpl implements TradeExitService {
                 || !Double.isFinite(tick.getLastTradedPrice())
                 || tick.getLastTradedPrice() <= 0) {
             log.debug("Skipping exit evaluation because tick data is invalid");
+            return Mono.empty();
+        }
+
+        // A tick far outside the live bid/ask is a stray print (2026-11-18 ADFFOODS: LTP 223.76
+        // while the book stood at ~227.5-227.9 fired a false TARGET); it must not trigger exits.
+        if (orderBookFillModel != null
+                && !orderBookFillModel.priceConsistentWithBook(tick.getSymbol(), tick.getLastTradedPrice())) {
+            log.warn("EXIT TICK IGNORED | Price outside the live bid/ask | Symbol={} | LTP={}",
+                    tick.getSymbol(), tick.getLastTradedPrice());
             return Mono.empty();
         }
 

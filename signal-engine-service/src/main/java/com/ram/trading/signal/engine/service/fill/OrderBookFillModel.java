@@ -39,7 +39,44 @@ public class OrderBookFillModel {
     @Value("${paper.trading.book-fill.max-deviation-pct:2.0}")
     private double maxDeviationPct = 2.0;
 
+    /** Exit guard: ignore a trigger tick whose price is outside the live best bid/ask by more than the tolerance. */
+    @Value("${trading.exit.book-guard.enabled:true}")
+    private boolean exitGuardEnabled = true;
+
+    @Value("${trading.exit.book-guard.tolerance-pct:0.5}")
+    private double exitGuardTolerancePct = 0.5;
+
     private final Map<String, Book> books = new ConcurrentHashMap<>();
+
+    /**
+     * False only when a fresh two-sided book is known and the price lies outside
+     * [best bid - tolerance, best ask + tolerance]: such a tick is bad data (a stray
+     * print) and must not trigger a target, stop or loss exit. With no fresh book the
+     * answer is true, so behaviour is unchanged.
+     */
+    public boolean priceConsistentWithBook(String symbol, double price) {
+
+        if (!exitGuardEnabled || symbol == null || !(price > 0)) {
+            return true;
+        }
+
+        Book book = books.get(symbol);
+
+        if (book == null || System.currentTimeMillis() - book.receivedAt() > maxAgeMillis) {
+            return true;
+        }
+
+        double bid = book.bidPrices().get(0);
+        double ask = book.askPrices().get(0);
+
+        if (!(bid > 0) || !(ask > 0)) {
+            return true;
+        }
+
+        double tol = exitGuardTolerancePct / 100.0;
+
+        return price >= bid * (1 - tol) && price <= ask * (1 + tol);
+    }
 
     /** Called for every live tick; keeps the latest two-sided book per symbol. */
     public void update(Tick tick) {

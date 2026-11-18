@@ -52,6 +52,23 @@ class TradeExitServiceImplTest {
     }
 
     @Test
+    void strayTickOutsideTheBookTriggersNoExit() {
+        ReflectionTestUtils.setField(service, "executionTradeMode", "paper");
+        com.ram.trading.signal.engine.service.fill.OrderBookFillModel book =
+                new com.ram.trading.signal.engine.service.fill.OrderBookFillModel();
+        book.update(Tick.builder().symbol("ADF")
+                .bidPrices(List.of(227.50)).bidQuantities(List.of(50L))
+                .askPrices(List.of(227.90)).askQuantities(List.of(50L)).build());
+        ReflectionTestUtils.setField(service, "orderBookFillModel", book);
+
+        StepVerifier.create(service.evaluateExit(
+                Tick.builder().symbol("ADF").lastTradedPrice(223.76d).build()))
+                .verifyComplete();
+
+        verifyNoInteractions(paperTradeRepository, exitOrchestrator, paperTradingService);
+    }
+
+    @Test
     void hardLossIncludesPreviouslyRealizedPnlAfterPartialExit() {
         long signalId = 42L;
 
