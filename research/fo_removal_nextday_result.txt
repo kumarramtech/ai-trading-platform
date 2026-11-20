@@ -1,0 +1,28 @@
+DAY AFTER F&O REMOVAL STUDY (pre-registered 2026-11-20; t >= 2.5; research only)
+events 161; left out: no minute data 1; no daily data 1; ineligible 4
+  no minute data: BALRAMCHIN 2024-10-31
+  no daily data: PEL 2025-07-31
+  ineligible: ABFRL 2025-08-28, IRB 2025-08-28, SJVN 2025-08-28, HFCL 2025-12-30
+
+TEST R1 removed: BUY the day after the last futures day, 09:20 -> 15:25 vs NIFTY: 54 trades, gross -0.207%, net -0.337%, t -1.33, win 43%
+    review 2025-02:  16 trades, net +0.432%
+    review 2025-03:   2 trades, net +0.646%
+    review 2025-04:   1 trades, net -2.377%
+    review 2025-05:   5 trades, net -0.515%
+    review 2025-08:  14 trades, net -1.351%
+    review 2025-10:   1 trades, net -1.297%
+    review 2025-11:   1 trades, net +0.224%
+    review 2025-12:   3 trades, net -0.025%
+    review 2026-01:   1 trades, net +1.359%
+    review 2026-02:   1 trades, net -1.859%
+    review 2026-04:   5 trades, net -1.286%
+    review 2026-07:   3 trades, net +0.896%
+    review 2026-08:   1 trades, net +2.863%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.435 / -0.082)
+  [fail] without best review 2025-02 > 0 (-0.661)
+  [fail] beats placebo by >= cost, gross (placebo 54 trades, gross -0.256%)
+  -> FAIL
+  (t check here is 2.5: t -1.33 below)
+
+VERDICT: R1 FAIL
