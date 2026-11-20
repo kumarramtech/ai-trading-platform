@@ -1,0 +1,30 @@
+REGIME STUDY (pre-registered 2026-11-20; research only; FADE book unchanged)
+sessions by regime at 09:45: {'SIDE': 241, 'BEAR': 126, 'BULL': 125}
+cost 0.18% a trade; t on one value per day; Rs/day at Rs 40000 a stock; PASS needs t >= 3.0 and all checks
+
+BULL UP   SHORT: 123 days,  538 trades, net -0.388%/trade-day, t -2.45, Rs -779/day -> fail
+      ok days >= 60 (123); NO net > 0, t >= 3.0 (-0.388%, t -2.45); NO year 1 > 0 (-0.482%, 59 d); NO year 2 > 0 (-0.301%, 64 d); NO without best month 2025-03 > 0 (-0.466%); NO unhedged > 0 each year (-0.560 / -0.365); NO worst day >= Rs -5000 (Rs -10198)
+BULL UP   LONG : 123 days,  538 trades, net +0.028%/trade-day, t  0.18, Rs +149/day -> fail
+      ok days >= 60 (123); NO net > 0, t >= 3.0 (+0.028%, t 0.18); ok year 1 > 0 (+0.122%, 59 d); NO year 2 > 0 (-0.059%, 64 d); NO without best month 2025-06 > 0 (-0.050%); ok unhedged > 0 each year (+0.200 / +0.005); NO worst day >= Rs -5000 (Rs -5889)
+BULL DOWN SHORT: 117 days,  423 trades, net -0.048%/trade-day, t -0.36, Rs -123/day -> fail
+      ok days >= 60 (117); NO net > 0, t >= 3.0 (-0.048%, t -0.36); NO year 1 > 0 (-0.170%, 56 d); ok year 2 > 0 (+0.063%, 61 d); NO without best month 2026-02 > 0 (-0.111%); NO unhedged > 0 each year (-0.246 / +0.023); NO worst day >= Rs -5000 (Rs -6611)
+BULL DOWN LONG : 117 days,  423 trades, net -0.312%/trade-day, t -2.33, Rs -398/day -> fail
+      ok days >= 60 (117); NO net > 0, t >= 3.0 (-0.312%, t -2.33); NO year 1 > 0 (-0.190%, 56 d); NO year 2 > 0 (-0.423%, 61 d); NO without best month 2025-04 > 0 (-0.355%); NO unhedged > 0 each year (-0.114 / -0.383); NO worst day >= Rs -5000 (Rs -6439)
+SIDE UP   SHORT: 234 days, 1021 trades, net +0.030%/trade-day, t  0.31, Rs -48/day -> fail
+      ok days >= 60 (234); NO net > 0, t >= 3.0 (+0.030%, t 0.31); NO year 1 > 0 (-0.036%, 125 d); ok year 2 > 0 (+0.107%, 109 d); ok without best month 2026-07 > 0 (+0.001%); ok unhedged > 0 each year (+0.021 / +0.156); NO worst day >= Rs -5000 (Rs -8697)
+SIDE UP   LONG : 234 days, 1021 trades, net -0.390%/trade-day, t -4.05, Rs -581/day -> fail
+      ok days >= 60 (234); NO net > 0, t >= 3.0 (-0.390%, t -4.05); NO year 1 > 0 (-0.324%, 125 d); NO year 2 > 0 (-0.467%, 109 d); NO without best month 2025-03 > 0 (-0.422%); NO unhedged > 0 each year (-0.381 / -0.516); NO worst day >= Rs -5000 (Rs -9026)
+SIDE DOWN SHORT: 213 days,  746 trades, net -0.374%/trade-day, t -3.65, Rs -516/day -> fail
+      ok days >= 60 (213); NO net > 0, t >= 3.0 (-0.374%, t -3.65); NO year 1 > 0 (-0.499%, 110 d); NO year 2 > 0 (-0.241%, 103 d); NO without best month 2025-10 > 0 (-0.427%); NO unhedged > 0 each year (-0.390 / -0.191); NO worst day >= Rs -5000 (Rs -11250)
+SIDE DOWN LONG : 213 days,  746 trades, net +0.014%/trade-day, t  0.14, Rs +12/day -> fail
+      ok days >= 60 (213); NO net > 0, t >= 3.0 (+0.014%, t 0.14); ok year 1 > 0 (+0.139%, 110 d); NO year 2 > 0 (-0.119%, 103 d); NO without best month 2026-09 > 0 (-0.031%); NO unhedged > 0 each year (+0.030 / -0.169); ok worst day >= Rs -5000 (Rs -4962)
+BEAR UP   SHORT: 120 days,  516 trades, net +0.152%/trade-day, t  1.07, Rs +337/day -> fail
+      ok days >= 60 (120); NO net > 0, t >= 3.0 (+0.152%, t 1.07); ok year 1 > 0 (+0.122%, 52 d); ok year 2 > 0 (+0.176%, 68 d); ok without best month 2025-02 > 0 (+0.079%); ok unhedged > 0 each year (+0.071 / +0.119); NO worst day >= Rs -5000 (Rs -5988)
+BEAR UP   LONG : 120 days,  516 trades, net -0.512%/trade-day, t -3.59, Rs -956/day -> fail
+      ok days >= 60 (120); NO net > 0, t >= 3.0 (-0.512%, t -3.59); NO year 1 > 0 (-0.482%, 52 d); NO year 2 > 0 (-0.536%, 68 d); NO without best month 2025-07 > 0 (-0.573%); NO unhedged > 0 each year (-0.431 / -0.479); NO worst day >= Rs -5000 (Rs -7693)
+BEAR DOWN SHORT: 111 days,  415 trades, net -0.202%/trade-day, t -1.25, Rs -303/day -> fail
+      ok days >= 60 (111); NO net > 0, t >= 3.0 (-0.202%, t -1.25); NO year 1 > 0 (-0.176%, 48 d); NO year 2 > 0 (-0.222%, 63 d); NO without best month 2025-05 > 0 (-0.321%); NO unhedged > 0 each year (-0.199 / -0.317); NO worst day >= Rs -5000 (Rs -9831)
+BEAR DOWN LONG : 111 days,  415 trades, net -0.158%/trade-day, t -0.97, Rs -235/day -> fail
+      ok days >= 60 (111); NO net > 0, t >= 3.0 (-0.158%, t -0.97); NO year 1 > 0 (-0.184%, 48 d); NO year 2 > 0 (-0.138%, 63 d); NO without best month 2025-02 > 0 (-0.230%); NO unhedged > 0 each year (-0.161 / -0.043); NO worst day >= Rs -5000 (Rs -7240)
+
+VERDICT: no cell passes
