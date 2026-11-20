@@ -1,0 +1,35 @@
+trading days 501 (2024-09-20 .. 2026-09-30)
+events kept: 156; other ratios >= 1.3 (not events, hand check): 33
+  2024-11-25 SHAKTIPUMP   ratio 5.7143  close(T-1) 4724.30  open(T) 826.75  ISIN INE908D01010 -> INE908D01010
+  2024-12-27 DHANBANK     ratio 1.3401  close(T-1) 44.21  open(T) 32.99  ISIN INE680A01011 -> INE680A01011
+  2025-01-15 CALSOFT      ratio 1.6779  close(T-1) 22.87  open(T) 13.63  ISIN INE526B01014 -> INE526B01014
+  EXCLUDED 2025-04-07 SIEMENS      ratio 2.0115: demerger of Siemens Energy India
+  EXCLUDED 2025-05-22 ABFRL        ratio 2.7444: demerger of Aditya Birla Lifestyle Brands
+  2025-09-12 NDTV         ratio 1.3262  close(T-1) 158.06  open(T) 119.18  ISIN INE155G01029 -> INE155G01029
+  2025-10-14 TATAMOTORS   ratio 1.6519  close(T-1) 660.75  open(T) 400.00  ISIN INE155A01022 -> INE155A01022
+  2026-01-16 BESTAGRO     ratio 13.6972  close(T-1) 434.20  open(T) 31.70  ISIN INE052T01013 -> INE052T01021
+  EXCLUDED 2026-02-06 GROWWGOLD    ratio 10.3255: not a company share (ETF/fund)
+  EXCLUDED 2026-02-06 GROWWSLVR    ratio 10.1079: not a company share (ETF/fund)
+  2026-02-13 DELPHIFX     ratio 14.3478  close(T-1) 228.13  open(T) 15.90  ISIN INE726L01019 -> INE726L01027
+  EXCLUDED 2026-02-13 QNIFTY       ratio 9.9095: not a company share (ETF/fund)
+  2026-02-18 SADHNANIQ    ratio 3.3795  close(T-1) 5.61  open(T) 1.66  ISIN INE888C01040 -> INE888C01040
+  EXCLUDED 2026-02-27 CONS         ratio 9.8979: not a company share (ETF/fund)
+  EXCLUDED 2026-02-27 MIDCAP       ratio 9.7054: not a company share (ETF/fund)
+  EXCLUDED 2026-02-27 SILVER1      ratio 9.2804: not a company share (ETF/fund)
+  EXCLUDED 2026-02-27 NV20         ratio 9.4410: not a company share (ETF/fund)
+  EXCLUDED 2026-02-27 BANKNIFTY1   ratio 9.9445: not a company share (ETF/fund)
+  2026-03-06 LICMFGOLD    ratio 97.5071  close(T-1) 14401.80  open(T) 147.70  ISIN INF397L01554 -> INF767K01SM1
+  2026-04-10 RMDRIP       ratio 1.6532  close(T-1) 45.10  open(T) 27.28  ISIN INE219Y01026 -> INE219Y01026
+  2026-04-24 AHCL         ratio 8.9869  close(T-1) 143.79  open(T) 16.00  ISIN INE0Y8W01025 -> INE0Y8W01025
+  2026-04-30 IVZINGOLD    ratio 98.5958  close(T-1) 12782.95  open(T) 129.65  ISIN INF205K01361 -> INF205KA1BP1
+  EXCLUDED 2026-04-30 VEDL         ratio 2.6722: Vedanta demerger (no split/bonus; ratio not clean, ISIN unchanged)
+  2026-06-12 CUB          ratio 1.3009  close(T-1) 256.80  open(T) 197.40  ISIN INE491A01021 -> INE491A01021
+  2026-06-24 ZFCVINDIA    ratio 5.7164  close(T-1) 16086.00  open(T) 2814.00  ISIN INE342J01019 -> INE342J01019
+  EXCLUDED 2026-07-03 MIDQ50ADD    ratio 9.9475: not a company share (ETF/fund)
+  EXCLUDED 2026-07-03 HEALTHADD    ratio 9.8453: not a company share (ETF/fund)
+  2026-07-10 GOLDIAM      ratio 1.3079  close(T-1) 420.50  open(T) 321.50  ISIN INE025B01025 -> INE025B01025
+  EXCLUDED 2026-07-10 PSUBANK      ratio 9.7981: not a company share (ETF/fund)
+  2026-07-28 HARDWYN      ratio 1.3123  close(T-1) 15.59  open(T) 11.88  ISIN INE626Z01029 -> INE626Z01029
+  EXCLUDED 2026-07-31 IVZINNIFTY   ratio 10.0778: not a company share (ETF/fund)
+  EXCLUDED 2026-08-28 GOLDADD      ratio 9.8824: not a company share (ETF/fund)
+  EXCLUDED 2026-08-28 SILVERADD    ratio 9.5290: not a company share (ETF/fund)
