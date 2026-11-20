@@ -1,0 +1,70 @@
+LOW-ROLLOVER EXPIRY STUDY (pre-registered 2026-11-20; t >= 2.5; research only)
+events 1014; left out: no daily data 14; ineligible 34; NSE index event same day 5
+  no daily data: CTRL PEL 2024-10-31, CTRL SHRIRAMFIN 2024-11-28, CTRL PEL 2024-11-28, R1 ANGELONE 2024-12-26, CTRL NAUKRI 2024-12-26, CTRL BAJFINANCE 2025-03-27, R1 CAMS 2025-05-29, R1 ANGELONE 2025-06-26, R1 CAMS 2025-06-26, R1 CAMS 2025-07-31, R1 NUVAMA 2025-09-30, R1 ANGELONE 2025-09-30, CTRL KOTAKBANK 2025-09-30, R1 NUVAMA 2025-10-28
+  NSE index event same day: R1 TATACHEM 2025-03-27, CTRL UNIONBANK 2025-03-27, R1 POLYCAB 2026-09-29, R1 POWERINDIA 2026-09-29, R1 BSE 2026-09-29
+
+R1 bottom 10% rollover: short 09:20 -> 15:25 on expiry day vs NIFTY: 465 trades, gross +0.013%, net -0.117%, t -1.75, win 50%
+    review 2024-10:  18 trades, net -0.522%
+    review 2024-11:  18 trades, net -1.162%
+    review 2024-12:  20 trades, net -0.425%
+    review 2025-01:  22 trades, net +0.167%
+    review 2025-02:  21 trades, net +0.973%
+    review 2025-03:  19 trades, net -1.218%
+    review 2025-04:  22 trades, net +0.206%
+    review 2025-05:  20 trades, net -0.287%
+    review 2025-06:  20 trades, net +0.072%
+    review 2025-07:  18 trades, net +0.313%
+    review 2025-08:  20 trades, net +0.582%
+    review 2025-09:  18 trades, net -0.051%
+    review 2025-10:  18 trades, net +0.637%
+    review 2025-11:  19 trades, net -0.229%
+    review 2025-12:  21 trades, net +0.170%
+    review 2026-01:  19 trades, net -0.267%
+    review 2026-02:  20 trades, net -0.833%
+    review 2026-03:  16 trades, net +0.985%
+    review 2026-04:  21 trades, net -0.823%
+    review 2026-05:  20 trades, net -0.564%
+    review 2026-06:  21 trades, net -0.389%
+    review 2026-07:  18 trades, net -0.286%
+    review 2026-08:  19 trades, net -0.003%
+    review 2026-09:  17 trades, net +0.236%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.090 / -0.145)
+  [fail] without best review 2025-02 > 0 (-0.169)
+  [fail] beats placebo by >= cost, gross (placebo 464 trades, gross +0.172%)
+  -> FAIL
+  (t check here is 2.5: t -1.75 below)
+
+CTRL top 10% rollover (information only): short 09:20 -> 15:25 on expiry day vs NIFTY: 496 trades, gross -0.126%, net -0.256%, t -4.65, win 41%
+    review 2024-10:  17 trades, net -0.342%
+    review 2024-11:  14 trades, net -1.208%
+    review 2024-12:  21 trades, net -0.437%
+    review 2025-01:  23 trades, net +0.288%
+    review 2025-02:  21 trades, net +0.384%
+    review 2025-03:  20 trades, net -0.600%
+    review 2025-04:  22 trades, net +0.253%
+    review 2025-05:  22 trades, net -0.283%
+    review 2025-06:  22 trades, net +0.526%
+    review 2025-07:  22 trades, net -0.104%
+    review 2025-08:  21 trades, net +0.421%
+    review 2025-09:  20 trades, net -0.614%
+    review 2025-10:  21 trades, net -0.059%
+    review 2025-11:  21 trades, net -0.752%
+    review 2025-12:  21 trades, net +0.016%
+    review 2026-01:  21 trades, net +0.075%
+    review 2026-02:  21 trades, net -1.201%
+    review 2026-03:  21 trades, net -0.047%
+    review 2026-04:  20 trades, net -0.835%
+    review 2026-05:  21 trades, net -0.614%
+    review 2026-06:  21 trades, net -0.564%
+    review 2026-07:  21 trades, net -0.318%
+    review 2026-08:  21 trades, net -0.048%
+    review 2026-09:  21 trades, net -0.591%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.098 / -0.410)
+  [fail] without best review 2025-06 > 0 (-0.292)
+  [fail] beats placebo by >= cost, gross (placebo 496 trades, gross +0.046%)
+  -> FAIL
+  (t check here is 2.5: t -4.65 below)
+
+VERDICT: R1 FAIL, CTRL (info) FAIL
