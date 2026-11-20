@@ -1,0 +1,38 @@
+SPLIT / BONUS EX-DATE STUDY (pre-registered 2026-11-20; t >= 2.5; research only)
+events 156; left out: ineligible 71; no daily data 3
+  no daily data: POCL 2024-10-16, AGIIL 2025-02-07, KMEW 2025-12-22
+
+S1 buy on the ex-date, 09:20 -> 15:25 vs NIFTY: 82 trades, gross -0.325%, net -0.455%, t -1.26, win 40%
+    review 2024-10:   8 trades, net -0.482%
+    review 2024-11:   1 trades, net +5.016%
+    review 2024-12:   4 trades, net -3.364%
+    review 2025-01:   8 trades, net -1.159%
+    review 2025-02:   2 trades, net +2.804%
+    review 2025-03:   1 trades, net -6.318%
+    review 2025-04:   1 trades, net -1.132%
+    review 2025-05:   2 trades, net +1.089%
+    review 2025-06:   5 trades, net +0.263%
+    review 2025-07:   5 trades, net -0.599%
+    review 2025-08:   3 trades, net -1.285%
+    review 2025-09:   8 trades, net -0.707%
+    review 2025-10:   4 trades, net -1.218%
+    review 2025-11:   4 trades, net -1.788%
+    review 2025-12:   5 trades, net -0.917%
+    review 2026-01:   3 trades, net +0.646%
+    review 2026-02:   2 trades, net -2.728%
+    review 2026-03:   3 trades, net +0.468%
+    review 2026-05:   1 trades, net -0.116%
+    review 2026-06:   3 trades, net -0.239%
+    review 2026-07:   3 trades, net +4.340%
+    review 2026-08:   5 trades, net +0.248%
+    review 2026-09:   1 trades, net +0.416%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.669 / -0.251)
+  [fail] without best review 2026-07 > 0 (-0.637)
+  [fail] beats placebo by >= cost, gross (placebo 82 trades, gross +0.006%)
+  -> FAIL
+  (t check here is 2.5: t -1.26 below)
+
+VERDICT: S1 FAIL
+
+[exited with code 0]
