@@ -1,0 +1,23 @@
+INDEX REBALANCE B1 ON OTHER NSE INDICES (pre-registered 2026-11-21; t >= 2.5; cost 0.18%; research only)
+events 1873; left out: {'main-3 index event same date': 474, 'added and dropped same date': 622, 'no daily data': 44, 'ineligible': 307, 'no ISIN': 1}
+
+O1 NIFTY SMALLCAP 250 changes: change date 09:20 -> 15:25, ADD long / DROP short: 35 trades, gross +2.348%, net +2.168%, t 4.84, win 83%
+  -> NOT ENOUGH DATA (< 40 trades)
+
+O2 all other indices: change date 09:20 -> 15:25, ADD long / DROP short: 1486 trades, gross +0.988%, net +0.808%, t 13.76, win 63%
+    review 2024-12-30: 179 trades, net +1.260%
+    review 2025-03-27: 178 trades, net +0.681%
+    review 2025-06-27: 172 trades, net +0.795%
+    review 2025-09-29: 142 trades, net +0.603%
+    review 2025-12-30: 212 trades, net +0.743%
+    review 2026-03-27: 184 trades, net +0.259%
+    review 2026-06-29: 205 trades, net +1.370%
+    review 2026-09-29: 214 trades, net +0.679%
+  [PASS] mean net > 0, t >= 2
+  [PASS] both halves > 0 (+0.848 / +0.775)
+  [PASS] without best review 2026-06-29 > 0 (+0.718)
+  [PASS] beats placebo by >= cost, gross (placebo 1443 trades, gross -0.069%)
+  -> PASS
+  (t check here is 2.5: t 13.76 ok)
+
+VERDICT: O1 NOT ENOUGH DATA, O2 PASS
