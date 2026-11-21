@@ -1,0 +1,123 @@
+NIFTY EXPIRY-DAY HEDGED STRADDLE STUDY (pre-registered 2026-11-21; research only; condor book unchanged)
+expiries 112; skipped: {'missing option candle': 1}
+  missing option candle: 2024-12-26
+
+09:30 sell ATM straddle + buy 1.5% wings, exit 15:15: 111 expiries, Rs +150/lot mean, t 0.27, win 59%, total Rs +16676/lot, max drawdown Rs -41616, average credit 114.3 pts
+  ok expiries >= 80 (111); NO mean > 0, t >= 2.5 (Rs +150/lot, t 0.27); NO year 1 > 0 (Rs -131, 52); ok year 2 > 0 (Rs +398, 59); NO without best month 2025-02 > 0 (Rs -16); NO worst expiry >= Rs -20000 (Rs -23796)
+
+by month (Rs/lot): 2024-10 -2827, 2024-11 -3452, 2024-12 -712, 2025-01 -13031, 2025-02 +18432, 2025-03 -3959, 2025-04 -3279, 2025-05 -13611, 2025-06 -7447, 2025-07 -1786, 2025-08 +16925, 2025-09 +7924, 2025-10 +11701, 2025-11 -148, 2025-12 +15668, 2026-01 -2712, 2026-02 +12133, 2026-03 +5774, 2026-04 -9422, 2026-05 -7882, 2026-06 -3030, 2026-07 +7943, 2026-08 +1305, 2026-09 -6240, 2026-10 -2907, 2026-11 +1315
+
+VERDICT: FAIL
+
+per-expiry log:
+  2024-10-03 spot 25577.5 K 25600 wings 26000/25150 credit 144.3 lot 25 -> Rs -5388
+  2024-10-10 spot 25057.8 K 25050 wings 25450/24650 credit 131.6 lot 25 -> Rs +1500
+  2024-10-17 spot 24934.0 K 24950 wings 25350/24550 credit 106.3 lot 25 -> Rs -2587
+  2024-10-24 spot 24418.2 K 24400 wings 24800/24050 credit 112.7 lot 25 -> Rs +2390
+  2024-10-31 spot 24271.3 K 24250 wings 24650/23900 credit 107.1 lot 25 -> Rs +1258
+  2024-11-07 spot 24351.1 K 24350 wings 24750/23950 credit 125.0 lot 25 -> Rs -1026
+  2024-11-14 spot 23577.4 K 23600 wings 23950/23200 credit 145.4 lot 25 -> Rs +1523
+  2024-11-21 spot 23385.6 K 23400 wings 23750/23000 credit 137.7 lot 25 -> Rs +1757
+  2024-11-28 spot 24272.7 K 24250 wings 24650/23900 credit 133.9 lot 25 -> Rs -5705
+  2024-12-05 spot 24518.9 K 24500 wings 24900/24150 credit 201.8 lot 25 -> Rs -985
+  2024-12-12 spot 24666.0 K 24650 wings 25050/24250 credit 75.7 lot 25 -> Rs -951
+  2024-12-19 spot 23893.3 K 23900 wings 24300/23500 credit 114.5 lot 25 -> Rs +1224
+  2025-01-02 spot 23763.7 K 23750 wings 24150/23400 credit 201.9 lot 75 -> Rs -15659
+  2025-01-09 spot 23622.0 K 23600 wings 24000/23250 credit 80.7 lot 75 -> Rs -610
+  2025-01-16 spot 23343.0 K 23350 wings 23700/22950 credit 70.7 lot 75 -> Rs +1363
+  2025-01-23 spot 23120.8 K 23100 wings 23500/22750 credit 86.8 lot 75 -> Rs -2099
+  2025-01-30 spot 23192.8 K 23200 wings 23550/22800 credit 212.4 lot 25 -> Rs +3974
+  2025-02-06 spot 23694.2 K 23700 wings 24050/23300 credit 135.1 lot 75 -> Rs +1421
+  2025-02-13 spot 23045.7 K 23050 wings 23400/22650 credit 155.4 lot 75 -> Rs +9885
+  2025-02-20 spot 22844.1 K 22850 wings 23200/22500 credit 113.4 lot 75 -> Rs +3095
+  2025-02-27 spot 22554.7 K 22550 wings 22900/22200 credit 64.2 lot 75 -> Rs +4031
+  2025-03-06 spot 22344.5 K 22350 wings 22700/22000 credit 115.8 lot 75 -> Rs -6356
+  2025-03-13 spot 22471.2 K 22450 wings 22850/22100 credit 74.0 lot 75 -> Rs +1129
+  2025-03-20 spot 23059.0 K 23050 wings 23450/22700 credit 102.9 lot 75 -> Rs -3660
+  2025-03-27 spot 23541.5 K 23550 wings 23900/23150 credit 116.5 lot 75 -> Rs +4928
+  2025-04-03 spot 23247.8 K 23250 wings 23600/22850 credit 88.4 lot 75 -> Rs +5866
+  2025-04-09 spot 22365.2 K 22350 wings 22750/22000 credit 155.4 lot 75 -> Rs +7237
+  2025-04-17 spot 23311.7 K 23300 wings 23700/22950 credit 89.8 lot 75 -> Rs -23796
+  2025-04-24 spot 24252.2 K 24250 wings 24650/23850 credit 61.8 lot 75 -> Rs +3797
+  2025-04-30 spot 24337.5 K 24350 wings 24750/23950 credit 64.6 lot 75 -> Rs +3618
+  2025-05-08 spot 24387.2 K 24400 wings 24800/24000 credit 61.9 lot 75 -> Rs -3281
+  2025-05-15 spot 24605.9 K 24600 wings 25000/24200 credit 122.5 lot 75 -> Rs -21533
+  2025-05-22 spot 24571.7 K 24550 wings 24950/24200 credit 153.3 lot 75 -> Rs +6769
+  2025-05-29 spot 24825.0 K 24850 wings 25200/24450 credit 93.6 lot 75 -> Rs +4434
+  2025-06-05 spot 24709.1 K 24700 wings 25100/24300 credit 127.2 lot 75 -> Rs +5606
+  2025-06-12 spot 25171.2 K 25150 wings 25550/24750 credit 94.9 lot 75 -> Rs -13544
+  2025-06-19 spot 24810.7 K 24800 wings 25200/24400 credit 87.6 lot 75 -> Rs +5733
+  2025-06-26 spot 25363.3 K 25350 wings 25750/24950 credit 135.5 lot 75 -> Rs -5242
+  2025-07-03 spot 25442.6 K 25450 wings 25850/25050 credit 94.7 lot 75 -> Rs +3459
+  2025-07-10 spot 25449.2 K 25450 wings 25850/25050 credit 90.0 lot 75 -> Rs -3
+  2025-07-17 spot 25198.5 K 25200 wings 25600/24800 credit 68.3 lot 75 -> Rs -1830
+  2025-07-24 spot 25188.3 K 25200 wings 25600/24800 credit 62.1 lot 75 -> Rs -5802
+  2025-07-31 spot 24703.0 K 24700 wings 25100/24300 credit 105.8 lot 75 -> Rs +2391
+  2025-08-07 spot 24526.2 K 24550 wings 24900/24150 credit 94.9 lot 75 -> Rs +3477
+  2025-08-14 spot 24636.3 K 24650 wings 25050/24250 credit 92.2 lot 75 -> Rs +4543
+  2025-08-21 spot 25071.0 K 25050 wings 25450/24650 credit 78.5 lot 75 -> Rs +2756
+  2025-08-28 spot 24522.1 K 24500 wings 24900/24150 credit 98.8 lot 75 -> Rs +6147
+  2025-09-02 spot 24660.9 K 24650 wings 25050/24250 credit 75.9 lot 75 -> Rs +225
+  2025-09-09 spot 24860.1 K 24850 wings 25250/24450 credit 86.8 lot 75 -> Rs +4706
+  2025-09-16 spot 25113.6 K 25100 wings 25500/24700 credit 71.0 lot 75 -> Rs -5481
+  2025-09-23 spot 25173.0 K 25150 wings 25600/24750 credit 82.8 lot 75 -> Rs +4027
+  2025-09-30 spot 24655.7 K 24650 wings 25050/24250 credit 106.9 lot 75 -> Rs +4447
+  2025-10-07 spot 25111.7 K 25100 wings 25500/24700 credit 83.6 lot 75 -> Rs +5164
+  2025-10-14 spot 25288.3 K 25300 wings 25700/24900 credit 90.1 lot 75 -> Rs -5379
+  2025-10-20 spot 25868.9 K 25850 wings 26300/25450 credit 115.8 lot 75 -> Rs +7657
+  2025-10-28 spot 25988.9 K 26000 wings 26400/25550 credit 125.5 lot 75 -> Rs +4260
+  2025-11-04 spot 25708.1 K 25700 wings 26100/25300 credit 110.0 lot 75 -> Rs +117
+  2025-11-11 spot 25517.2 K 25500 wings 25950/25100 credit 105.7 lot 75 -> Rs -7074
+  2025-11-18 spot 25951.8 K 25950 wings 26350/25550 credit 105.2 lot 75 -> Rs +4684
+  2025-11-25 spot 25955.8 K 25950 wings 26350/25550 credit 100.7 lot 75 -> Rs +2126
+  2025-12-02 spot 26122.1 K 26100 wings 26550/25700 credit 102.1 lot 75 -> Rs +1540
+  2025-12-09 spot 25776.3 K 25800 wings 26200/25350 credit 108.3 lot 75 -> Rs +4660
+  2025-12-16 spot 25916.3 K 25900 wings 26350/25500 credit 96.1 lot 75 -> Rs +4006
+  2025-12-23 spot 26138.8 K 26150 wings 26550/25700 credit 82.0 lot 75 -> Rs +3446
+  2025-12-30 spot 25885.0 K 25900 wings 26300/25450 credit 72.8 lot 75 -> Rs +2015
+  2026-01-06 spot 26178.5 K 26200 wings 26600/25750 credit 84.5 lot 65 -> Rs +3128
+  2026-01-13 spot 25766.8 K 25750 wings 26200/25350 credit 129.6 lot 65 -> Rs +7275
+  2026-01-20 spot 25490.3 K 25500 wings 25900/25100 credit 112.8 lot 65 -> Rs -9759
+  2026-01-27 spot 24944.4 K 24950 wings 25350/24550 credit 177.0 lot 65 -> Rs -3355
+  2026-02-03 spot 25773.7 K 25750 wings 26200/25350 credit 229.4 lot 65 -> Rs +12954
+  2026-02-10 spot 25917.5 K 25900 wings 26350/25500 credit 91.0 lot 65 -> Rs +2902
+  2026-02-17 spot 25591.0 K 25600 wings 26000/25200 credit 99.4 lot 65 -> Rs -2253
+  2026-02-24 spot 25534.0 K 25550 wings 25950/25150 credit 117.5 lot 65 -> Rs -1469
+  2026-03-02 spot 24927.1 K 24950 wings 25350/24550 credit 166.8 lot 65 -> Rs +5392
+  2026-03-10 spot 24133.1 K 24150 wings 24500/23750 credit 162.6 lot 65 -> Rs +2525
+  2026-03-17 spot 23366.7 K 23350 wings 23750/23000 credit 158.1 lot 65 -> Rs -5576
+  2026-03-24 spot 22848.2 K 22850 wings 23200/22500 credit 187.3 lot 65 -> Rs +8249
+  2026-03-30 spot 22577.8 K 22600 wings 22950/22200 credit 207.7 lot 65 -> Rs -4815
+  2026-04-07 spot 22897.8 K 22900 wings 23250/22550 credit 195.7 lot 65 -> Rs -1829
+  2026-04-13 spot 23590.3 K 23600 wings 23950/23200 credit 156.3 lot 65 -> Rs -5803
+  2026-04-21 spot 24444.6 K 24450 wings 24850/24050 credit 124.0 lot 65 -> Rs -612
+  2026-04-28 spot 24109.5 K 24100 wings 24500/23700 credit 111.0 lot 65 -> Rs -1179
+  2026-05-05 spot 24014.5 K 24000 wings 24400/23650 credit 124.7 lot 65 -> Rs +5563
+  2026-05-12 spot 23632.5 K 23650 wings 24000/23250 credit 127.0 lot 65 -> Rs -10367
+  2026-05-19 spot 23756.7 K 23750 wings 24150/23400 credit 122.0 lot 65 -> Rs -660
+  2026-05-26 spot 24031.7 K 24050 wings 24400/23650 credit 109.8 lot 65 -> Rs -2417
+  2026-06-02 spot 23276.9 K 23300 wings 23650/22900 credit 110.7 lot 65 -> Rs -5334
+  2026-06-09 spot 23237.2 K 23250 wings 23600/22850 credit 104.3 lot 65 -> Rs +5735
+  2026-06-16 spot 23941.0 K 23950 wings 24350/23550 credit 101.0 lot 65 -> Rs +3492
+  2026-06-23 spot 24098.0 K 24100 wings 24500/23700 credit 76.1 lot 65 -> Rs -12943
+  2026-06-30 spot 23889.2 K 23900 wings 24250/23500 credit 132.1 lot 65 -> Rs +6020
+  2026-07-07 spot 24443.0 K 24450 wings 24850/24050 credit 88.0 lot 65 -> Rs +2379
+  2026-07-14 spot 24130.7 K 24150 wings 24500/23750 credit 122.8 lot 65 -> Rs +1099
+  2026-07-21 spot 24238.6 K 24250 wings 24650/23850 credit 91.0 lot 65 -> Rs +1104
+  2026-07-28 spot 24009.0 K 24000 wings 24400/23600 credit 85.2 lot 65 -> Rs +3361
+  2026-08-04 spot 24599.5 K 24600 wings 25000/24200 credit 89.1 lot 65 -> Rs -4293
+  2026-08-11 spot 24483.8 K 24500 wings 24900/24100 credit 135.1 lot 65 -> Rs +4826
+  2026-08-18 spot 24231.1 K 24250 wings 24600/23850 credit 77.4 lot 65 -> Rs +368
+  2026-08-25 spot 24183.2 K 24200 wings 24550/23800 credit 79.8 lot 65 -> Rs +403
+  2026-09-01 spot 24063.5 K 24050 wings 24450/23700 credit 86.1 lot 65 -> Rs -281
+  2026-09-08 spot 23672.5 K 23650 wings 24050/23300 credit 102.3 lot 65 -> Rs +1915
+  2026-09-15 spot 23462.0 K 23450 wings 23850/23100 credit 109.9 lot 65 -> Rs -9527
+  2026-09-22 spot 23446.5 K 23450 wings 23800/23050 credit 92.3 lot 65 -> Rs -1498
+  2026-09-29 spot 22632.4 K 22650 wings 23000/22250 credit 120.9 lot 65 -> Rs +3150
+  2026-10-06 spot 22601.7 K 22600 wings 22950/22250 credit 116.8 lot 65 -> Rs -773
+  2026-10-13 spot 22465.5 K 22450 wings 22850/22100 credit 125.2 lot 65 -> Rs -9557
+  2026-10-19 spot 22984.3 K 23000 wings 23350/22600 credit 150.1 lot 65 -> Rs +1090
+  2026-10-27 spot 22734.2 K 22750 wings 23100/22350 credit 161.2 lot 65 -> Rs +6333
+  2026-11-03 spot 23614.6 K 23600 wings 24000/23250 credit 127.8 lot 65 -> Rs -1188
+  2026-11-09 spot 24949.8 K 24950 wings 25350/24550 credit 176.3 lot 65 -> Rs +4246
+  2026-11-17 spot 25324.0 K 25300 wings 25750/24900 credit 119.0 lot 65 -> Rs -1742
