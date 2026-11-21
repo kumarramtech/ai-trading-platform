@@ -1,0 +1,35 @@
+INDEX-CHANGE ANNOUNCEMENT-DAY STUDY (pre-registered 2026-11-21; t >= 2.5 per trade and per release; research only)
+events 1946; left out: {'N2: main-3 event same date': 474, 'N2: Smallcap 250': 390, 'N2: added and dropped same date': 622, 'no daily data': 43, 'ineligible': 306, 'no ISIN': 1}
+
+N1 NIFTY 50 / Next 50 / Midcap 150: first session after the release, 09:20 -> 15:25, ADD long / DROP short: 110 trades, gross +0.144%, net +0.014%, t 0.09, win 45%
+    review 2025-02-21:  36 trades, net -0.142%
+    review 2025-08-22:  22 trades, net +0.053%
+    review 2026-02-23:  29 trades, net +0.438%
+    review 2026-08-10:  23 trades, net -0.316%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.068 / +0.105)
+  [fail] without best review 2026-02-23 > 0 (-0.138)
+  [fail] beats placebo by >= cost, gross (placebo 88 trades, gross +0.024%)
+  -> FAIL
+  release-level: 4 releases, mean +0.009%, t 0.05
+
+N2 other NSE indices: first session after the release, 09:20 -> 15:25, ADD long / DROP short: 1486 trades, gross +0.098%, net -0.082%, t -2.00, win 48%
+    review 2024-12-11: 179 trades, net +0.035%
+    review 2025-02-21: 142 trades, net -0.198%
+    review 2025-03-13:  36 trades, net +0.138%
+    review 2025-06-06: 172 trades, net -0.273%
+    review 2025-08-22: 142 trades, net -0.168%
+    review 2025-12-11: 212 trades, net +0.074%
+    review 2026-02-23: 149 trades, net +0.253%
+    review 2026-03-12:  35 trades, net -0.711%
+    review 2026-06-10: 205 trades, net -0.268%
+    review 2026-08-10: 181 trades, net +0.015%
+    review 2026-09-15:  33 trades, net -0.315%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.131 / -0.042)
+  [fail] without best review 2026-02-23 > 0 (-0.119)
+  [fail] beats placebo by >= cost, gross (placebo 1438 trades, gross -0.031%)
+  -> FAIL
+  release-level: 11 releases, mean -0.129%, t -1.59
+
+VERDICT: N1 FAIL, N2 FAIL
