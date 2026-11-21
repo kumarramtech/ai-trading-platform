@@ -1,0 +1,12 @@
+NIFTY WEEKEND OPTION-SELLING STUDY (pre-registered 2026-11-21; research only; condor book unchanged)
+skipped: W {'no NIFTY minutes': 1, 'missing option candle': 1}, C {'missing option candle': 6, 'no NIFTY minutes': 1}
+
+W weekend: sell ATM straddle + buy 2% wings D 15:15 -> next session 09:30: 106 events, Rs -796/lot mean, t -2.95, win 37%, total Rs -84346/lot, max drawdown Rs -85444, average credit 239.2 pts
+  ok events >= 80 (106); NO mean > 0, t >= 2.5 (Rs -796/lot, t -2.95); NO year 1 > 0 (Rs -1073, 49); NO year 2 > 0 (Rs -557, 57); NO without best month 2026-03 > 0 (Rs -889); ok worst event >= Rs -20000 (Rs -14443)
+  by month (Rs/lot): 2024-10 -1464, 2024-11 -2785, 2024-12 +346, 2025-01 -4752, 2025-02 -1512, 2025-03 -3953, 2025-04 -18873, 2025-05 -15327, 2025-06 -306, 2025-07 +3277, 2025-08 -9448, 2025-09 +2209, 2025-10 -5293, 2025-11 +2516, 2025-12 -6761, 2026-01 -2640, 2026-02 -4158, 2026-03 +6340, 2026-04 +1372, 2026-05 -3416, 2026-06 -8104, 2026-07 -5871, 2026-08 +4741, 2026-09 -2982, 2026-10 -8604, 2026-11 +1097
+
+C control (one night, information only): 411 events, Rs -544/lot mean, t -8.60, win 33%, total Rs -223383/lot, max drawdown Rs -223383, average credit 263.0 pts
+  ok events >= 80 (411); NO mean > 0, t >= 2.5 (Rs -544/lot, t -8.60); NO year 1 > 0 (Rs -361, 194); NO year 2 > 0 (Rs -707, 217); NO without best month 2025-07 > 0 (Rs -572); ok worst event >= Rs -20000 (Rs -6995)
+  by month (Rs/lot): 2024-10 -5841, 2024-11 -6053, 2024-12 -4440, 2025-01 -4266, 2025-02 -7542, 2025-03 -10144, 2025-04 -9451, 2025-05 -8792, 2025-06 -1220, 2025-07 +774, 2025-08 -5289, 2025-09 -7730, 2025-10 -11012, 2025-11 -3140, 2025-12 -7774, 2026-01 -10776, 2026-02 -9586, 2026-03 -7846, 2026-04 -10224, 2026-05 -5613, 2026-06 -15065, 2026-07 -19219, 2026-08 -5310, 2026-09 -9347, 2026-10 -20056, 2026-11 -18421
+
+VERDICT: W FAIL
