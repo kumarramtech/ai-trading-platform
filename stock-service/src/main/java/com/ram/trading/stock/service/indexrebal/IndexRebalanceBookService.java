@@ -61,9 +61,14 @@ public class IndexRebalanceBookService {
     static final String NIFTY = "NSE_INDEX|Nifty 50";
     static final double NOTIONAL = 50_000, COST_PCT = 0.13, MIN_PRICE = 100, MIN_TURNOVER = 10e7;
     static final List<String> INDICES = List.of("NIFTY 50", "NIFTY NEXT 50", "NIFTY MIDCAP 150");
-    static final String RULES = "On the change date of each NSE semi-annual review (NIFTY 50 / Next 50 / Midcap 150): "
-            + "09:20 buy added stocks, short removed stocks, Rs 50,000 each; 15:25 close; price >= Rs 100 and 20-day "
-            + "traded value >= Rs 10 cr; costs 0.13% a round trip";
+    static final double OTHER_COST_PCT = 0.18;
+    static final Map<String, String> STUDY = Map.of("MAIN", "B1 +0.58%", "O2", "+0.81%", "O1", "+2.17% on 35 trades");
+    static final String RULES = "On the change date of each NSE scheduled review: 09:20 buy added stocks, short removed "
+            + "stocks, Rs 50,000 each; 15:25 close; price >= Rs 100 and 20-day traded value >= Rs 10 cr.\n"
+            + "Groups: MAIN = NIFTY 50 / Next 50 / Midcap 150 (study B1 +0.58%, cost 0.13%); O2 = every other index "
+            + "(study +0.81%, cost 0.18%); O1 = stocks with a Smallcap 250 change (study +2.17% on only 35 trades, "
+            + "cost 0.18%; tracked, not yet tested). A stock with a MAIN change, or added to one index and dropped from "
+            + "another, is not in O1/O2";
 
     private static final Pattern MONTH_CLOSE = Pattern.compile("close of (January|February|March|April|May|June|July|"
             + "August|September|October|November|December)\\s+(\\d{1,2}),?\\s*(\\d{4})");
@@ -72,6 +77,8 @@ public class IndexRebalanceBookService {
     private static final Pattern SCOPE = Pattern.compile("replacements? on account of", Pattern.CASE_INSENSITIVE);
     private static final Pattern REVIEW = Pattern.compile("semi-annual review|periodic review", Pattern.CASE_INSENSITIVE);
     private static final Pattern NOT_BROAD = Pattern.compile("sectoral|thematic|strategy", Pattern.CASE_INSENSITIVE);
+    private static final Pattern OTHER_REVIEW = Pattern.compile(
+            "semi-annual review|periodic review|annual review|quarterly review", Pattern.CASE_INSENSITIVE);
     private static final Pattern ROW = Pattern.compile("^\\s*\\d+\\.?\\s+.*?\\s((?=[A-Z0-9&\\-]*[A-Z])[A-Z0-9][A-Z0-9&\\-]{1,19})\\s*$");
     private static final Pattern NUMBER_ONLY = Pattern.compile("^\\s*\\d+\\.?\\s*$");
 
@@ -115,6 +122,24 @@ public class IndexRebalanceBookService {
                 + "nifty_entry double, entry_at datetime, exit_price double, nifty_exit double, exit_at datetime, "
                 + "gross_pnl double, charges double, net_pnl double, excess_pct double, "
                 + "unique key uq_index_rebal_trade (change_date, symbol))");
+        // 2026-11-21: other NSE indices (groups O1 / O2) next to the original MAIN events.
+        for (String t : List.of("index_rebal_event", "index_rebal_trade")) {
+            alter("alter table " + t + " add column grp varchar(4) not null default 'MAIN'");
+            alter("alter table " + t + " modify index_name varchar(255)");
+        }
+    }
+
+    private void alter(String sql) {
+        try {
+            jdbc.execute(sql);
+        } catch (Exception ex) {
+            log.debug("INDEX REBALANCE | {} skipped: {}", sql, ex.getMessage()); // column already there
+        }
+    }
+
+    /** Round-trip cost % by group: MAIN as study B1, O1 / O2 as the other-indices study (extra slippage). */
+    static double costPct(String group) {
+        return group == null || "MAIN".equals(group) ? COST_PCT : OTHER_COST_PCT;
     }
 
     // ------------------------------------------------------------------ release parsing (pure, tested)
@@ -132,6 +157,96 @@ public class IndexRebalanceBookService {
      * indices have a fixed size) is skipped and reported as a problem.
      */
     static Release parse(String text) {
+        LocalDate close = reviewClose(text);
+        if (close == null) {
+            return null;
+        }
+        Map<String, Map<String, List<String>>> secs = sections(text, false);
+        List<String> problems = new ArrayList<>();
+        Map<String, Event> best = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, List<String>>> e : secs.entrySet()) {
+            List<String> drop = e.getValue().get("DROP"), add = e.getValue().get("ADD");
+            if (drop.size() != add.size()) {
+                problems.add(e.getKey() + " unbalanced: " + drop.size() + " out / " + add.size() + " in");
+                continue;
+            }
+            for (String sd : List.of("DROP", "ADD")) {
+                for (String sym : e.getValue().get(sd)) {
+                    Event prev = best.get(sym);
+                    if (prev == null || INDICES.indexOf(e.getKey()) < INDICES.indexOf(prev.index())) {
+                        best.put(sym, new Event(e.getKey(), sd, sym));
+                    }
+                }
+            }
+        }
+        return new Release(close, new ArrayList<>(best.values()), problems);
+    }
+
+    /** One stock of the OTHER indices: its side, group (O1 = has a Smallcap 250 change, else O2) and its indices. */
+    public record OtherEvent(String symbol, String side, String group, List<String> indices) {
+    }
+
+    public record OtherRelease(LocalDate changeDate, List<OtherEvent> events, int mixed, int unbalanced) {
+    }
+
+    /**
+     * The OTHER-indices events of a scheduled review (added 2026-11-21 after the pre-registered out-of-sample check
+     * research/index_other_study.py passed for O2 and survived research/index_other_verify.py). Same parse as
+     * research/index_events_other.py: every index section except NIFTY 50 / Next 50 / Midcap 150, sectoral, thematic
+     * and strategy reviews included; unbalanced sections skipped. One event per stock: left out when the stock has a
+     * NIFTY 50 / Next 50 / Midcap 150 event in the release (the MAIN book trades it) or is added to one index and
+     * dropped from another.
+     */
+    static OtherRelease parseOther(String text) {
+        LocalDate close = reviewClose(text);
+        if (close == null) {
+            return null;
+        }
+        java.util.Set<String> main = new java.util.HashSet<>();
+        Release r = parse(text);
+        if (r != null) {
+            r.events().forEach(e -> main.add(e.symbol()));
+        }
+        Map<String, List<String[]>> bySymbol = new LinkedHashMap<>();
+        int unbalanced = 0;
+        for (Map.Entry<String, Map<String, List<String>>> e : sections(text, true).entrySet()) {
+            List<String> drop = e.getValue().get("DROP"), add = e.getValue().get("ADD");
+            if (drop.size() != add.size()) {
+                unbalanced++;
+                continue;
+            }
+            for (String sd : List.of("DROP", "ADD")) {
+                for (String sym : e.getValue().get(sd)) {
+                    bySymbol.computeIfAbsent(sym, k -> new ArrayList<>()).add(new String[]{e.getKey(), sd});
+                }
+            }
+        }
+        List<OtherEvent> out = new ArrayList<>();
+        int mixed = 0;
+        for (Map.Entry<String, List<String[]>> e : bySymbol.entrySet()) {
+            if (main.contains(e.getKey())) {
+                continue;
+            }
+            java.util.Set<String> sides = new java.util.HashSet<>();
+            List<String> idx = new ArrayList<>();
+            for (String[] x : e.getValue()) {
+                sides.add(x[1]);
+                if (!idx.contains(x[0])) {
+                    idx.add(x[0]);
+                }
+            }
+            if (sides.size() > 1) {
+                mixed++;
+                continue;
+            }
+            out.add(new OtherEvent(e.getKey(), sides.iterator().next(),
+                    idx.contains("NIFTY SMALLCAP 250") ? "O1" : "O2", idx));
+        }
+        return new OtherRelease(close, out, mixed, unbalanced);
+    }
+
+    /** The "close of" date of a scheduled review decided by the Index Maintenance Sub-Committee, else null. */
+    private static LocalDate reviewClose(String text) {
         String flat = text.replaceAll("\\s+", " ");
         if (!flat.contains("Index Maintenance Sub") || !REVIEW.matcher(flat).find()) {
             return null;
@@ -140,15 +255,24 @@ public class IndexRebalanceBookService {
         if (!m.find()) {
             return null;
         }
-        LocalDate close = LocalDate.parse(m.group(1) + " " + m.group(2) + " " + m.group(3),
+        return LocalDate.parse(m.group(1) + " " + m.group(2) + " " + m.group(3),
                 DateTimeFormatter.ofPattern("MMMM d yyyy", Locale.ENGLISH));
+    }
+
+    /**
+     * Index sections: name -> {DROP: symbols, ADD: symbols}. {@code other} false = NIFTY 50 / Next 50 / Midcap 150 in
+     * the broad scheduled reviews only; true = every other index, in any scheduled (incl. annual / quarterly,
+     * sectoral / thematic / strategy) review part.
+     */
+    private static Map<String, Map<String, List<String>>> sections(String text, boolean other) {
         Map<String, Map<String, List<String>>> secs = new LinkedHashMap<>();
         String sec = null, side = null, pending = null;
         boolean scope = true;
         for (String raw : text.split("\\r?\\n")) {
             String line = raw;
             if (SCOPE.matcher(line).find()) {
-                scope = REVIEW.matcher(line).find() && !NOT_BROAD.matcher(line).find();
+                scope = other ? OTHER_REVIEW.matcher(line).find()
+                        : REVIEW.matcher(line).find() && !NOT_BROAD.matcher(line).find();
                 sec = null;
                 continue;
             }
@@ -156,7 +280,8 @@ public class IndexRebalanceBookService {
             if (h.matches()) {
                 String name = h.group(1).replaceAll("\\s+", " ").trim().toUpperCase(Locale.ROOT);
                 boolean empty = secs.containsKey(name) && secs.get(name).get("DROP").isEmpty() && secs.get(name).get("ADD").isEmpty();
-                sec = scope && INDICES.contains(name) && (!secs.containsKey(name) || empty) ? name : null;
+                boolean wanted = other ? !INDICES.contains(name) : INDICES.contains(name);
+                sec = scope && wanted && (!secs.containsKey(name) || empty) ? name : null;
                 side = null;
                 pending = null;
                 if (sec != null) {
@@ -196,24 +321,7 @@ public class IndexRebalanceBookService {
                 }
             }
         }
-        List<String> problems = new ArrayList<>();
-        Map<String, Event> best = new LinkedHashMap<>();
-        for (Map.Entry<String, Map<String, List<String>>> e : secs.entrySet()) {
-            List<String> drop = e.getValue().get("DROP"), add = e.getValue().get("ADD");
-            if (drop.size() != add.size()) {
-                problems.add(e.getKey() + " unbalanced: " + drop.size() + " out / " + add.size() + " in");
-                continue;
-            }
-            for (String sd : List.of("DROP", "ADD")) {
-                for (String sym : e.getValue().get(sd)) {
-                    Event prev = best.get(sym);
-                    if (prev == null || INDICES.indexOf(e.getKey()) < INDICES.indexOf(prev.index())) {
-                        best.put(sym, new Event(e.getKey(), sd, sym));
-                    }
-                }
-            }
-        }
-        return new Release(close, new ArrayList<>(best.values()), problems);
+        return secs;
     }
 
     static String pdfText(byte[] pdf) throws Exception {
@@ -239,9 +347,13 @@ public class IndexRebalanceBookService {
 
     /** Paper result of one trade: [gross Rs, charges Rs, net Rs, excess % vs NIFTY after costs]. */
     static double[] result(int dir, int qty, double in, double out, double niftyIn, double niftyOut) {
+        return result(dir, qty, in, out, niftyIn, niftyOut, COST_PCT);
+    }
+
+    static double[] result(int dir, int qty, double in, double out, double niftyIn, double niftyOut, double costPct) {
         double gross = dir * qty * (out - in);
-        double charges = qty * in * COST_PCT / 100;
-        double excess = dir * ((out / in - 1) - (niftyOut / niftyIn - 1)) * 100 - COST_PCT;
+        double charges = qty * in * costPct / 100;
+        double excess = dir * ((out / in - 1) - (niftyOut / niftyIn - 1)) * 100 - costPct;
         return new double[]{gross, charges, gross - charges, excess};
     }
 
@@ -276,30 +388,53 @@ public class IndexRebalanceBookService {
                 if (r.statusCode() != 200 || body.length < 5 || !new String(body, 0, 4, StandardCharsets.ISO_8859_1).equals("%PDF")) {
                     continue;
                 }
-                Release rel = parse(pdfText(body));
-                int added = 0;
+                String text = pdfText(body);
+                Release rel = parse(text);
+                OtherRelease oth = parseOther(text);
+                int added = 0, otherAdded = 0;
                 String note = rel == null ? "not a scheduled review" : String.join("; ", rel.problems());
                 if (rel != null) {
                     for (Event e : rel.events()) {
-                        added += jdbc.update("insert ignore into index_rebal_event (change_date, symbol, index_name, side, "
-                                        + "announce_date, source, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+                        // A MAIN change always wins over an O1/O2 row of the same stock and date (another release).
+                        added += jdbc.update("insert into index_rebal_event (change_date, symbol, index_name, side, "
+                                        + "announce_date, source, created_at, grp) values (?, ?, ?, ?, ?, ?, ?, 'MAIN') "
+                                        + "on duplicate key update index_name = if(grp = 'MAIN', index_name, values(index_name)), "
+                                        + "side = if(grp = 'MAIN', side, values(side)), grp = 'MAIN'",
                                 Date.valueOf(rel.changeDate()), e.symbol(), e.index(), e.side(), Date.valueOf(day), file,
-                                Timestamp.valueOf(LocalDateTime.now(IST)));
+                                Timestamp.valueOf(LocalDateTime.now(IST))) > 0 ? 1 : 0;
                     }
+                }
+                if (oth != null) {
+                    for (OtherEvent e : oth.events()) {
+                        // Same stock and date already known: a MAIN row stays; an O1/O2 row of the other side -> MIX (skipped).
+                        otherAdded += jdbc.update("insert into index_rebal_event (change_date, symbol, index_name, side, "
+                                        + "announce_date, source, created_at, grp) values (?, ?, ?, ?, ?, ?, ?, ?) "
+                                        + "on duplicate key update side = if(grp <> 'MAIN' and side <> values(side), 'MIX', side)",
+                                Date.valueOf(oth.changeDate()), e.symbol(), trim(String.join("; ", e.indices()), 255),
+                                e.side(), Date.valueOf(day), file, Timestamp.valueOf(LocalDateTime.now(IST)), e.group()) == 1 ? 1 : 0;
+                    }
+                    String o = String.format("other indices: %d stocks (%d O1), %d added-and-dropped left out, %d unbalanced "
+                                    + "sections skipped", oth.events().size(),
+                            oth.events().stream().filter(e -> "O1".equals(e.group())).count(), oth.mixed(), oth.unbalanced());
+                    note = note == null || note.isEmpty() || rel == null ? o : note + "; " + o;
                 }
                 jdbc.update("insert ignore into index_rebal_release (file, announce_date, change_date, events, note, seen_at) "
                                 + "values (?, ?, ?, ?, ?, ?)", file, Date.valueOf(day),
-                        rel == null ? null : Date.valueOf(rel.changeDate()), added, trim(note, 1000),
+                        rel == null ? null : Date.valueOf(rel.changeDate()), added + otherAdded, trim(note, 1000),
                         Timestamp.valueOf(LocalDateTime.now(IST)));
-                if (rel != null && (added > 0 || !rel.problems().isEmpty())) {
+                if (rel != null && (added + otherAdded > 0 || !rel.problems().isEmpty())) {
                     long adds = rel.events().stream().filter(e -> e.side().equals("ADD")).count();
-                    String msg = String.format("%s: change date %s, %d stocks (%d added, %d removed)%s",
-                            file, rel.changeDate(), rel.events().size(), adds, rel.events().size() - adds,
-                            rel.problems().isEmpty() ? "" : "\nCHECK BY HAND: " + note);
+                    long oAdds = oth == null ? 0 : oth.events().stream().filter(e -> e.side().equals("ADD")).count();
+                    int oN = oth == null ? 0 : oth.events().size();
+                    String msg = String.format("%s: change date %s, MAIN %d stocks (%d added, %d removed); other indices "
+                                    + "O1/O2 %d stocks (%d added, %d removed)%s",
+                            file, rel.changeDate(), rel.events().size(), adds, rel.events().size() - adds, oN, oAdds,
+                            oN - oAdds, rel.problems().isEmpty() ? "" : "\nCHECK BY HAND: " + note);
                     notifySlack("INDEX REBALANCE book: review release found", msg);
                     log.info("INDEX REBALANCE | {}", msg.replace('\n', ' '));
                 }
-                out.add(file + ": " + (rel == null ? "not a review" : added + " events, change " + rel.changeDate()));
+                out.add(file + ": " + (rel == null ? "not a review" : added + " MAIN + " + otherAdded + " other events, change "
+                        + rel.changeDate()));
             } catch (Exception ex) {
                 log.warn("INDEX REBALANCE | release {} failed: {}", file, ex.toString());
                 out.add(file + ": failed " + ex.getMessage());
@@ -364,6 +499,10 @@ public class IndexRebalanceBookService {
                 if (key == null) {
                     continue;
                 }
+                if ("MIX".equals(e.get("side"))) {
+                    record(today, e, key, "SKIPPED", "added to one index and dropped from another");
+                    continue;
+                }
                 Double px = ltp.get(key);
                 if (px == null || px <= 0) {
                     if (lastAttempt) {
@@ -382,9 +521,9 @@ public class IndexRebalanceBookService {
                 }
                 int qty = (int) Math.max(1, Math.floor(NOTIONAL / px));
                 jdbc.update("insert ignore into index_rebal_trade (change_date, symbol, instrument_key, index_name, side, status, "
-                                + "qty, entry_price, nifty_entry, entry_at) values (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)",
+                                + "qty, entry_price, nifty_entry, entry_at, grp) values (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)",
                         Date.valueOf(today), sym, key, e.get("index_name"), e.get("side"), qty, px, nifty,
-                        Timestamp.valueOf(LocalDateTime.now(IST)));
+                        Timestamp.valueOf(LocalDateTime.now(IST)), group(e));
                 opened++;
             }
             String msg = String.format("%s: %d paper positions opened at 09:20 (adds long, removals short), NIFTY %.1f",
@@ -404,9 +543,14 @@ public class IndexRebalanceBookService {
     }
 
     private void record(LocalDate day, Map<String, Object> e, String key, String status, String reason) {
-        jdbc.update("insert ignore into index_rebal_trade (change_date, symbol, instrument_key, index_name, side, status, reason) "
-                + "values (?, ?, ?, ?, ?, ?, ?)", Date.valueOf(day), e.get("symbol"), key, e.get("index_name"), e.get("side"),
-                status, trim(reason, 255));
+        jdbc.update("insert ignore into index_rebal_trade (change_date, symbol, instrument_key, index_name, side, status, reason, grp) "
+                + "values (?, ?, ?, ?, ?, ?, ?, ?)", Date.valueOf(day), e.get("symbol"), key, e.get("index_name"), e.get("side"),
+                status, trim(reason, 255), group(e));
+    }
+
+    private static String group(Map<String, Object> row) {
+        Object g = row.get("grp");
+        return g == null ? "MAIN" : g.toString();
     }
 
     public synchronized String exit(LocalDate today) {
@@ -474,48 +618,60 @@ public class IndexRebalanceBookService {
 
     private void close(Map<String, Object> r, double px, double nifty, String how) {
         int dir = "ADD".equals(r.get("side")) ? 1 : -1;
-        double[] res = result(dir, ((Number) r.get("qty")).intValue(), d(r, "entry_price"), px, d(r, "nifty_entry"), nifty);
+        double[] res = result(dir, ((Number) r.get("qty")).intValue(), d(r, "entry_price"), px, d(r, "nifty_entry"), nifty,
+                costPct(group(r)));
         jdbc.update("update index_rebal_trade set status = 'CLOSED', reason = ?, exit_price = ?, nifty_exit = ?, exit_at = ?, "
                         + "gross_pnl = ?, charges = ?, net_pnl = ?, excess_pct = ? where id = ? and status = 'OPEN'",
                 how, px, nifty, Timestamp.valueOf(LocalDateTime.now(IST)), res[0], res[1], res[2], res[3], r.get("id"));
     }
 
     private void summary(LocalDate day) {
-        Map<String, Object> s = jdbc.queryForMap("select count(*) n, coalesce(sum(net_pnl), 0) net, coalesce(avg(excess_pct), 0) ex "
-                + "from index_rebal_trade where status = 'CLOSED' and change_date = ?", Date.valueOf(day));
-        Map<String, Object> all = jdbc.queryForMap("select count(*) n, coalesce(sum(net_pnl), 0) net, coalesce(avg(excess_pct), 0) ex "
-                + "from index_rebal_trade where status = 'CLOSED'");
-        String msg = String.format("%s: %s trades closed at 15:25, net Rs %.0f, average %+.2f%% vs NIFTY after costs%n"
-                        + "Book so far: %s trades, net Rs %.0f, average %+.2f%% (study: +0.58%%)",
-                day, s.get("n"), d(s, "net"), d(s, "ex"), all.get("n"), d(all, "net"), d(all, "ex"));
-        notifySlack("INDEX REBALANCE book: change day closed", msg);
-        log.info("INDEX REBALANCE | {}", msg.replace('\n', ' '));
+        StringBuilder msg = new StringBuilder(day + ": closed at 15:25, after costs vs NIFTY");
+        for (String g : List.of("MAIN", "O2", "O1")) {
+            Map<String, Object> s = jdbc.queryForMap("select count(*) n, coalesce(sum(net_pnl), 0) net, coalesce(avg(excess_pct), 0) ex "
+                    + "from index_rebal_trade where status = 'CLOSED' and change_date = ? and grp = ?", Date.valueOf(day), g);
+            Map<String, Object> all = jdbc.queryForMap("select count(*) n, coalesce(sum(net_pnl), 0) net, coalesce(avg(excess_pct), 0) ex "
+                    + "from index_rebal_trade where status = 'CLOSED' and grp = ?", g);
+            if (((Number) all.get("n")).intValue() == 0) {
+                continue;
+            }
+            msg.append(String.format("%n%-4s today %s trades, net Rs %.0f, average %+.2f%% | so far %s trades, net Rs %.0f, "
+                            + "average %+.2f%% (study %s)", g, s.get("n"), d(s, "net"), d(s, "ex"), all.get("n"), d(all, "net"),
+                    d(all, "ex"), STUDY.get(g)));
+        }
+        notifySlack("INDEX REBALANCE book: change day closed", msg.toString());
+        log.info("INDEX REBALANCE | {}", msg.toString().replace('\n', ' '));
     }
 
     // ------------------------------------------------------------------ report
 
     public String report() {
         StringBuilder sb = new StringBuilder("INDEX REBALANCE PAPER BOOK (separate strategy, paper only)\n").append(RULES).append("\n\n");
-        List<Map<String, Object>> up = jdbc.queryForList("select change_date, count(*) n, sum(side = 'ADD') adds, min(source) src "
-                + "from index_rebal_event where change_date >= ? group by change_date order by change_date", Date.valueOf(LocalDate.now(IST)));
+        List<Map<String, Object>> up = jdbc.queryForList("select change_date, grp, count(*) n, sum(side = 'ADD') adds, min(source) src "
+                + "from index_rebal_event where change_date >= ? group by change_date, grp order by change_date, grp",
+                Date.valueOf(LocalDate.now(IST)));
         sb.append(up.isEmpty() ? "No upcoming change date yet (next NSE review release expected about late Feb 2027; "
                 + "the release is checked every evening).\n" : "");
         for (Map<String, Object> u : up) {
-            sb.append(String.format("Upcoming change date %s: %s stocks (%s added) from %s%n", u.get("change_date"), u.get("n"),
-                    u.get("adds"), u.get("src")));
+            sb.append(String.format("Upcoming change date %s: %-4s %s stocks (%s added) from %s%n", u.get("change_date"),
+                    u.get("grp"), u.get("n"), u.get("adds"), u.get("src")));
         }
-        List<Map<String, Object>> days = jdbc.queryForList("select change_date, count(*) n, sum(status = 'CLOSED') closed, "
+        List<Map<String, Object>> days = jdbc.queryForList("select change_date, grp, count(*) n, sum(status = 'CLOSED') closed, "
                 + "sum(status = 'SKIPPED') skipped, coalesce(sum(net_pnl), 0) net, avg(excess_pct) ex from index_rebal_trade "
-                + "group by change_date order by change_date");
+                + "group by change_date, grp order by change_date, grp");
         for (Map<String, Object> dd : days) {
-            sb.append(String.format("%s  %s stocks, %s closed, %s skipped, net Rs %.0f, average %s vs NIFTY%n",
-                    dd.get("change_date"), dd.get("n"), dd.get("closed"), dd.get("skipped"), d(dd, "net"),
+            sb.append(String.format("%s  %-4s %s stocks, %s closed, %s skipped, net Rs %.0f, average %s vs NIFTY%n",
+                    dd.get("change_date"), dd.get("grp"), dd.get("n"), dd.get("closed"), dd.get("skipped"), d(dd, "net"),
                     dd.get("ex") == null ? "-" : String.format("%+.2f%%", d(dd, "ex"))));
         }
-        Map<String, Object> all = jdbc.queryForMap("select count(*) n, coalesce(sum(net_pnl), 0) net, avg(excess_pct) ex, "
-                + "coalesce(sum(net_pnl > 0), 0) wins from index_rebal_trade where status = 'CLOSED'");
-        sb.append(String.format("%nClosed %s, winners %s, net Rs %.0f, average %s vs NIFTY after costs (study B1: +0.58%%)%n",
-                all.get("n"), all.get("wins"), d(all, "net"), all.get("ex") == null ? "-" : String.format("%+.2f%%", d(all, "ex"))));
+        sb.append("\n");
+        for (String g : List.of("MAIN", "O2", "O1")) {
+            Map<String, Object> all = jdbc.queryForMap("select count(*) n, coalesce(sum(net_pnl), 0) net, avg(excess_pct) ex, "
+                    + "coalesce(sum(net_pnl > 0), 0) wins from index_rebal_trade where status = 'CLOSED' and grp = ?", g);
+            sb.append(String.format("%-4s closed %s, winners %s, net Rs %.0f, average %s vs NIFTY after costs (study %s)%n", g,
+                    all.get("n"), all.get("wins"), d(all, "net"),
+                    all.get("ex") == null ? "-" : String.format("%+.2f%%", d(all, "ex")), STUDY.get(g)));
+        }
         List<Map<String, Object>> rel = jdbc.queryForList("select file, change_date, events, note from index_rebal_release "
                 + "where change_date is not null order by announce_date desc limit 3");
         for (Map<String, Object> r : rel) {
