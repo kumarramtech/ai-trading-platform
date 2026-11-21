@@ -1,0 +1,67 @@
+O2 VERIFICATION (rules fixed 2026-11-21 before running; cost 0.18%)
+
+all O2 trades (net)                          n  1486  mean  +0.808%  t +13.76
+V1 day-clustered: 8 days, mean of day means +0.799%, t 6.30
+     2024-12-30   179 trades  day mean net +1.260%
+     2025-03-27   178 trades  day mean net +0.681%
+     2025-06-27   172 trades  day mean net +0.795%
+     2025-09-29   142 trades  day mean net +0.603%
+     2025-12-30   212 trades  day mean net +0.743%
+     2026-03-27   184 trades  day mean net +0.259%
+     2026-06-29   205 trades  day mean net +1.370%
+     2026-09-29   214 trades  day mean net +0.679%
+V2 ADD long                                     n   717  mean  +1.100%  t +11.42
+   DROP short                                   n   769  mean  +0.535%  t  +7.89
+V3 per index (event counted in each of its indices), top 15 by total net:
+     NIFTY500 MOMENTUM 50                         n   167  mean  +1.866%  t  +9.45  total   +311.5
+     NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100    n   168  mean  +1.696%  t  +8.52  total   +285.0
+     NIFTY500 MULTICAP MOMENTUM QUALITY 50        n   141  mean  +1.739%  t  +8.64  total   +245.2
+     NIFTY SMALLCAP250 MOMENTUM QUALITY 100       n   112  mean  +2.096%  t  +8.13  total   +234.7
+     NIFTY MICROCAP 250                           n   132  mean  +1.558%  t  +6.83  total   +205.6
+     NIFTY TOTAL MARKET                           n   132  mean  +1.558%  t  +6.83  total   +205.6
+     NIFTY ALPHA 50                               n    87  mean  +1.898%  t  +4.97  total   +165.1
+     NIFTY MIDCAP150 MOMENTUM 50                  n    92  mean  +1.596%  t  +8.25  total   +146.8
+     NIFTY SMALLCAP 50                            n    61  mean  +2.104%  t  +4.31  total   +128.3
+     NIFTY SMALLCAP 500                           n    78  mean  +1.387%  t  +5.15  total   +108.2
+     NIFTY200 MOMENTUM 30                         n    79  mean  +1.141%  t  +5.19  total    +90.2
+     NIFTY500 MULTIFACTOR MQVLV 50                n    70  mean  +1.157%  t  +4.84  total    +81.0
+     NIFTY TOTAL MARKET MOMENTUM QUALITY 50       n    88  mean  +0.902%  t  +4.23  total    +79.4
+     NIFTY SMALLCAP250 QUALITY 50                 n    36  mean  +1.972%  t  +4.53  total    +71.0
+     NIFTY SMALLCAP 100                           n   103  mean  +0.590%  t  +2.36  total    +60.7
+   without NIFTY500 MOMENTUM 50: 1319 trades, net +0.674%, day-clustered t 7.93
+V4 trimmed 5% mean net +0.698% | median gross +0.711% | top 20 trades = 14% of total gross
+V5 change day gross +0.988% | 5 days before +0.076% (n 1486, t 1.63) | day before +0.028% (n 1486, t 0.70)
+V6 by 20-day traded value:
+     Rs 10-25 cr                                  n   217  mean  +1.050%  t  +6.67
+     Rs 25-50 cr                                  n   280  mean  +0.927%  t  +6.70
+     Rs 50-200 cr                                 n   568  mean  +0.841%  t  +8.44
+     Rs 200 cr +                                  n   421  mean  +0.559%  t  +5.70
+V7 15:25 minute close within 3% of the daily close: 1482 of 1486 (99.7%)
+   hand-check sample (side / date against the release text):
+     2026-06-29 ANGELONE     DROP 09:20    334.70 15:25    329.15 day close    328.75 gross  +1.07%  NIFTY500 MULTICAP MOMENTUM QUALITY 50; NIFTY500 QUALITY 50  [ind_prs10062026.txt]
+     2025-06-27 AARTIIND     DROP 09:20    475.85 15:25    479.60 day close    479.15 gross  -0.56%  NIFTY HIGH BETA 50  [ind_prs06062025.txt]
+     2025-09-29 FINCABLES    DROP 09:20    810.35 15:25    802.25 day close    802.05 gross  +0.83%  NIFTY CORE HOUSING  [ind_prs22082025.txt]
+     2025-12-30 CGCL         ADD  09:20    175.74 15:25    180.55 day close    180.64 gross  +2.51%  NIFTY SMALLCAP250 MOMENTUM QUALITY 100  [ind_prs11122025.txt]
+     2026-06-29 TATACOMM     ADD  09:20   1955.20 15:25   1997.00 day close   1993.40 gross  +2.73%  NIFTY MIDCAP150 MOMENTUM 50  [ind_prs10062026.txt]
+     2024-12-30 TRIVENI      DROP 09:20    522.10 15:25    446.70 day close    448.30 gross +13.90%  NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100  [ind_prs11122024.txt]
+     2025-12-30 AUBANK       ADD  09:20    982.65 15:25    993.30 day close    996.45 gross  +0.86%  NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100; NIFTY200 ALPHA 30; NIFTY200 MOMENTUM 30  [ind_prs11122025.txt]
+     2024-12-30 SUNTV        DROP 09:20    683.30 15:25    683.65 day close    682.35 gross  -0.59%  NIFTY200 QUALITY 30  [ind_prs11122024.txt]
+     2024-12-30 AJANTPHARM   ADD  09:20   2988.05 15:25   2947.70 day close   2954.50 gross  -0.81%  NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100; NIFTY500 MULTICAP MOMENTUM QUALITY 50  [ind_prs11122024.txt]
+     2025-06-27 ASTRAL       DROP 09:20   1537.30 15:25   1499.10 day close   1500.40 gross  +2.71%  NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100; NIFTY500 FLEXICAP QUALITY 30  [ind_prs06062025.txt]
+     2025-03-27 SHAKTIPUMP   ADD  09:20    945.00 15:25    981.65 day close    981.65 gross  +3.55%  NIFTY MICROCAP 250; NIFTY TOTAL MARKET  [ind_prs21022025.txt]
+     2025-12-30 FEDERALBNK   ADD  09:20    262.70 15:25    266.20 day close    267.60 gross  +1.11%  NIFTY ALPHA LOW-VOLATILITY 30; NIFTY ALPHA QUALITY VALUE LOW-VOLATILITY 30; NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100  [ind_prs11122025.txt]
+
+  [PASS] V1
+  [PASS] V2
+  [PASS] V3
+  [PASS] V4
+  [PASS] V5
+  [PASS] V6
+  [PASS] V7
+VERDICT: SURVIVES (V7 also needs the hand check of the sample)
+
+HAND CHECK (2026-11-21, original PDFs re-downloaded from niftyindices.com/Press_Release, pdftotext -raw):
+12 of 12 sample trades match the release: side (included / excluded) and the "close of" date are right for
+TRIVENI, AJANTPHARM, SUNTV (Dec 30 2024), ANGELONE, TATACOMM (Jun 29 2026), AARTIIND, ASTRAL (Jun 27 2025),
+FINCABLES (Sep 29 2025), CGCL, AUBANK, FEDERALBNK (Dec 30 2025), SHAKTIPUMP (Mar 27 2025).
+FINAL: O2 SURVIVES V1-V7 and the hand check.
