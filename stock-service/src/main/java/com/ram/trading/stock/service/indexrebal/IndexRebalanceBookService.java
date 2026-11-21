@@ -645,13 +645,34 @@ public class IndexRebalanceBookService {
 
     // ------------------------------------------------------------------ report
 
+    /**
+     * Where the next releases should come from: NSE changes take effect at the end of a quarter month. NIFTY 50 / Next 50 /
+     * Midcap 150 (MAIN) are reviewed for March and September; many other indices (O2/O1) also for June and December. The
+     * release usually comes about 3 weeks before the change. Text only: the book trades whatever release it actually finds.
+     */
+    static String expectedReviews(LocalDate today) {
+        java.time.YearMonth other = nextChangeMonth(today, List.of(3, 6, 9, 12));
+        java.time.YearMonth main = nextChangeMonth(today, List.of(3, 9));
+        java.time.format.DateTimeFormatter f = java.time.format.DateTimeFormatter.ofPattern("MMM yyyy", java.util.Locale.ENGLISH);
+        return String.format("Expected next: other indices (O2/O1) change end of %s, release about 3 weeks before; "
+                + "MAIN change end of %s, release about 3-5 weeks before. The release is checked every evening.",
+                other.format(f), main.format(f));
+    }
+
+    private static java.time.YearMonth nextChangeMonth(LocalDate today, List<Integer> months) {
+        java.time.YearMonth m = java.time.YearMonth.from(today);
+        while (!months.contains(m.getMonthValue()) || today.isAfter(m.atEndOfMonth())) {
+            m = m.plusMonths(1);
+        }
+        return m;
+    }
+
     public String report() {
         StringBuilder sb = new StringBuilder("INDEX REBALANCE PAPER BOOK (separate strategy, paper only)\n").append(RULES).append("\n\n");
         List<Map<String, Object>> up = jdbc.queryForList("select change_date, grp, count(*) n, sum(side = 'ADD') adds, min(source) src "
                 + "from index_rebal_event where change_date >= ? group by change_date, grp order by change_date, grp",
                 Date.valueOf(LocalDate.now(IST)));
-        sb.append(up.isEmpty() ? "No upcoming change date yet (next NSE review release expected about late Feb 2027; "
-                + "the release is checked every evening).\n" : "");
+        sb.append(up.isEmpty() ? "No upcoming change date yet. " + expectedReviews(LocalDate.now(IST)) + "\n" : "");
         for (Map<String, Object> u : up) {
             sb.append(String.format("Upcoming change date %s: %-4s %s stocks (%s added) from %s%n", u.get("change_date"),
                     u.get("grp"), u.get("n"), u.get("adds"), u.get("src")));

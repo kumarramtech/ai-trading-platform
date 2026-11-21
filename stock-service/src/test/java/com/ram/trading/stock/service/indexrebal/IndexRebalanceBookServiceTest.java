@@ -95,6 +95,19 @@ class IndexRebalanceBookServiceTest {
     }
 
     @Test
+    void reportNamesTheNextExpectedReviews() {
+        String nov = IndexRebalanceBookService.expectedReviews(LocalDate.of(2026, 11, 21));
+        assertTrue(nov.contains("(O2/O1) change end of Dec 2026"), nov);
+        assertTrue(nov.contains("MAIN change end of Mar 2027"), nov);
+        String dec31 = IndexRebalanceBookService.expectedReviews(LocalDate.of(2026, 12, 31));
+        assertTrue(dec31.contains("(O2/O1) change end of Dec 2026"), dec31);
+        String jan = IndexRebalanceBookService.expectedReviews(LocalDate.of(2027, 1, 2));
+        assertTrue(jan.contains("(O2/O1) change end of Mar 2027"), jan);
+        String apr = IndexRebalanceBookService.expectedReviews(LocalDate.of(2027, 4, 1));
+        assertTrue(apr.contains("(O2/O1) change end of Jun 2027") && apr.contains("MAIN change end of Sep 2027"), apr);
+    }
+
+    @Test
     void ignoresReleasesThatAreNotAStockReview() throws Exception {
         assertNull(release("ind_prs02012018.pdf")); // NIFTY 10 Year SDL index replacement
         assertNull(IndexRebalanceBookService.parse("Some other press release about a new index launch"));
