@@ -1,0 +1,65 @@
+PRICE-BAND CHANGE STUDY (pre-registered 2026-11-21; t >= 2.5; research only)
+events 3674; left out: {'ineligible': 2805, 'cut and raise within 5 sessions': 219, 'no minute data': 27, 'circuit-locked at 09:20': 14, 'not in CM EQ': 3}
+
+B1 band CUT: SHORT on the effective day, 09:20 -> 15:25 vs NIFTY: 328 trades, gross +0.209%, net +0.079%, t 0.37, win 56%
+    review 2024-10:  11 trades, net -0.463%
+    review 2024-11:  18 trades, net -0.922%
+    review 2024-12:  13 trades, net +0.308%
+    review 2025-01:  17 trades, net +1.369%
+    review 2025-02:  18 trades, net +1.218%
+    review 2025-03:  12 trades, net -0.269%
+    review 2025-04:  10 trades, net +0.507%
+    review 2025-05:  16 trades, net +0.117%
+    review 2025-06:  10 trades, net +1.953%
+    review 2025-07:  10 trades, net -0.172%
+    review 2025-08:  11 trades, net -1.780%
+    review 2025-09:  12 trades, net +1.161%
+    review 2025-10:   8 trades, net +0.583%
+    review 2025-11:   8 trades, net -0.736%
+    review 2025-12:   2 trades, net +4.775%
+    review 2026-01:   6 trades, net -0.400%
+    review 2026-02:  13 trades, net -1.202%
+    review 2026-03:   7 trades, net +1.850%
+    review 2026-04:  28 trades, net -0.120%
+    review 2026-05:  20 trades, net -0.418%
+    review 2026-06:  23 trades, net +0.243%
+    review 2026-07:  14 trades, net -0.025%
+    review 2026-08:  13 trades, net -0.137%
+    review 2026-09:  28 trades, net -0.450%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (+0.275 / -0.104)
+  [PASS] without best review 2025-01 > 0 (+0.008)
+  [PASS] beats placebo by >= cost, gross (placebo 317 trades, gross -0.489%)
+  -> FAIL
+  (t check here is 2.5: t 0.37 below)
+
+B2 band RAISED: BUY on the effective day, 09:20 -> 15:25 vs NIFTY: 278 trades, gross -0.183%, net -0.313%, t -1.78, win 39%
+    review 2024-10:  19 trades, net +1.748%
+    review 2024-11:   3 trades, net +0.768%
+    review 2024-12:  30 trades, net +0.174%
+    review 2025-01:   1 trades, net +0.952%
+    review 2025-02:  18 trades, net -0.714%
+    review 2025-03:   1 trades, net -3.729%
+    review 2025-04:  25 trades, net +0.347%
+    review 2025-05:   5 trades, net -0.355%
+    review 2025-06:  31 trades, net -0.028%
+    review 2025-08:  20 trades, net -1.664%
+    review 2025-09:   3 trades, net +0.201%
+    review 2025-10:  25 trades, net -1.688%
+    review 2025-11:   4 trades, net -1.154%
+    review 2025-12:  17 trades, net -0.335%
+    review 2026-02:  10 trades, net +0.015%
+    review 2026-04:  18 trades, net -0.217%
+    review 2026-05:   1 trades, net -1.969%
+    review 2026-06:  18 trades, net -2.099%
+    review 2026-07:   3 trades, net +0.028%
+    review 2026-08:  23 trades, net +0.394%
+    review 2026-09:   3 trades, net +0.466%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.014 / -0.679)
+  [fail] without best review 2024-10 > 0 (-0.464)
+  [PASS] beats placebo by >= cost, gross (placebo 277 trades, gross -0.484%)
+  -> FAIL
+  (t check here is 2.5: t -1.78 below)
+
+VERDICT: B1 FAIL, B2 FAIL
