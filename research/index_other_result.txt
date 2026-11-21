@@ -21,3 +21,50 @@ O2 all other indices: change date 09:20 -> 15:25, ADD long / DROP short: 1486 tr
   (t check here is 2.5: t 13.76 ok)
 
 VERDICT: O1 NOT ENOUGH DATA, O2 PASS
+
+INFORMATION ONLY: O2 breakdown (net = gross - 0.18%)
+side ADD :  717 trades, net +1.100%, t 11.42
+side DROP:  769 trades, net +0.535%, t 7.89
+review-level: 8 reviews, mean +0.799%, t 6.30
+turnover 10-30 cr :  278 trades, net +0.922%, t 6.71
+30-100 cr         :  479 trades, net +1.068%, t 9.24
+>100 cr           :  729 trades, net +0.594%, t 7.87
+by index (a stock in several indices counts in each):
+  NIFTY MIDSMALLCAP400 MOMENTUM QUALITY 100      168 trades, net +1.696%, t 8.52
+  NIFTY500 MOMENTUM 50                           167 trades, net +1.866%, t 9.45
+  NIFTY500 MULTICAP MOMENTUM QUALITY 50          141 trades, net +1.739%, t 8.64
+  NIFTY MICROCAP 250                             132 trades, net +1.558%, t 6.83
+  NIFTY TOTAL MARKET                             132 trades, net +1.558%, t 6.83
+  NIFTY SMALLCAP250 MOMENTUM QUALITY 100         112 trades, net +2.096%, t 8.13
+  NIFTY SMALLCAP 100                             103 trades, net +0.590%, t 2.36
+  NIFTY100 ALPHA 30                               94 trades, net +0.128%, t 0.59
+  NIFTY MIDCAP150 MOMENTUM 50                     92 trades, net +1.596%, t 8.25
+  NIFTY TOTAL MARKET MOMENTUM QUALITY 50          88 trades, net +0.902%, t 4.23
+  NIFTY ALPHA 50                                  87 trades, net +1.898%, t 4.97
+  NIFTY200 ALPHA 30                               83 trades, net +0.620%, t 3.77
+  NIFTY200 MOMENTUM 30                            79 trades, net +1.141%, t 5.19
+  NIFTY SMALLCAP 500                              78 trades, net +1.387%, t 5.15
+  NIFTY500 MULTIFACTOR MQVLV 50                   70 trades, net +1.157%, t 4.84
+  NIFTY SMALLCAP 50                               61 trades, net +2.104%, t 4.31
+  NIFTY ALPHA LOW-VOLATILITY 30                   59 trades, net +0.402%, t 2.49
+  NIFTY500 LOW VOLATILITY 50                      48 trades, net -0.034%, t -0.22
+  NIFTY MIDCAP 50                                 45 trades, net +0.104%, t 0.39
+  NIFTY HIGH BETA 50                              40 trades, net +0.216%, t 0.63
+  NIFTY500 MULTICAP INDIA MANUFACTURING 50:30:20   40 trades, net +1.088%, t 2.33
+  NIFTY SMALLCAP250 QUALITY 50                    36 trades, net +1.972%, t 4.53
+  NIFTY ALPHA QUALITY VALUE LOW-VOLATILITY 30     34 trades, net +0.319%, t 1.35
+  NIFTY500 MULTICAP INFRASTRUCTURE 50:30:20       32 trades, net +0.260%, t 0.80
+  NIFTY500 QUALITY 50                             27 trades, net +1.409%, t 3.22
+  NIFTY ALPHA QUALITY LOW-VOLATILITY 30           26 trades, net +0.916%, t 3.47
+  NIFTY NEXT 100                                  26 trades, net +0.034%, t 0.10
+  NIFTY MIDCAP SELECT                             25 trades, net -0.758%, t -2.61
+  NIFTY 200                                       25 trades, net +0.826%, t 1.86
+  NIFTY MIDCAP 100                                25 trades, net +0.826%, t 1.86
+only broad size indices (no strategy/sector index): 296 trades, net +0.906%, t 6.57
+stock in exactly one index: 844 trades, net +0.412%, t 6.07
+day BEFORE (close T-2 -> T-1) ADD, signed, gross: 717, -0.295%, t -4.35
+day BEFORE (close T-2 -> T-1) DROP, signed, gross: 769, +0.197%, t 3.22
+day AFTER (close T -> T+1) ADD, signed, gross: 717, -0.048%, t -0.60
+day AFTER (close T -> T+1) DROP, signed, gross: 769, -0.704%, t -9.82
+worst trades: HSCL DROP 2025-06-27 -11.11%; SANGHVIMOV DROP 2025-03-27 -6.71%; WELSPUNLIV DROP 2026-03-27 -6.35%; GODFRYPHLP ADD 2024-12-30 -6.32%; FINEORG ADD 2024-12-30 -5.87%
+best trades: AEGISLOG ADD 2025-03-27 +18.83%; BAJAJHLDNG ADD 2024-12-30 +14.29%; TRIVENI DROP 2024-12-30 +13.90%; WOCKPHARMA ADD 2025-09-29 +12.79%; LTFOODS ADD 2025-06-27 +10.52%
