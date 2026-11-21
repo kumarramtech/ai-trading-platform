@@ -1,0 +1,39 @@
+INDEX-DROP REBOUND STUDY (pre-registered 2026-11-21; change dates 2018-01-01 .. 2024-09-30; cost 0.33%; research only)
+events 2771; left out: {'main-3 index event same date': 343, 'Smallcap 250 (O1)': 332, 'added and dropped same date': 322, 'no daily data': 317, 'ineligible': 680, 'no ISIN': 2}
+
+R1 buy DROPPED stocks at the change-date close, sell next close, vs NIFTY: 834 trades, gross +0.465%, net +0.135%, t 1.87, win 50%
+    review 2018-03-28:   8 trades, net +1.693%
+    review 2018-06-28:  17 trades, net +0.500%
+    review 2018-09-27:  10 trades, net -1.698%
+    review 2019-03-28:  22 trades, net -0.555%
+    review 2019-06-27:  25 trades, net -0.374%
+    review 2019-09-26:   6 trades, net -0.809%
+    review 2019-12-26:  26 trades, net -0.751%
+    review 2020-03-26:  14 trades, net -1.126%
+    review 2020-06-25:  31 trades, net -1.094%
+    review 2020-09-24:  13 trades, net +1.317%
+    review 2020-12-31:  27 trades, net +0.015%
+    review 2021-03-30:  35 trades, net +0.638%
+    review 2021-06-29:  41 trades, net +0.078%
+    review 2021-09-29:  22 trades, net +0.936%
+    review 2021-12-30:  31 trades, net +0.097%
+    review 2022-03-30:  36 trades, net +0.412%
+    review 2022-06-29:  34 trades, net -1.074%
+    review 2022-09-29:  36 trades, net -0.690%
+    review 2022-12-29:  40 trades, net +0.736%
+    review 2023-06-29:  42 trades, net -1.010%
+    review 2023-09-28:  36 trades, net +0.049%
+    review 2023-12-28:  57 trades, net +0.713%
+    review 2024-03-27:  68 trades, net -0.398%
+    review 2024-06-27:  73 trades, net +0.967%
+    review 2024-09-27:  84 trades, net +1.309%
+  [fail] mean net > 0, t >= 2
+  [fail] both halves > 0 (-0.217 / +0.272)
+  [PASS] without best review 2024-09-27 > 0 (+0.003)
+  [PASS] beats placebo by >= cost, gross (placebo 834 trades, gross +0.105%)
+  -> FAIL
+  review-level: 25 reviews, mean -0.005%, t -0.03
+
+information only: ADDED stocks, same window, gross: 938 trades, +0.068%, t 1.04
+
+VERDICT: R1 FAIL
