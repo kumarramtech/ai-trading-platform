@@ -56,6 +56,8 @@ public class AnalyticsController {
 
     private final com.ram.trading.signal.engine.service.fadebook.FadePromotionService fadePromotionService;
 
+    private final com.ram.trading.signal.engine.service.fadebook.BounceNewsStudyService bounceNewsStudyService;
+
     @GetMapping("/trade-insights")
     public TradeInsightsResponse getTradeInsights() {
 
@@ -306,6 +308,21 @@ public class AnalyticsController {
     fadeNewsStudySummary(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         LocalDate day = date != null ? date : LocalDate.now(ZoneId.of("Asia/Kolkata"));
         return blocking(() -> fadeNewsStudyService.summary(day));
+    }
+
+    /**
+     * BOUNCE no-news study (pre-registered 2026-11-21, shadow paper): the 09:45 losers of ranks
+     * 501-600 bought to 14:59, judged on the NO_NEWS buys against the fixed pass mark. format=text for text.
+     */
+    @GetMapping("/bounce-news-study")
+    public reactor.core.publisher.Mono<ResponseEntity<?>> bounceNewsStudy(
+            @RequestParam(required = false, defaultValue = "text") String format) {
+        return blocking(() -> {
+            var r = bounceNewsStudyService.report();
+            return "json".equalsIgnoreCase(format) ? ResponseEntity.ok((Object) r)
+                    : ResponseEntity.ok().contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                    .body((Object) com.ram.trading.signal.engine.service.fadebook.BounceNewsStudyService.toText(r));
+        });
     }
 
     /** Progress of the running replay, or the report of the last one (plain text). */

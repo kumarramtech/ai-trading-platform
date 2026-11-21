@@ -98,12 +98,7 @@ public class FadeNewsTagger {
         LocalDateTime entry = LocalDateTime.now(IST);
         Flux.fromIterable(trades)
                 .filter(t -> t.getId() != null)
-                .flatMap(t -> Mono.fromCallable(() -> java.util.Optional.ofNullable(companyName(t.getSymbol())))
-                        .subscribeOn(Schedulers.boundedElastic())
-                        .flatMap(name -> news.getLatestNews(t.getSymbol())
-                                .timeout(Duration.ofSeconds(25))
-                                .map(articles -> classify(articles, name.orElse(null), t.getSymbol(), entry)))
-                        .onErrorResume(ex -> Mono.just(new Tag(ERROR, 0, 0, ex.toString())))
+                .flatMap(t -> lookup(t.getSymbol(), entry)
                         .publishOn(Schedulers.boundedElastic())
                         .doOnNext(tag -> store(t, tag, entry)), 2)
                 .doOnError(ex -> log.warn("FADE news study: tagging failed: {}", ex.toString()))
@@ -112,6 +107,19 @@ public class FadeNewsTagger {
     }
 
     public record Tag(String tag, int kept, int returned, String headlines) {
+    }
+
+    /**
+     * The tag of one stock at {@code entry} (IST), by the same rules as the FADE shorts; a failed
+     * lookup gives ERROR. Also used by the BOUNCE news study ({@link BounceNewsStudyService}).
+     */
+    public Mono<Tag> lookup(String symbol, LocalDateTime entry) {
+        return Mono.fromCallable(() -> java.util.Optional.ofNullable(companyName(symbol)))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(name -> news.getLatestNews(symbol)
+                        .timeout(Duration.ofSeconds(25))
+                        .map(articles -> classify(articles, name.orElse(null), symbol, entry)))
+                .onErrorResume(ex -> Mono.just(new Tag(ERROR, 0, 0, ex.toString())));
     }
 
     /** Pure: the tag for one stock from the returned articles at {@code entry} (IST). */
