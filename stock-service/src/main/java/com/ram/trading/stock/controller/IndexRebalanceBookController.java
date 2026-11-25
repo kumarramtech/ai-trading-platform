@@ -24,6 +24,12 @@ public class IndexRebalanceBookController {
         return Mono.fromCallable(book::report).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /** The index rebalance paper book as JSON for a dashboard (read-only), split by group MAIN / O2 / O1. */
+    @GetMapping(value = "/index-rebalance-book/summary", produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<java.util.Map<String, Object>> summary() {
+        return Mono.fromCallable(book::summary).subscribeOn(Schedulers.boundedElastic());
+    }
+
     /** Re-checks the NSE Indices releases of one date (ind_prsDDMMYYYY*.pdf); records events, places nothing. */
     @PostMapping(value = "/index-rebalance-book/scan", produces = MediaType.TEXT_PLAIN_VALUE)
     public Mono<String> scan(@RequestParam("date") String date) {

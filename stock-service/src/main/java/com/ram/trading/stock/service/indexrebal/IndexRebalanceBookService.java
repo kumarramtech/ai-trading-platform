@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ram.trading.stock.service.auth.UpstoxTokenService;
 import com.ram.trading.stock.service.calendar.MarketCalendarService;
+import com.ram.trading.stock.service.dashboard.BookViews;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
@@ -665,6 +666,86 @@ public class IndexRebalanceBookService {
             m = m.plusMonths(1);
         }
         return m;
+    }
+
+    /**
+     * The book as JSON for a dashboard: rules, per group (MAIN / O2 / O1) the study figure, cost, totals and cumulative
+     * P&amp;L, upcoming change dates, the expected next reviews, each change day, the latest releases and all trades.
+     */
+    public Map<String, Object> summary() {
+        LocalDate today = LocalDate.now(IST);
+        List<Map<String, Object>> up = jdbc.queryForList("select change_date, grp, count(*) n, sum(side = 'ADD') adds, "
+                + "sum(side = 'DROP') drops, min(source) src from index_rebal_event where change_date >= ? "
+                + "group by change_date, grp order by change_date, grp", Date.valueOf(today));
+        List<Map<String, Object>> rows = jdbc.queryForList("select * from index_rebal_trade order by change_date, grp, symbol");
+        Map<String, String> studyPct = Map.of("MAIN", "0.58", "O2", "0.81", "O1", "2.17");
+        Map<String, String> studyNote = Map.of("MAIN", "B1 on NIFTY 50 / Next 50 / Midcap 150, 4 reviews",
+                "O2", "1486 trades, t 13.8, all 8 change dates positive, passed V1-V7",
+                "O1", "Smallcap 250 changes: only 35 trades, tracked, not yet tested");
+        Map<String, Object> groups = new LinkedHashMap<>();
+        for (String g : List.of("MAIN", "O2", "O1")) {
+            List<Map<String, Object>> closed = new ArrayList<>();
+            int open = 0, skipped = 0;
+            double ex = 0;
+            for (Map<String, Object> r : rows) {
+                if (!g.equals(group(r))) {
+                    continue;
+                }
+                String st = (String) r.get("status");
+                if ("CLOSED".equals(st)) {
+                    closed.add(r);
+                    ex += d(r, "excess_pct");
+                }
+                open += "OPEN".equals(st) ? 1 : 0;
+                skipped += "SKIPPED".equals(st) ? 1 : 0;
+            }
+            Map<String, Object> totals = BookViews.totals(closed, "net_pnl", "gross_pnl", "charges");
+            totals.put("avgExcessPct", closed.isEmpty() ? null : BookViews.round(ex / closed.size()));
+            totals.put("open", open);
+            totals.put("skipped", skipped);
+            Map<String, Object> grp = new LinkedHashMap<>();
+            grp.put("costPct", costPct(g));
+            grp.put("studyNetPctVsNifty", Double.parseDouble(studyPct.get(g)));
+            grp.put("study", studyNote.get(g));
+            grp.put("tested", !"O1".equals(g));
+            grp.put("totals", totals);
+            grp.put("equity", BookViews.curve(closed, "change_date", "net_pnl"));
+            groups.put(g, grp);
+        }
+        List<Map<String, Object>> days = jdbc.queryForList("select change_date, grp, count(*) n, sum(status = 'CLOSED') closed, "
+                + "sum(status = 'SKIPPED') skipped, coalesce(sum(net_pnl), 0) net, avg(excess_pct) ex from index_rebal_trade "
+                + "group by change_date, grp order by change_date, grp");
+        List<Map<String, Object>> rel = jdbc.queryForList("select file, announce_date, change_date, events, note, seen_at "
+                + "from index_rebal_release where change_date is not null order by announce_date desc limit 5");
+        java.time.format.DateTimeFormatter f = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
+        Map<String, Object> expected = new LinkedHashMap<>();
+        expected.put("otherIndicesChange", "end of " + nextChangeMonth(today, List.of(3, 6, 9, 12)).format(f));
+        expected.put("mainChange", "end of " + nextChangeMonth(today, List.of(3, 9)).format(f));
+        expected.put("text", expectedReviews(today));
+        Map<String, Object> rules = new LinkedHashMap<>();
+        rules.put("event", "change date of an NSE scheduled index review (releases checked every evening)");
+        rules.put("entry", "09:20: buy added stocks, short removed stocks");
+        rules.put("exit", "15:25");
+        rules.put("notionalRs", NOTIONAL);
+        rules.put("minPriceRs", MIN_PRICE);
+        rules.put("minTurnoverCr", MIN_TURNOVER / 1e7);
+        rules.put("text", RULES);
+        List<Map<String, Object>> trades = BookViews.rows(rows);
+        long openNow = rows.stream().filter(r -> "OPEN".equals(r.get("status"))).count();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("book", "INDEX_REBALANCE");
+        out.put("paperOnly", true);
+        out.put("asOf", LocalDateTime.now(IST).withNano(0).toString());
+        out.put("status", openNow > 0 ? "OPEN" : up.isEmpty() ? "WAITING_FOR_NSE_RELEASE" : "UPCOMING");
+        out.put("nextChangeDate", up.isEmpty() ? null : BookViews.value(up.get(0).get("change_date")));
+        out.put("rules", rules);
+        out.put("groups", groups);
+        out.put("upcoming", BookViews.rows(up));
+        out.put("expectedNext", expected);
+        out.put("changeDays", BookViews.rows(days));
+        out.put("releases", BookViews.rows(rel));
+        out.put("trades", trades);
+        return out;
     }
 
     public String report() {
