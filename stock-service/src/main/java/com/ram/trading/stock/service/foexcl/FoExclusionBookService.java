@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ram.trading.stock.service.auth.UpstoxTokenService;
 import com.ram.trading.stock.service.calendar.MarketCalendarService;
+import com.ram.trading.stock.service.dashboard.BookViews;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVFormat;
@@ -411,6 +412,73 @@ public class FoExclusionBookService {
         sb.append(String.format("%nClosed %s, winners %s, net Rs %.0f, average %s vs NIFTY after costs (study F2: +1.85%%)%n",
                 all.get("n"), all.get("wins"), d(all, "net"), all.get("ex") == null ? "-" : String.format("%+.2f%%", d(all, "ex"))));
         return sb.toString();
+    }
+
+    /**
+     * The book as JSON for a dashboard: rules, the study it is judged against, upcoming removals, today's and all trades
+     * (each closed short with the stock and NIFTY move), totals over closed trades and the cumulative P&amp;L by event day.
+     */
+    public Map<String, Object> summary() {
+        LocalDate today = LocalDate.now(IST);
+        List<Map<String, Object>> up = jdbc.queryForList("select event_date, symbol, expiries, detected_from from fo_excl_event "
+                + "where event_date >= ? order by event_date, symbol", Date.valueOf(today));
+        List<Map<String, Object>> rows = jdbc.queryForList("select * from fo_excl_trade order by event_date, symbol");
+        List<Map<String, Object>> trades = new ArrayList<>(), todays = new ArrayList<>(), closed = new ArrayList<>();
+        int skipped = 0, open = 0;
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> v = BookViews.row(r);
+            String status = (String) r.get("status");
+            if ("CLOSED".equals(status) && d(r, "entry_price") > 0 && d(r, "nifty_entry") > 0) {
+                v.put("stockPct", BookViews.round((d(r, "exit_price") / d(r, "entry_price") - 1) * 100));
+                v.put("niftyPct", BookViews.round((d(r, "nifty_exit") / d(r, "nifty_entry") - 1) * 100));
+                closed.add(r);
+            }
+            skipped += "SKIPPED".equals(status) ? 1 : 0;
+            open += "OPEN".equals(status) ? 1 : 0;
+            trades.add(v);
+            if (today.equals(((Date) r.get("event_date")).toLocalDate())) {
+                todays.add(v);
+            }
+        }
+        Map<String, Object> totals = BookViews.totals(closed, "net_pnl", "gross_pnl", "charges");
+        double ex = 0;
+        for (Map<String, Object> r : closed) {
+            ex += d(r, "excess_pct");
+        }
+        totals.put("avgExcessPct", closed.isEmpty() ? null : BookViews.round(ex / closed.size()));
+        totals.put("open", open);
+        totals.put("skipped", skipped);
+        Map<String, Object> rules = new java.util.LinkedHashMap<>();
+        rules.put("event", "last futures day of a stock being removed from F&O (NSE F&O bhavcopy, checked 19:45 and 22:45)");
+        rules.put("side", "SHORT");
+        rules.put("entry", "09:20");
+        rules.put("exit", "15:25");
+        rules.put("notionalRs", NOTIONAL);
+        rules.put("costPct", COST_PCT);
+        rules.put("minPriceRs", MIN_PRICE);
+        rules.put("minTurnoverCr", MIN_TURNOVER / 1e7);
+        rules.put("text", RULES);
+        Map<String, Object> study = new java.util.LinkedHashMap<>();
+        study.put("name", "F2 (research/fo_inclusion_study.py)");
+        study.put("trades", 55);
+        study.put("netPctVsNifty", 1.85);
+        study.put("t", 6.0);
+        study.put("winRatePct", 84);
+        study.put("caveat", "about 17 removal dates; every live trade is an unseen check");
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("book", "FO_EXCLUSION");
+        out.put("paperOnly", true);
+        out.put("asOf", LocalDateTime.now(IST).withNano(0).toString());
+        out.put("status", open > 0 ? "OPEN" : up.isEmpty() ? "NO_EVENT" : "WAITING");
+        out.put("nextEvent", up.isEmpty() ? null : BookViews.value(up.get(0).get("event_date")));
+        out.put("rules", rules);
+        out.put("study", study);
+        out.put("upcoming", BookViews.rows(up));
+        out.put("today", todays);
+        out.put("totals", totals);
+        out.put("equity", BookViews.curve(closed, "event_date", "net_pnl"));
+        out.put("trades", trades);
+        return out;
     }
 
     // ------------------------------------------------------------------ Upstox

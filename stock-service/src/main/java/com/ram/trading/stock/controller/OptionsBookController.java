@@ -19,4 +19,10 @@ public class OptionsBookController {
     public Mono<String> report() {
         return Mono.fromCallable(book::report).subscribeOn(Schedulers.boundedElastic());
     }
+
+    /** The options condor paper book as JSON for a dashboard (read-only). */
+    @GetMapping(value = "/options-book/summary", produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<java.util.Map<String, Object>> summary() {
+        return Mono.fromCallable(book::summary).subscribeOn(Schedulers.boundedElastic());
+    }
 }

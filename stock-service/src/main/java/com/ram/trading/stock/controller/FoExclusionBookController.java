@@ -24,6 +24,12 @@ public class FoExclusionBookController {
         return Mono.fromCallable(book::report).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /** The F&amp;O exclusion paper book as JSON for a dashboard (read-only). */
+    @GetMapping(value = "/fo-exclusion-book/summary", produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<java.util.Map<String, Object>> summary() {
+        return Mono.fromCallable(book::summary).subscribeOn(Schedulers.boundedElastic());
+    }
+
     /** Reads the latest NSE F&amp;O bhavcopy on or before the date and records stocks being removed; places nothing. */
     @PostMapping(value = "/fo-exclusion-book/scan", produces = MediaType.TEXT_PLAIN_VALUE)
     public Mono<String> scan(@RequestParam("date") String date) {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ram.trading.stock.service.auth.UpstoxTokenService;
 import com.ram.trading.stock.service.calendar.MarketCalendarService;
+import com.ram.trading.stock.service.dashboard.BookViews;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -418,6 +419,67 @@ public class OptionsCondorBookService {
         }
         sb.append(String.format("%nClosed %d, winners %d, net Rs %.0f%n", closed, wins, net));
         return sb.toString();
+    }
+
+    /**
+     * The book as JSON for a dashboard: rules, the open condor (with credit in Rs and breakevens), every trade, totals
+     * over closed trades, the cumulative P&amp;L by expiry, and the failed backtest it is judged against.
+     */
+    public Map<String, Object> summary() {
+        List<Map<String, Object>> rows = jdbc.queryForList("select * from options_condor_trade order by entry_day");
+        List<Map<String, Object>> open = new ArrayList<>(), closed = new ArrayList<>(), trades = new ArrayList<>();
+        int skipped = 0;
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> v = BookViews.row(r);
+            String status = (String) r.get("status");
+            if ("OPEN".equals(status) || "CLOSED".equals(status)) {
+                int lot = r.get("lot_size") == null ? 0 : ((Number) r.get("lot_size")).intValue();
+                v.put("creditRs", BookViews.round(d(r, "credit") * lot));
+                v.put("upperBreakeven", BookViews.round(d(r, "short_call") + d(r, "credit")));
+                v.put("lowerBreakeven", BookViews.round(d(r, "short_put") - d(r, "credit")));
+            }
+            trades.add(v);
+            if ("OPEN".equals(status)) {
+                open.add(v);
+            } else if ("CLOSED".equals(status)) {
+                closed.add(r);
+            } else if ("SKIPPED".equals(status)) {
+                skipped++;
+            }
+        }
+        Map<String, Object> rules = new java.util.LinkedHashMap<>();
+        rules.put("underlying", "NIFTY 50");
+        rules.put("structure", "iron condor, 1 lot");
+        rules.put("entry", "10:00 on the first trading day after an expiry, on the next weekly expiry");
+        rules.put("shortStrikePct", SHORT_PCT);
+        rules.put("wingPct", LONG_PCT);
+        rules.put("minCreditPts", MIN_CREDIT);
+        rules.put("fills", "sells at bid, buys at ask");
+        rules.put("exit", "15:15 on expiry day");
+        rules.put("text", RULES);
+        Map<String, Object> backtest = new java.util.LinkedHashMap<>();
+        backtest.put("period", "Jan 2022 - Nov 2026, NSE F&O bhavcopy");
+        backtest.put("trades", 190);
+        backtest.put("avgNetRsPerLot", -222);
+        backtest.put("winRatePct", 83);
+        backtest.put("worstRs", -26402);
+        backtest.put("maxDrawdownRs", -74265);
+        backtest.put("verdict", "FAILED 2026-11-18; kept on paper for practice, never real money");
+        Map<String, Object> totals = BookViews.totals(closed, "net_pnl", "gross_pnl", "charges");
+        totals.put("open", open.size());
+        totals.put("skipped", skipped);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("book", "OPTIONS_CONDOR");
+        out.put("paperOnly", true);
+        out.put("asOf", LocalDateTime.now(IST).withNano(0).toString());
+        out.put("status", open.isEmpty() ? "WAITING" : "OPEN");
+        out.put("rules", rules);
+        out.put("open", open);
+        out.put("totals", totals);
+        out.put("equity", BookViews.curve(closed, "expiry", "net_pnl"));
+        out.put("trades", trades);
+        out.put("backtest", backtest);
+        return out;
     }
 
     // ------------------------------------------------------------------ Upstox
