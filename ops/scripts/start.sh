@@ -178,7 +178,11 @@ start_service() {
 
         PID=$(cat "$PID_FILE")
 
-        if kill -0 "$PID" 2>/dev/null; then
+        # After a reboot the old PID can belong to something else, even to a THREAD of another JVM (kill -0 accepts
+        # thread ids, and the boot order makes the numbers repeat): Nov 25 portfolio's old PID was a balance-margin
+        # thread, so the script stopped there and portfolio, news, notification and ai never started. Only trust the
+        # PID when its command line runs this service's jar.
+        if kill -0 "$PID" 2>/dev/null && tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null | grep -qF "$JAR_FILE"; then
 
             echo "[INFO] Existing process found"
             echo "       PID: $PID"
